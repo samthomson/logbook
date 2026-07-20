@@ -1,6 +1,11 @@
 import { useState, useEffect } from 'react'
 import type { AuthState } from './lib/auth'
 import { checkRecordingSupport } from './lib/auth'
+import IssueTimeline from './components/IssueTimeline'
+import IssuePicker from './components/IssuePicker'
+import { fetchLatestIssue, parseIssue } from './lib/compass'
+import { fetchWhitelist } from './lib/whitelist'
+import type { CompassIssue, IssueManifest } from './types/nostr'
 import './App.css'
 
 type AppView = 'auth' | 'timeline' | 'issue-picker'
@@ -9,11 +14,61 @@ export default function App() {
   const [auth, setAuth] = useState<AuthState | null>(null)
   const [view, setView] = useState<AppView>('auth')
   const [recordingNotice, setRecordingNotice] = useState<string | null>(null)
+  const [issue, setIssue] = useState<CompassIssue | null>(null)
+  const [isWhitelisted, setIsWhitelisted] = useState(false)
+  const [issueLoading, setIssueLoading] = useState(false)
+  const [issueError, setIssueError] = useState<string | null>(null)
 
   useEffect(() => {
     const { supported, message } = checkRecordingSupport()
     if (!supported) setRecordingNotice(message)
   }, [])
+
+  // Load latest issue + whitelist check after login
+  useEffect(() => {
+    if (!auth) return
+    setIssueLoading(true)
+    setIssueError(null)
+
+    fetchLatestIssue()
+      .then(async (event) => {
+        if (!event) return
+        const parsed = parseIssue(event)
+        setIssue(parsed)
+        // Check whitelist for this issue
+        const issueId = `logbook-${parsed.issueNumber}`
+        const wl = await fetchWhitelist(issueId)
+        setIsWhitelisted(wl.has(auth.pubkey))
+      })
+      .catch((err: unknown) => {
+        setIssueError(err instanceof Error ? err.message : String(err))
+      })
+      .finally(() => setIssueLoading(false))
+  }, [auth])
+
+  const handleSelectIssue = async (manifest: IssueManifest) => {
+    if (!auth) return
+    // Extract issue number from manifest issueId (format: "logbook-<N>")
+    const parts = manifest.issueId.split('-')
+    const num = parseInt(parts[parts.length - 1], 10)
+    if (isNaN(num)) return
+
+    setIssueLoading(true)
+    setIssueError(null)
+    try {
+      const event = await fetchLatestIssue()
+      if (!event) throw new Error('No issue found')
+      const parsed = parseIssue(event)
+      setIssue(parsed)
+      const wl = await fetchWhitelist(manifest.issueId)
+      setIsWhitelisted(wl.has(auth.pubkey))
+      setView('timeline')
+    } catch (err: unknown) {
+      setIssueError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setIssueLoading(false)
+    }
+  }
 
   if (view === 'auth' || !auth) {
     return (
@@ -35,17 +90,62 @@ export default function App() {
           {recordingNotice}
         </div>
       )}
+
       <header className="app-header">
         <span className="app-title">Logbook</span>
-        <button className="btn btn--ghost" onClick={() => setView('issue-picker')}>
-          Issues
-        </button>
-        <span className="app-pubkey">{auth.pubkey.slice(0, 8)}…</span>
+        <nav className="app-nav">
+          <button
+            className={`btn btn--ghost btn--small ${view === 'timeline' ? 'btn--active' : ''}`}
+            onClick={() => setView('timeline')}
+          >
+            Timeline
+          </button>
+          <button
+            className={`btn btn--ghost btn--small ${view === 'issue-picker' ? 'btn--active' : ''}`}
+            onClick={() => setView('issue-picker')}
+          >
+            Episodes
+          </button>
+        </nav>
+        <span className="app-pubkey" title={auth.pubkey}>
+          {auth.pubkey.slice(0, 8)}…
+        </span>
       </header>
-      {view === 'timeline' && <TimelinePlaceholder auth={auth} />}
-      {view === 'issue-picker' && (
-        <IssuePickerPlaceholder onSelect={() => setView('timeline')} />
-      )}
+
+      <div className="app-body">
+        {issueLoading && (
+          <div className="app-loading">
+            <div className="spinner" aria-label="Loading" />
+            <p>Loading issue…</p>
+          </div>
+        )}
+        {issueError && (
+          <div className="notice notice--error">
+            Failed to load issue: {issueError}
+          </div>
+        )}
+
+        {view === 'timeline' && !issueLoading && issue && (
+          <IssueTimeline
+            issue={issue}
+            signer={auth.signer}
+            isWhitelisted={isWhitelisted}
+          />
+        )}
+
+        {view === 'timeline' && !issueLoading && !issue && !issueError && (
+          <div className="app-empty">
+            <p>No issues found. Check back soon.</p>
+          </div>
+        )}
+
+        {view === 'issue-picker' && (
+          <IssuePicker
+            onSelect={handleSelectIssue}
+            onBack={() => setView('timeline')}
+          />
+        )}
+      </div>
     </div>
   )
 }
@@ -86,7 +186,10 @@ function AuthScreen({ onAuth }: { onAuth: (state: AuthState) => void }) {
 
   return (
     <div className="auth-screen">
-      <h1 className="auth-title">Logbook</h1>
+      <div className="auth-logo">
+        <div className="auth-logo__mark" aria-hidden="true">📻</div>
+        <h1 className="auth-title">Logbook</h1>
+      </div>
       <p className="auth-subtitle">Async voice podcast for Nostr Compass</p>
 
       <div className="auth-methods">
@@ -145,7 +248,7 @@ function AuthScreen({ onAuth }: { onAuth: (state: AuthState) => void }) {
             />
           )}
           <p className="auth-warning">
-            Your key is held in memory only and never stored. Prefer Bunker or Amber.
+            Key held in memory only — never stored. Prefer Bunker or Amber.
           </p>
         </div>
       )}
@@ -162,25 +265,5 @@ function AuthScreen({ onAuth }: { onAuth: (state: AuthState) => void }) {
         </button>
       )}
     </div>
-  )
-}
-
-// ─── Placeholder components (replaced in Phase 2/3) ──────────────────────────
-
-function TimelinePlaceholder({ auth }: { auth: AuthState }) {
-  return (
-    <main className="timeline-placeholder">
-      <p>Timeline — Phase 2 (coming soon)</p>
-      <p className="muted">Logged in as {auth.pubkey.slice(0, 16)}… via {auth.method}</p>
-    </main>
-  )
-}
-
-function IssuePickerPlaceholder({ onSelect }: { onSelect: () => void }) {
-  return (
-    <main className="timeline-placeholder">
-      <p>Issue Picker — Phase 3 (coming soon)</p>
-      <button className="btn btn--ghost" onClick={onSelect}>Back</button>
-    </main>
   )
 }
