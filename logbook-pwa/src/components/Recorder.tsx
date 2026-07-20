@@ -10,6 +10,7 @@
 
 import { useRef, useState, useEffect, useCallback } from 'react'
 import { RECORDING_MIME, RECORDING_MIME_FALLBACK, WAVEFORM_SAMPLES } from '../config'
+import { VoiceChanger } from '../lib/voiceChanger'
 
 export interface RecordingResult {
   blob: Blob
@@ -25,10 +26,20 @@ interface Props {
 
 type RecorderState = 'idle' | 'recording' | 'recorded' | 'trimming'
 
+// Pitch options: label → factor
+const PITCH_OPTIONS: { label: string; factor: number }[] = [
+  { label: 'Normal', factor: 1.0 },
+  { label: 'Higher', factor: 1.3 },
+  { label: 'Lower', factor: 0.75 },
+  { label: 'Robot', factor: 0.9 },
+]
+
 export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
   const [state, setState] = useState<RecorderState>('idle')
   const [elapsed, setElapsed] = useState(0)
   const [liveBars, setLiveBars] = useState<number[]>(new Array(60).fill(0))
+  const [pitchIdx, setPitchIdx] = useState(0)  // index into PITCH_OPTIONS
+  const [vcReady, setVcReady] = useState(false)  // true once AudioWorklet is loaded
 
   const [trimStart, setTrimStart] = useState(0)
   const [trimEnd, setTrimEnd] = useState(1)
@@ -40,6 +51,7 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
   const durationRef = useRef(0)
   const audioCtxRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
+  const voiceChangerRef = useRef<VoiceChanger | null>(null)
   const animFrameRef = useRef<number>(0)
   const startTimeRef = useRef<number>(0)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -66,6 +78,7 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
       cancelAnimationFrame(animFrameRef.current)
       if (timerRef.current) clearInterval(timerRef.current)
       streamRef.current?.getTracks().forEach((t) => t.stop())
+      voiceChangerRef.current?.dispose()
       audioCtxRef.current?.close()
       releaseWakeLock()
     }
@@ -99,11 +112,30 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
     const source = audioCtx.createMediaStreamSource(stream)
     const analyser = audioCtx.createAnalyser()
     analyser.fftSize = 256
-    source.connect(analyser)
     analyserRef.current = analyser
 
+    // Load voice changer worklet and insert into graph: source → vc → analyser
+    const vc = new VoiceChanger(audioCtx)
+    voiceChangerRef.current = vc
+    source.connect(vc.input)
+    vc.load()
+      .then(() => {
+        vc.setPitch(PITCH_OPTIONS[pitchIdx]?.factor ?? 1.0)
+        setVcReady(true)
+      })
+      .catch(() => {
+        // Worklet unavailable — bypass silently
+        setVcReady(false)
+      })
+    // Analyser reads from vc.output (bypass path works too since vc.output is always connected)
+    vc.output.connect(analyser)
+
+    // MediaRecorder captures the processed stream from a MediaStreamDestinationNode
+    const dest = audioCtx.createMediaStreamDestination()
+    analyser.connect(dest)
+
     const mime = pickMime()
-    const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
+    const mr = new MediaRecorder(dest.stream, mime ? { mimeType: mime } : undefined)
     mediaRecorderRef.current = mr
     mr.ondataavailable = (e) => {
       if (e.data.size > 0) chunksRef.current.push(e.data)
@@ -140,8 +172,11 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
 
     mr.onstop = () => {
       streamRef.current?.getTracks().forEach((t) => t.stop())
+      voiceChangerRef.current?.dispose()
+      voiceChangerRef.current = null
       audioCtxRef.current?.close()
       audioCtxRef.current = null
+      setVcReady(false)
 
       const mime = mr.mimeType || 'audio/webm'
       const blob = new Blob(chunksRef.current, { type: mime })
@@ -251,8 +286,29 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
     )
   }
 
+  const handlePitchChange = useCallback((idx: number) => {
+    setPitchIdx(idx)
+    const vc = voiceChangerRef.current
+    if (vc?.loaded) vc.setPitch(PITCH_OPTIONS[idx]?.factor ?? 1.0)
+  }, [])
+
   return (
     <div className="recorder">
+      {/* Pitch selector — shown in idle and recording states */}
+      <div className="recorder__pitch-row" aria-label="Voice pitch">
+        {PITCH_OPTIONS.map((opt, i) => (
+          <button
+            key={opt.label}
+            className={`btn btn--ghost btn--small${pitchIdx === i ? ' btn--active' : ''}`}
+            onClick={() => handlePitchChange(i)}
+            aria-pressed={pitchIdx === i}
+            title={vcReady && state === 'recording' ? `Pitch: ${opt.label}` : opt.label}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
       {state === 'recording' && (
         <>
           <div className="recorder__waveform" aria-hidden="true">

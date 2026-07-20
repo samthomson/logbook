@@ -1,0 +1,13 @@
+# Standing contributor roster for Logbook
+# Each entry may include an optional `lightning` field (LNURL or Lightning address)
+# for podcast:value splits. Equal splits are computed across contributors present in episode.
+
+contributors:
+  - npub: npub1compassplaceholder000000000000000000000000000000000000000000
+    name: Nostr Compass
+    lightning: compass@nostrcompass.com
+
+# Add contributors below in the same format:
+# - npub: npub1...
+#   name: Display Name
+#   lightning: user@wallet.com  # optional

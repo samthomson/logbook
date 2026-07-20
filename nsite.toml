@@ -1,0 +1,28 @@
+# nsite deployment configuration for Logbook PWA
+# Deploy with: nsite upload --config nsite.toml
+
+[site]
+# The Nostr pubkey that owns this nsite (Compass npub in hex)
+pubkey = "7fa56f5d6962ab1e3cd424e758c3002b8665f7b0d8dcee9fe9e288d7751aca95"
+
+# Directory to upload (the Vite static build output)
+dir = "logbook-pwa/dist"
+
+# Multi-gateway fallback list (tried in order)
+[[gateways]]
+url = "https://nsite.lol"
+
+[[gateways]]
+url = "https://nsite.nostr.band"
+
+[[gateways]]
+url = "https://nsite.nostrdeploy.com"
+
+[relays]
+# Relays used to publish the nsite index event (kind 34128)
+list = [
+  "wss://relay.damus.io",
+  "wss://relay.nostr.band",
+  "wss://nos.lol",
+  "wss://relay.snort.social",
+]

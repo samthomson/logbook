@@ -14,6 +14,9 @@ import { fetchSegmentsForSection } from '../lib/segment'
 import { parseSegment, publishSegment } from '../lib/segment'
 import { uploadBlob } from '../lib/blossom'
 import { computeSeedOrder } from '../lib/ordering'
+import { SimplePool } from 'nostr-tools/pool'
+import type { Filter } from 'nostr-tools'
+import { DEFAULT_RELAYS, KINDS } from '../config'
 
 interface Props {
   issue: CompassIssue
@@ -44,7 +47,12 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>('idle')
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [highlightId, setHighlightId] = useState<string | undefined>()
+  const [newSegmentIds, setNewSegmentIds] = useState<Set<string>>(new Set())
   const noteRefs = useRef<Map<string, HTMLElement>>(new Map())
+  // Track which segment IDs existed at load time so we can mark later arrivals "new"
+  const knownIdsRef = useRef<Set<string>>(new Set())
+  // Timestamp when this component mounted — used as the since filter for the subscription
+  const mountedAtRef = useRef<number>(Math.floor(Date.now() / 1000))
 
   // Load segments for each section
   useEffect(() => {
@@ -64,6 +72,8 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
             const s = parseSegment(e)
             return s ? [s] : []
           })
+          // Register all initially-loaded IDs as known so live arrivals can be diffed
+          for (const seg of parsed) knownIdsRef.current.add(seg.event.id)
           const order = computeSeedOrder(parsed)
           setSections((prev) => {
             const next = new Map(prev)
@@ -87,6 +97,37 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
     }
 
     return () => { mounted = false }
+  }, [issue])
+
+  // Subscribe for late-arriving segments after initial load
+  useEffect(() => {
+    if (!issue.sections.length) return
+    const pool = new SimplePool()
+    const sectionIds = issue.sections.map((s) => s.id)
+    const sub = pool.subscribeMany(
+      DEFAULT_RELAYS,
+      { kinds: [KINDS.SEGMENT], '#section': sectionIds, since: mountedAtRef.current } as Filter,
+      {
+        onevent(event: NostrEvent) {
+          if (knownIdsRef.current.has(event.id)) return
+          knownIdsRef.current.add(event.id)
+          const seg = parseSegment(event)
+          if (!seg) return
+          // Append to section state and mark as new
+          setSections((prev) => {
+            const next = new Map(prev)
+            const cur = next.get(seg.sectionId)
+            if (!cur) return prev
+            const newSegments = [...cur.segments, seg]
+            const newOrder = computeSeedOrder(newSegments)
+            next.set(seg.sectionId, { ...cur, segments: newSegments, order: newOrder })
+            return next
+          })
+          setNewSegmentIds((prev) => new Set([...prev, event.id]))
+        },
+      },
+    )
+    return () => { sub.close() }
   }, [issue])
 
   const handleRecord = useCallback((section: IssueSection) => {
@@ -227,6 +268,7 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
                       onScrollToParent={handleScrollToParent}
                       isWhitelisted={isWhitelisted}
                       highlightId={highlightId}
+                      isNew={newSegmentIds.has(id)}
                     />
 
                     {isReplyingHere && (

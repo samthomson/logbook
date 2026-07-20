@@ -1,6 +1,9 @@
 import { SimplePool } from 'nostr-tools'
 import type { Filter, NostrEvent } from 'nostr-tools'
 import { finalizeEvent } from 'nostr-tools'
+import { spawnSync } from 'node:child_process'
+import { dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { COMPASS_PUBKEY, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX, loadPrivateKey } from './config.ts'
 
 // ── types ────────────────────────────────────────────────────────────────────
@@ -85,6 +88,61 @@ async function createManifest(event: NostrEvent, privkey: Uint8Array): Promise<v
   console.log(`[watch-compass] Published manifest for issue ${issueId}`)
 }
 
+// ── AUTO-01: stitch trigger ──────────────────────────────────────────────────
+
+interface ManifestContent {
+  issueId: string
+  episodeStatus: string
+}
+
+async function pollCuttingManifests(stitched: Set<string>): Promise<void> {
+  const pool = new SimplePool()
+  const events = await pool.querySync(DEFAULT_RELAYS, {
+    kinds: [KINDS.MANIFEST],
+    authors: [COMPASS_PUBKEY],
+    limit: 20,
+  })
+  pool.close(DEFAULT_RELAYS)
+
+  for (const event of events) {
+    if (event.pubkey !== COMPASS_PUBKEY) continue
+    let content: ManifestContent
+    try {
+      content = JSON.parse(event.content) as ManifestContent
+    } catch {
+      continue
+    }
+    if (content.episodeStatus !== 'cutting') continue
+    if (stitched.has(content.issueId)) continue
+    stitched.add(content.issueId)
+
+    console.log(`[watch-compass] Manifest ${content.issueId} is cutting — triggering stitch`)
+    const __dir = dirname(fileURLToPath(import.meta.url))
+
+    const stitchResult = spawnSync(
+      'node',
+      ['--loader', 'ts-node/esm', 'stitch.ts', '--issue', content.issueId],
+      { cwd: __dir, stdio: 'inherit', env: process.env },
+    )
+    if (stitchResult.status !== 0) {
+      console.error(`[watch-compass] stitch.ts failed for ${content.issueId}`)
+      stitched.delete(content.issueId) // allow retry next cycle
+      continue
+    }
+
+    const rssResult = spawnSync(
+      'node',
+      ['--loader', 'ts-node/esm', 'publish-rss.ts', '--issue', content.issueId],
+      { cwd: __dir, stdio: 'inherit', env: process.env },
+    )
+    if (rssResult.status !== 0) {
+      console.error(`[watch-compass] publish-rss.ts failed for ${content.issueId}`)
+    } else {
+      console.log(`[watch-compass] Episode ${content.issueId} published successfully`)
+    }
+  }
+}
+
 // ── watcher ──────────────────────────────────────────────────────────────────
 
 async function poll(privkey: Uint8Array, seen: Set<string>): Promise<void> {
@@ -118,8 +176,11 @@ async function main(): Promise<void> {
   for (const e of existing) seen.add(e.id)
   console.log(`[watch-compass] Bootstrapped with ${seen.size} existing issues`)
 
+  const stitched = new Set<string>()
+
   const INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
   setInterval(() => poll(privkey, seen).catch(console.error), INTERVAL_MS)
+  setInterval(() => pollCuttingManifests(stitched).catch(console.error), INTERVAL_MS)
   console.log('[watch-compass] Polling every 10 minutes…')
 }
 

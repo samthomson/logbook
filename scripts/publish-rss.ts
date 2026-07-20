@@ -14,7 +14,8 @@
 import { SimplePool } from 'nostr-tools/pool'
 import { finalizeEvent } from 'nostr-tools'
 import { readFileSync, writeFileSync, statSync, existsSync } from 'node:fs'
-import { join, basename } from 'node:path'
+import { join, basename, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   COMPASS_PUBKEY,
   DEFAULT_RELAYS,
@@ -24,6 +25,61 @@ import {
   STATIC_DIR,
   loadPrivateKey,
 } from './config.ts'
+
+// ── npubs.yml loading ─────────────────────────────────────────────────────────
+
+interface ContributorEntry {
+  pubkey: string
+  name: string
+  lightning?: string
+}
+
+function loadRoster(): ContributorEntry[] {
+  const __dir = dirname(fileURLToPath(import.meta.url))
+  const rosterPath = join(__dir, '../data/npubs.yml')
+  if (!existsSync(rosterPath)) return []
+  const raw = readFileSync(rosterPath, 'utf-8')
+  // Minimal YAML parser for the simple list format we use
+  const entries: ContributorEntry[] = []
+  let current: Partial<ContributorEntry> | null = null
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed.startsWith('- pubkey:')) {
+      if (current?.pubkey) entries.push(current as ContributorEntry)
+      current = { pubkey: trimmed.replace('- pubkey:', '').trim().replace(/^"|"$/g, '') }
+    } else if (trimmed.startsWith('name:') && current) {
+      current.name = trimmed.replace('name:', '').trim().replace(/^"|"$/g, '')
+    } else if (trimmed.startsWith('lightning:') && current) {
+      current.lightning = trimmed.replace('lightning:', '').trim().replace(/^"|"$/g, '')
+    }
+  }
+  if (current?.pubkey) entries.push(current as ContributorEntry)
+  return entries
+}
+
+function buildValueBlock(participantPubkeys: string[]): string {
+  const roster = loadRoster()
+  // Filter to contributors who actually participated and have lightning addresses
+  const active = roster.filter(
+    (c) => c.lightning && (participantPubkeys.includes(c.pubkey) || c.pubkey === COMPASS_PUBKEY),
+  )
+  if (!active.length) {
+    // Fallback: Compass gets 100%
+    return `    <podcast:value type="lightning" method="keysend">
+      <podcast:valueRecipient name="Nostr Compass" type="node" address="${escapeXml(COMPASS_PUBKEY)}" split="100" />
+    </podcast:value>`
+  }
+  // Equal split among all active participants
+  const splitPct = Math.floor(100 / active.length)
+  const remainder = 100 - splitPct * active.length
+  const recipients = active.map((c, i) => {
+    const split = i === 0 ? splitPct + remainder : splitPct
+    return `      <podcast:valueRecipient name="${escapeXml(c.name)}" type="lnaddress" address="${escapeXml(c.lightning!)}" split="${split}" />`
+  })
+  return `    <podcast:value type="lightning" method="keysend">
+${recipients.join('\n')}
+    </podcast:value>`
+}
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -146,6 +202,7 @@ interface EpisodeData {
   pubDate: Date
   chapters: Chapter[]
   description: string
+  participantPubkeys?: string[]
 }
 
 function buildEpisodeXml(ep: EpisodeData, meta: FeedMeta): string {
@@ -172,8 +229,9 @@ ${chaptersContent}
     </item>`
 }
 
-function buildFeedXml(meta: FeedMeta, episodes: EpisodeData[]): string {
+function buildFeedXml(meta: FeedMeta, episodes: EpisodeData[], participantPubkeys: string[] = []): string {
   const itemsXml = episodes.map((ep) => buildEpisodeXml(ep, meta)).join('\n\n')
+  const valueBlock = buildValueBlock(participantPubkeys)
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0"
@@ -202,9 +260,7 @@ function buildFeedXml(meta: FeedMeta, episodes: EpisodeData[]): string {
     <itunes:category text="Technology" />
     <podcast:guid>${escapeXml(COMPASS_PUBKEY)}</podcast:guid>
     <podcast:medium>podcast</podcast:medium>
-    <podcast:value type="lightning" method="keysend">
-      <podcast:valueRecipient name="Nostr Compass" type="node" address="${escapeXml(COMPASS_PUBKEY)}" split="100" />
-    </podcast:value>
+${valueBlock}
 
 ${itemsXml}
   </channel>
@@ -273,6 +329,19 @@ async function main(): Promise<void> {
   const mp3Url = `${BASE_URL}/audio/${basename(mp3Path)}`
   const chaptersUrl = `${BASE_URL}/audio/${basename(chaptersPath)}`
 
+  // Collect segment pubkeys from all included sections
+  const allSegmentIds = manifest.sections
+    .filter((s) => !s.excluded)
+    .flatMap((s) => s.order)
+  const segmentEvents =
+    allSegmentIds.length > 0
+      ? await pool.querySync(DEFAULT_RELAYS, {
+          kinds: [KINDS.SEGMENT],
+          ids: allSegmentIds,
+        })
+      : []
+  const participantPubkeys = [...new Set(segmentEvents.map((e) => e.pubkey))]
+
   const ep: EpisodeData = {
     issueId,
     issueNumber: manifest.issueNumber,
@@ -284,6 +353,7 @@ async function main(): Promise<void> {
     pubDate: new Date(),
     chapters,
     description: `Async voice notes from Nostr Compass contributors on issue #${manifest.issueNumber}.`,
+    participantPubkeys,
   }
 
   // Load existing feed to prepend new episode
@@ -303,7 +373,7 @@ async function main(): Promise<void> {
   const allEpisodes = [ep, ...filtered].slice(0, 50) // cap at 50 episodes
   writeFileSync(episodeStatePath, JSON.stringify(allEpisodes, null, 2))
 
-  const xml = buildFeedXml(FEED_META, allEpisodes)
+  const xml = buildFeedXml(FEED_META, allEpisodes, ep.participantPubkeys ?? [])
   writeFileSync(RSS_PATH, xml, 'utf-8')
   console.log(`[publish-rss] RSS written: ${RSS_PATH}`)
   console.log(`[publish-rss] Episodes in feed: ${allEpisodes.length}`)

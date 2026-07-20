@@ -15,6 +15,7 @@ interface Props {
   onScrollToParent?: (eventId: string) => void
   isWhitelisted?: boolean
   highlightId?: string
+  isNew?: boolean
 }
 
 export default function NoteCard({
@@ -23,6 +24,7 @@ export default function NoteCard({
   onScrollToParent,
   isWhitelisted,
   highlightId,
+  isNew,
 }: Props) {
   const [expanded, setExpanded] = useState(false)
 
@@ -36,8 +38,9 @@ export default function NoteCard({
   return (
     <div
       id={`note-${event.id}`}
-      className={`note-card ${isIntro ? 'note-card--intro' : ''} ${isHighlighted ? 'note-card--highlighted' : ''}`}
+      className={`note-card ${isIntro ? 'note-card--intro' : ''} ${isHighlighted ? 'note-card--highlighted' : ''} ${isNew ? 'note-card--new' : ''}`}
     >
+      {isNew && <span className="note-card__new-badge">new</span>}
       <div className="note-card__header">
         <div className="note-card__avatar" aria-hidden="true">
           {event.pubkey.slice(0, 2).toUpperCase()}
