@@ -1,0 +1,23 @@
+{
+  "name": "logbook-scripts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "watch-compass": "node --loader ts-node/esm watch-compass.ts",
+    "stitch": "node --loader ts-node/esm stitch.ts",
+    "publish-rss": "node --loader ts-node/esm publish-rss.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "nostr-tools": "^2.7.0",
+    "applesauce-signers": "^6.2.2",
+    "applesauce-core": "^6.2.0",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "ts-node": "^10.9.2",
+    "@types/node": "^20.0.0"
+  }
+}

@@ -193,3 +193,20 @@ export function parseSegment(event: NostrEvent): Segment | null {
     alt: getTag(event, 'alt'),
   }
 }
+
+/**
+ * Fetch specific segment events by their event IDs.
+ * Used by AdminPanel to load ordered segments from a manifest.
+ */
+export async function fetchSegmentsByIds(
+  ids: string[],
+  relays: string[] = DEFAULT_RELAYS,
+): Promise<NostrEvent[]> {
+  if (!ids.length) return []
+  const pool = getPool()
+  const events = await pool.querySync(relays, {
+    kinds: [KINDS.SEGMENT],
+    ids,
+  })
+  return events
+}

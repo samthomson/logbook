@@ -19,6 +19,8 @@ interface Props {
   issue: CompassIssue
   signer: NostrSigner
   isWhitelisted: boolean
+  isAdmin?: boolean
+  onOpenAdmin?: () => void
 }
 
 interface SectionState {
