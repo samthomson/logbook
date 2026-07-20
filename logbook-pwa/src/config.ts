@@ -15,14 +15,16 @@ export const DEFAULT_RELAYS = [
   'wss://relay.snort.social',
 ]
 
-// Blossom servers — VPS origin first, public mirrors after.
-// VPS origin must serve HTTPS with CORS and byte-range (Range) support.
+// Blossom servers — public servers only, no self-hosted origin.
+// Upload goes to all listed servers; each gets its own kind 24242 auth event.
+// BUD-04: client uploads to first, then mirrors to the rest.
 export const BLOSSOM_SERVERS = [
-  'https://blossom.nostrcompass.com', // VPS origin — primary
-  'https://blossom.band',             // public mirror
+  'https://blossom.band',
+  'https://blossom.primal.net',
+  'https://files.v0l.io',
 ]
 
-// Primary Blossom server for uploads (must be first in BLOSSOM_SERVERS)
+// Primary Blossom server for the initial upload (BUD-01 PUT)
 export const BLOSSOM_PRIMARY = BLOSSOM_SERVERS[0]
 
 // Nostr event kinds used by Logbook
