@@ -3,7 +3,7 @@ import type { AuthState } from './lib/auth'
 import { checkRecordingSupport } from './lib/auth'
 import IssueTimeline from './components/IssueTimeline'
 import IssuePicker from './components/IssuePicker'
-import { fetchLatestIssue, parseIssue } from './lib/compass'
+import { fetchLatestIssue, fetchIssueByDTag, parseIssue } from './lib/compass'
 import { fetchWhitelist } from './lib/whitelist'
 import type { CompassIssue, IssueManifest } from './types/nostr'
 import './App.css'
@@ -48,15 +48,11 @@ export default function App() {
 
   const handleSelectIssue = async (manifest: IssueManifest) => {
     if (!auth) return
-    // Extract issue number from manifest issueId (format: "logbook-<N>")
-    const parts = manifest.issueId.split('-')
-    const num = parseInt(parts[parts.length - 1], 10)
-    if (isNaN(num)) return
-
     setIssueLoading(true)
     setIssueError(null)
     try {
-      const event = await fetchLatestIssue()
+      // Load the actual Compass issue that corresponds to this manifest d-tag
+      const event = await fetchIssueByDTag(manifest.issueId) ?? await fetchLatestIssue()
       if (!event) throw new Error('No issue found')
       const parsed = parseIssue(event)
       setIssue(parsed)
