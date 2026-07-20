@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react'
 import type { AuthState } from './lib/auth'
-import { checkRecordingSupport } from './lib/auth'
+
 import IssueTimeline from './components/IssueTimeline'
 import IssuePicker from './components/IssuePicker'
+import InstallPrompt from './components/InstallPrompt'
 import { fetchLatestIssue, fetchIssueByDTag, parseIssue } from './lib/compass'
+import { checkRecordingSupport } from './lib/utils'
+import { IOS_RECORDING_MIN_VERSION } from './config'
 import { fetchWhitelist } from './lib/whitelist'
 import type { CompassIssue, IssueManifest } from './types/nostr'
 import './App.css'
@@ -20,7 +23,7 @@ export default function App() {
   const [issueError, setIssueError] = useState<string | null>(null)
 
   useEffect(() => {
-    const { supported, message } = checkRecordingSupport()
+    const { supported, message } = checkRecordingSupport(IOS_RECORDING_MIN_VERSION)
     if (!supported) setRecordingNotice(message)
   }, [])
 
@@ -86,6 +89,8 @@ export default function App() {
           {recordingNotice}
         </div>
       )}
+
+      <InstallPrompt />
 
       <header className="app-header">
         <span className="app-title">Logbook</span>

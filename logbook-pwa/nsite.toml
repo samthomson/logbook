@@ -1,0 +1,26 @@
+# nsite deploy config for Logbook PWA
+# Deploy with: nsite publish dist/
+# Requires: nsite CLI (https://github.com/hzrd149/nsite)
+#
+# The site is served at the Compass npub's nsite address.
+# Static assets (audio, RSS) live on the VPS — not here.
+
+[site]
+name = "logbook"
+description = "Async voice podcast for Nostr Compass"
+
+# After building, deploy dist/ to nsite:
+#   cd logbook-pwa
+#   npm run build
+#   nsite publish dist/ --key <nsec or bunker URI>
+#
+# To serve locally for testing:
+#   nsite serve dist/
+
+[relays]
+publish = [
+  "wss://relay.damus.io",
+  "wss://relay.nostr.band",
+  "wss://nos.lol",
+  "wss://relay.snort.social",
+]

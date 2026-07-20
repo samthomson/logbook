@@ -15,8 +15,7 @@ import {
 } from 'applesauce-signers'
 import { nip19 } from 'nostr-tools'
 import type { NostrSigner } from '../types/nostr'
-import { DEFAULT_RELAYS, IOS_RECORDING_MIN_VERSION } from '../config'
-import { isUnsupportedIOS } from './utils'
+import { DEFAULT_RELAYS } from '../config'
 
 export type AuthMethod = 'bunker' | 'extension' | 'nsec' | 'none'
 
@@ -79,22 +78,4 @@ export async function connectNsec(input: string, passphrase?: string): Promise<A
 
   const pubkey = await signer.getPublicKey()
   return { pubkey, method: 'nsec', signer }
-}
-
-// ─── iOS recording capability check ──────────────────────────────────────────
-
-export function checkRecordingSupport(): { supported: boolean; message: string } {
-  if (isUnsupportedIOS(IOS_RECORDING_MIN_VERSION)) {
-    return {
-      supported: false,
-      message: `Recording requires iOS ${IOS_RECORDING_MIN_VERSION} or later. Your device cannot record voice notes, but you can still listen and browse.`,
-    }
-  }
-  if (typeof MediaRecorder === 'undefined') {
-    return {
-      supported: false,
-      message: 'Your browser does not support audio recording. Try Chrome or Firefox.',
-    }
-  }
-  return { supported: true, message: '' }
 }

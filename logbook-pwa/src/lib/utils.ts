@@ -54,3 +54,20 @@ export function formatDuration(seconds: number): string {
 export function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
+
+/** Check if the current browser/device supports audio recording. */
+export function checkRecordingSupport(minIOSVersion: number): { supported: boolean; message: string } {
+  if (isUnsupportedIOS(minIOSVersion)) {
+    return {
+      supported: false,
+      message: `Recording requires iOS ${minIOSVersion} or later. Your device cannot record voice notes, but you can still listen and browse.`,
+    }
+  }
+  if (typeof MediaRecorder === 'undefined') {
+    return {
+      supported: false,
+      message: 'Your browser does not support audio recording. Try Chrome or Firefox.',
+    }
+  }
+  return { supported: true, message: '' }
+}

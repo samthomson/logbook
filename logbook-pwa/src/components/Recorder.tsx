@@ -41,6 +41,21 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
   const startTimeRef = useRef<number>(0)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null)
+
+  const acquireWakeLock = async () => {
+    if (!('wakeLock' in navigator)) return
+    try {
+      wakeLockRef.current = await navigator.wakeLock.request('screen')
+    } catch {
+      // Wake lock is a best-effort enhancement — ignore failures
+    }
+  }
+
+  const releaseWakeLock = () => {
+    wakeLockRef.current?.release().catch(() => {})
+    wakeLockRef.current = null
+  }
 
   // Cleanup on unmount
   useEffect(() => {
@@ -48,6 +63,7 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
       cancelAnimationFrame(animFrameRef.current)
       if (timerRef.current) clearInterval(timerRef.current)
       streamRef.current?.getTracks().forEach((t) => t.stop())
+      releaseWakeLock()
     }
   }, [])
 
@@ -71,6 +87,7 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
       return
     }
     streamRef.current = stream
+    await acquireWakeLock()
 
     // Web Audio analyser for real-time waveform
     const audioCtx = new AudioContext()
@@ -94,6 +111,7 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
     mr.start(100)  // collect chunks every 100ms
     startTimeRef.current = Date.now()
     setState('recording')
+    acquireWakeLock()
 
     // Elapsed timer
     timerRef.current = setInterval(() => {
@@ -120,6 +138,8 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
   const stopRecording = useCallback(() => {
     cancelAnimationFrame(animFrameRef.current)
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+    releaseWakeLock()
+    releaseWakeLock()
 
     const mr = mediaRecorderRef.current
     if (!mr) return

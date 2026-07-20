@@ -738,3 +738,23 @@ body {
   .auth-screen { padding: 32px 16px 24px; }
   .recorder__waveform { height: 44px; }
 }
+
+/* ─── Install Prompt ───────────────────────────────────────────────────────────── */
+.install-prompt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.install-prompt__text {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+.install-prompt__actions {
+  display: flex;
+  gap: 8px;
+}
