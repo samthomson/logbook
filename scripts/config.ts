@@ -4,7 +4,7 @@
  */
 
 export const COMPASS_PUBKEY =
-  '7fa56f5d6962ab1e3cd424e758c3002b8665f7b0d8dcee9fe9e288d7751aca95'
+  '775954f7314112489a4a29ec692b72386fd60bcceb0308d423101ea979c57a80'
 
 export const DEFAULT_RELAYS = [
   'wss://relay.damus.io',
@@ -14,9 +14,9 @@ export const DEFAULT_RELAYS = [
 ]
 
 export const BLOSSOM_SERVERS = [
-  'https://blossom.band',
-  'https://blossom.primal.net',
-  'https://files.v0l.io',
+  'https://blossom.band',       // primary: byte-range + CORS confirmed
+  'https://blossom.ditto.pub',  // mirror 1: Cloudflare-backed, Content-Range exposed
+  'https://blossom.oxtr.dev',   // mirror 2: BUD-01+BUD-04 confirmed
 ]
 
 export const KINDS = {

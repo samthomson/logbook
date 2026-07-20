@@ -1,7 +1,7 @@
 // Compass Nostr pubkey (hex) — the authoritative source for issue manifests.
 // All kind 34200 queries MUST pin authors:[COMPASS_PUBKEY] and re-verify on receipt.
 export const COMPASS_PUBKEY =
-  '7fa56f5d6962ab1e3cd424e758c3002b8665f7b0d8dcee9fe9e288d7751aca95'
+  '775954f7314112489a4a29ec692b72386fd60bcceb0308d423101ea979c57a80'
 
 // Admin pubkeys (hex) — can access drag-to-reorder and lock episode.
 // COMPASS_PUBKEY is always implicitly an admin.
@@ -19,9 +19,9 @@ export const DEFAULT_RELAYS = [
 // Upload goes to all listed servers; each gets its own kind 24242 auth event.
 // BUD-04: client uploads to first, then mirrors to the rest.
 export const BLOSSOM_SERVERS = [
-  'https://blossom.band',
-  'https://blossom.primal.net',
-  'https://files.v0l.io',
+  'https://blossom.band',       // primary: byte-range + CORS confirmed
+  'https://blossom.ditto.pub',  // mirror 1: Cloudflare-backed, Content-Range exposed
+  'https://blossom.oxtr.dev',   // mirror 2: BUD-01+BUD-04 confirmed
 ]
 
 // Primary Blossom server for the initial upload (BUD-01 PUT)

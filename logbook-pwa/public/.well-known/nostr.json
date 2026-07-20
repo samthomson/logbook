@@ -1,10 +1,9 @@
 {
   "names": {
-    "logbook": "7fa56f5d6962ab1e3cd424e758c3002b8665f7b0d8dcee9fe9e288d7751aca95",
-    "_": "7fa56f5d6962ab1e3cd424e758c3002b8665f7b0d8dcee9fe9e288d7751aca95"
+    "_": "775954f7314112489a4a29ec692b72386fd60bcceb0308d423101ea979c57a80"
   },
   "relays": {
-    "7fa56f5d6962ab1e3cd424e758c3002b8665f7b0d8dcee9fe9e288d7751aca95": [
+    "775954f7314112489a4a29ec692b72386fd60bcceb0308d423101ea979c57a80": [
       "wss://relay.damus.io",
       "wss://relay.nostr.band",
       "wss://nos.lol",
