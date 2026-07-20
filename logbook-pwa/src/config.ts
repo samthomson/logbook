@@ -1,18 +1,20 @@
 // Compass Nostr pubkey (hex) — the authoritative source for issue manifests.
 // All kind 34200 queries MUST pin authors:[COMPASS_PUBKEY] and re-verify on receipt.
 export const COMPASS_PUBKEY =
-  '775954f7314112489a4a29ec692b72386fd60bcceb0308d423101ea979c57a80'
+  'baa11ea074871c850de58b626288da51a9e8bb5df7cdb63859dfa19898659b7e'
 
 // Admin pubkeys (hex) — can access drag-to-reorder and lock episode.
 // COMPASS_PUBKEY is always implicitly an admin.
-export const ADMIN_PUBKEYS: string[] = [COMPASS_PUBKEY]
+export const ADMIN_PUBKEYS: string[] = [
+  COMPASS_PUBKEY,
+  '24b859838aca43694d0285f9c0130e2ca24fdb72e5f48a90dfb747279fc6f7fe', // test user
+]
 
 // Default Nostr relays
 export const DEFAULT_RELAYS = [
-  'wss://relay.damus.io',
-  'wss://relay.nostr.band',
   'wss://nos.lol',
-  'wss://relay.snort.social',
+  'wss://relay.damus.io',
+  'wss://relay.primal.net',
 ]
 
 // Blossom servers — public servers only, no self-hosted origin.

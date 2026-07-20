@@ -16,7 +16,7 @@ import { uploadBlob } from '../lib/blossom'
 import { computeSeedOrder } from '../lib/ordering'
 import { SimplePool } from 'nostr-tools/pool'
 import type { Filter } from 'nostr-tools'
-import { DEFAULT_RELAYS, KINDS } from '../config'
+import { DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from '../config'
 
 interface Props {
   issue: CompassIssue
@@ -65,7 +65,7 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
         return next
       })
 
-      fetchSegmentsForSection(section.id)
+      fetchSegmentsForSection(section.id, `${ISSUE_PREFIX}-${issue.issueNumber}`)
         .then((events: NostrEvent[]) => {
           if (!mounted) return
           const parsed = events.flatMap((e) => {
@@ -103,16 +103,17 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
   useEffect(() => {
     if (!issue.sections.length) return
     const pool = new SimplePool()
-    const sectionIds = issue.sections.map((s) => s.id)
+    const issueId = `${ISSUE_PREFIX}-${issue.issueNumber}`
+    const sectionIds = new Set(issue.sections.map((s) => s.id))
     const sub = pool.subscribeMany(
       DEFAULT_RELAYS,
-      { kinds: [KINDS.SEGMENT], '#section': sectionIds, since: mountedAtRef.current } as Filter,
+      { kinds: [KINDS.SEGMENT], '#t': [issueId], since: mountedAtRef.current } as Filter,
       {
         onevent(event: NostrEvent) {
           if (knownIdsRef.current.has(event.id)) return
           knownIdsRef.current.add(event.id)
           const seg = parseSegment(event)
-          if (!seg) return
+          if (!seg || !sectionIds.has(seg.sectionId)) return
           // Append to section state and mark as new
           setSections((prev) => {
             const next = new Map(prev)

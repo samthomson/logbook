@@ -70,6 +70,8 @@ export async function publishSegment(params: PublishSegmentParams): Promise<Nost
     ['x', blob.sha256],
     ['section', sectionId],
     ['issue', issueId],
+    // 't' tag is always indexed by relays — used as relay-level filter for fetchSegmentsForSection
+    ['t', issueId],
     ['alt', isIntro ? `AI intro for section: ${sectionId}` : `Voice note on: ${sectionId}`],
   ]
 
@@ -127,20 +129,30 @@ export async function publishTranscript(
 
 /**
  * Fetch all segment events for a given section.
- * MUST include authors filter when fetching manifests — but segments are
- * authored by contributors, so we filter by section tag instead.
+ *
+ * Uses '#t' (issue ID) as the relay-level filter since most relays only index
+ * standard single-letter tags. Results are then filtered client-side by section.
+ * issueId must be provided (e.g. "logbook-1") to scope the relay query.
  */
 export async function fetchSegmentsForSection(
   sectionId: string,
+  issueId: string,
   relays: string[] = DEFAULT_RELAYS,
 ): Promise<NostrEvent[]> {
+  console.log('[segment] fetchSegmentsForSection', { sectionId, issueId, relays })
   const pool = getPool()
   const events = await pool.querySync(relays, {
     kinds: [KINDS.SEGMENT],
-    '#section': [sectionId],
-    limit: 200,
+    '#t': [issueId],
+    limit: 500,
   })
-  return events.sort((a, b) => a.created_at - b.created_at)
+  console.log('[segment] querySync returned', events.length, 'events for issueId:', issueId)
+  // Filter client-side by section tag
+  const filtered = events
+    .filter((e) => e.tags.some((t) => t[0] === 'section' && t[1] === sectionId))
+    .sort((a, b) => a.created_at - b.created_at)
+  console.log('[segment] filtered to', filtered.length, 'for section:', sectionId)
+  return filtered
 }
 
 /**
