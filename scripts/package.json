@@ -13,7 +13,8 @@
     "nostr-tools": "^2.7.0",
     "applesauce-signers": "^6.2.2",
     "applesauce-core": "^6.2.0",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
+    "@anthropic-ai/sdk": "^0.27.0"
   },
   "devDependencies": {
     "typescript": "^5.5.0",

@@ -15,6 +15,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { execSync } from 'child_process'
 import { SimplePool } from 'nostr-tools/pool'
+import { finalizeEvent, getPublicKey } from 'nostr-tools'
 import { loadPrivateKey, COMPASS_PUBKEY, BLOSSOM_SERVERS, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from './config.ts'
 
 const ISSUE_NUMBER = parseInt(process.argv[2] ?? '0', 10)
@@ -47,7 +48,7 @@ Output ONLY the spoken script. No stage directions, no quotes, no commentary.`
     messages: [{ role: 'user', content: prompt }],
   })
 
-  const block = msg.content.find(b => b.type === 'text')
+  const block = msg.content.find((b): b is { type: 'text'; text: string } => b.type === 'text')
   if (!block || block.type !== 'text') throw new Error('No text in LLM response')
   return block.text.trim()
 }
@@ -196,7 +197,14 @@ async function fetchManifest(issueNumber: number) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const { signer } = await loadPrivateKey()
+  const privkey = await loadPrivateKey()
+  const signer = {
+    getPublicKey: async () => getPublicKey(privkey),
+    signEvent: async (e: object) => {
+      const signed = finalizeEvent(e as Parameters<typeof finalizeEvent>[0], privkey)
+      return signed as object & { id: string; sig: string }
+    },
+  }
   const manifest = await fetchManifest(ISSUE_NUMBER)
 
   for (const section of manifest.sections as Array<{ id: string; title: string; body?: string; intro?: string }>) {

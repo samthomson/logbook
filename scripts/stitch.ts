@@ -13,8 +13,9 @@
  */
 
 import { SimplePool } from 'nostr-tools/pool'
-import { execSync, spawnSync } from 'node:child_process'
-import { mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs'
+import { finalizeEvent } from 'nostr-tools'
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { tmpdir } from 'node:os'
 import fetch from 'node-fetch'
@@ -249,7 +250,7 @@ async function main(): Promise<void> {
   const issueId = args[issueFlag + 1]
   const dryRun = args.includes('--dry-run')
 
-  await loadPrivateKey() // validate key exists before doing heavy work
+  const privkey = await loadPrivateKey()
 
   const pool = new SimplePool()
 
@@ -387,6 +388,28 @@ async function main(): Promise<void> {
     const mins = Math.floor(ch.startTime / 60000)
     const secs = Math.floor((ch.startTime % 60000) / 1000)
     console.log(`  ${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')} — ${ch.title}`)
+  }
+
+  // CUR-01: publish kind 7 reaction (🎙️) from Compass npub on each included segment
+  const includedIds = activeSections.flatMap(s => s.order).filter(id => segments.has(id))
+  if (includedIds.length > 0) {
+    console.log(`[stitch] Publishing ${includedIds.length} kind 7 reactions...`)
+    const reactPool = new SimplePool()
+    for (const segId of includedIds) {
+      try {
+        const reaction = finalizeEvent({
+          kind: KINDS.REACTION,
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [['e', segId], ['k', String(KINDS.SEGMENT)]],
+          content: '🎙️',
+        }, privkey)
+        await Promise.any(reactPool.publish(DEFAULT_RELAYS, reaction))
+      } catch {
+        // fire-and-forget, don't block on reaction failures
+      }
+    }
+    reactPool.close(DEFAULT_RELAYS)
+    console.log(`[stitch] Reactions published.`)
   }
 }
 
