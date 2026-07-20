@@ -99,6 +99,7 @@ export async function updateManifest(
     pubkey,
   }
 
+  if (relays.length === 0) throw new Error('No relays configured')
   const event = await signer.signEvent(unsigned)
   const pool = getPool()
   await Promise.any(pool.publish(relays, event))

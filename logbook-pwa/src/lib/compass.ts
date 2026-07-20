@@ -60,8 +60,11 @@ export async function fetchAllIssues(
 export function extractIssueNumber(event: NostrEvent): number {
   const dTag = event.tags.find((t) => t[0] === 'd')?.[1]
   if (dTag) {
-    const n = parseInt(dTag, 10)
-    if (!isNaN(n)) return n
+    // Handle both plain integer ("31") and prefixed ("logbook-31") d-tags
+    const plain = parseInt(dTag, 10)
+    if (!isNaN(plain)) return plain
+    const prefixed = dTag.match(/(\d+)$/)
+    if (prefixed) return parseInt(prefixed[1], 10)
   }
   // Fallback: parse from title tag
   const titleTag = event.tags.find((t) => t[0] === 'title')?.[1] ?? ''

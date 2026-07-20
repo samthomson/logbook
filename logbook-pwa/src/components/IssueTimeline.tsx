@@ -46,6 +46,8 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
 
   // Load segments for each section
   useEffect(() => {
+    let mounted = true
+
     for (const section of issue.sections) {
       setSections((prev) => {
         const next = new Map(prev)
@@ -55,6 +57,7 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
 
       fetchSegmentsForSection(section.id)
         .then((events: NostrEvent[]) => {
+          if (!mounted) return
           const parsed = events.flatMap((e) => {
             const s = parseSegment(e)
             return s ? [s] : []
@@ -67,6 +70,7 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
           })
         })
         .catch((err: unknown) => {
+          if (!mounted) return
           setSections((prev) => {
             const next = new Map(prev)
             next.set(section.id, {
@@ -79,6 +83,8 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
           })
         })
     }
+
+    return () => { mounted = false }
   }, [issue])
 
   const handleRecord = useCallback((section: IssueSection) => {

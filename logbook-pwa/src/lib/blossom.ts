@@ -72,7 +72,7 @@ async function uploadToPrimary(
     url: data.url as string,
     sha256: data.sha256 as string,
     size: data.size as number,
-    mime: (data.type ?? data.mime) as string,
+    mime: (data.type ?? data.mime ?? blob.type) as string,
     uploaded: (data.uploaded as number | undefined) ?? now(),
   }
 }

@@ -7,7 +7,7 @@ import InstallPrompt from './components/InstallPrompt'
 import { fetchLatestIssue, fetchIssueByDTag, parseIssue } from './lib/compass'
 import { checkRecordingSupport } from './lib/utils'
 import { IOS_RECORDING_MIN_VERSION } from './config'
-import { fetchWhitelist } from './lib/whitelist'
+import { fetchWhitelist, isWhitelisted as checkWhitelist } from './lib/whitelist'
 import type { CompassIssue, IssueManifest } from './types/nostr'
 import './App.css'
 
@@ -41,7 +41,7 @@ export default function App() {
         // Check whitelist for this issue
         const issueId = `logbook-${parsed.issueNumber}`
         const wl = await fetchWhitelist(issueId)
-        setIsWhitelisted(wl.has(auth.pubkey))
+        setIsWhitelisted(checkWhitelist(auth.pubkey, wl))
       })
       .catch((err: unknown) => {
         setIssueError(err instanceof Error ? err.message : String(err))
@@ -55,12 +55,12 @@ export default function App() {
     setIssueError(null)
     try {
       // Load the actual Compass issue that corresponds to this manifest d-tag
-      const event = await fetchIssueByDTag(manifest.issueId) ?? await fetchLatestIssue()
-      if (!event) throw new Error('No issue found')
+      const event = await fetchIssueByDTag(manifest.issueId)
+      if (!event) throw new Error(`Issue ${manifest.issueId} not found on relays`)
       const parsed = parseIssue(event)
       setIssue(parsed)
       const wl = await fetchWhitelist(manifest.issueId)
-      setIsWhitelisted(wl.has(auth.pubkey))
+      setIsWhitelisted(checkWhitelist(auth.pubkey, wl))
       setView('timeline')
     } catch (err: unknown) {
       setIssueError(err instanceof Error ? err.message : String(err))

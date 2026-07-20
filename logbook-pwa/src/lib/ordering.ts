@@ -70,6 +70,13 @@ export function computeSeedOrder(segments: Segment[]): string[] {
     walk(root)
   }
 
+  // Append any segments unreachable due to mutual-reply cycles (sorted chronologically)
+  for (const seg of [...segments].sort((a, b) => a.event.created_at - b.event.created_at)) {
+    if (!visited.has(seg.event.id)) {
+      order.push(seg.event.id)
+    }
+  }
+
   // Pin intro to position 0 (move from wherever it landed)
   const introIdx = order.findIndex((id) => byId.get(id)?.isIntro)
   if (introIdx > 0) {

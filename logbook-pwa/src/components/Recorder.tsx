@@ -3,6 +3,9 @@
  *
  * States: idle → recording → recorded → trimming → done
  * On completion calls onRecorded(blob, waveformSamples, durationSeconds).
+ *
+ * Trim re-encodes via a second MediaRecorder pass to preserve WebM/Opus mime type.
+ * Wake lock is acquired once on recording start and released on stop.
  */
 
 import { useRef, useState, useEffect, useCallback } from 'react'
@@ -24,18 +27,18 @@ type RecorderState = 'idle' | 'recording' | 'recorded' | 'trimming'
 
 export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
   const [state, setState] = useState<RecorderState>('idle')
-  const [elapsed, setElapsed] = useState(0)           // seconds while recording
+  const [elapsed, setElapsed] = useState(0)
   const [liveBars, setLiveBars] = useState<number[]>(new Array(60).fill(0))
 
-  // Trim state (0–1 fractions of total duration)
   const [trimStart, setTrimStart] = useState(0)
   const [trimEnd, setTrimEnd] = useState(1)
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const rawBlobRef = useRef<Blob | null>(null)
-  const fullWaveformRef = useRef<number[]>([])  // densely sampled during recording
+  const fullWaveformRef = useRef<number[]>([])
   const durationRef = useRef(0)
+  const audioCtxRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const animFrameRef = useRef<number>(0)
   const startTimeRef = useRef<number>(0)
@@ -48,7 +51,7 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
     try {
       wakeLockRef.current = await navigator.wakeLock.request('screen')
     } catch {
-      // Wake lock is a best-effort enhancement — ignore failures
+      // Best-effort — ignore
     }
   }
 
@@ -63,6 +66,7 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
       cancelAnimationFrame(animFrameRef.current)
       if (timerRef.current) clearInterval(timerRef.current)
       streamRef.current?.getTracks().forEach((t) => t.stop())
+      audioCtxRef.current?.close()
       releaseWakeLock()
     }
   }, [])
@@ -91,6 +95,7 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
 
     // Web Audio analyser for real-time waveform
     const audioCtx = new AudioContext()
+    audioCtxRef.current = audioCtx
     const source = audioCtx.createMediaStreamSource(stream)
     const analyser = audioCtx.createAnalyser()
     analyser.fftSize = 256
@@ -103,15 +108,10 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
     mr.ondataavailable = (e) => {
       if (e.data.size > 0) chunksRef.current.push(e.data)
     }
-    mr.onstop = () => {
-      stream.getTracks().forEach((t) => t.stop())
-      audioCtx.close()
-    }
 
-    mr.start(100)  // collect chunks every 100ms
+    mr.start(100)
     startTimeRef.current = Date.now()
     setState('recording')
-    acquireWakeLock()
 
     // Elapsed timer
     timerRef.current = setInterval(() => {
@@ -124,12 +124,7 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
       analyser.getByteFrequencyData(dataArray)
       const avg = dataArray.reduce((s, v) => s + v, 0) / dataArray.length / 255
       fullWaveformRef.current.push(avg)
-
-      setLiveBars((prev) => {
-        const next = [...prev.slice(1), avg]
-        return next
-      })
-
+      setLiveBars((prev) => [...prev.slice(1), avg])
       animFrameRef.current = requestAnimationFrame(drawLoop)
     }
     animFrameRef.current = requestAnimationFrame(drawLoop)
@@ -139,13 +134,15 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
     cancelAnimationFrame(animFrameRef.current)
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
     releaseWakeLock()
-    releaseWakeLock()
 
     const mr = mediaRecorderRef.current
     if (!mr) return
 
     mr.onstop = () => {
       streamRef.current?.getTracks().forEach((t) => t.stop())
+      audioCtxRef.current?.close()
+      audioCtxRef.current = null
+
       const mime = mr.mimeType || 'audio/webm'
       const blob = new Blob(chunksRef.current, { type: mime })
       rawBlobRef.current = blob
@@ -168,7 +165,7 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
     let finalDuration = totalDuration
     let finalWaveformSrc = full
 
-    // Trim via OfflineAudioContext if handles were moved
+    // Trim via OfflineAudioContext + MediaRecorder re-encode to preserve WebM/Opus
     if (trimStart > 0.001 || trimEnd < 0.999) {
       setState('trimming')
       try {
@@ -192,10 +189,9 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
         bufSrc.start(0, startSec, trimmedDuration)
         const trimmedBuf = await offCtx.startRendering()
 
-        // Encode back to webm via MediaRecorder trick (record silence + chunks)
-        // Fallback: just re-slice the waveform data, keep raw blob for upload
-        // For simplicity: wrap trimmed AudioBuffer as WAV blob
-        finalBlob = audioBufferToWav(trimmedBuf)
+        // Re-encode via MediaRecorder to keep WebM/Opus mime type
+        const reEncoded = await reEncodeAudioBuffer(trimmedBuf, pickMime())
+        finalBlob = reEncoded
         finalDuration = trimmedDuration
 
         const sliceStart = Math.floor(trimStart * full.length)
@@ -208,9 +204,7 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
       }
     }
 
-    // Downsample waveform to WAVEFORM_SAMPLES
     const waveform = downsample(finalWaveformSrc, WAVEFORM_SAMPLES)
-
     onRecorded({ blob: finalBlob, waveform, duration: finalDuration })
   }, [trimStart, trimEnd, onRecorded])
 
@@ -352,7 +346,6 @@ function WaveformTrimmer({ waveform, trimStart, trimEnd, onTrimStart, onTrimEnd 
         })}
       </div>
 
-      {/* Start handle */}
       <div
         className="trimmer__handle trimmer__handle--start"
         style={{ left: `${trimStart * 100}%` }}
@@ -364,7 +357,6 @@ function WaveformTrimmer({ waveform, trimStart, trimEnd, onTrimStart, onTrimEnd 
         aria-valuenow={Math.round(trimStart * 100)}
       />
 
-      {/* End handle */}
       <div
         className="trimmer__handle trimmer__handle--end"
         style={{ left: `${trimEnd * 100}%` }}
@@ -376,7 +368,6 @@ function WaveformTrimmer({ waveform, trimStart, trimEnd, onTrimStart, onTrimEnd 
         aria-valuenow={Math.round(trimEnd * 100)}
       />
 
-      {/* Selection overlay */}
       <div
         className="trimmer__selection"
         style={{
@@ -405,49 +396,30 @@ function downsample(samples: number[], target: number): number[] {
   return result
 }
 
-function audioBufferToWav(buffer: AudioBuffer): Blob {
-  const numChannels = buffer.numberOfChannels
-  const sampleRate = buffer.sampleRate
-  const length = buffer.length
-  const interleaved = new Float32Array(length * numChannels)
+/**
+ * Re-encode an AudioBuffer to WebM/Opus via MediaRecorder.
+ * This preserves the correct mime type required by the kind 4200 spec.
+ */
+function reEncodeAudioBuffer(buffer: AudioBuffer, mimeType: string): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const ctx = new AudioContext({ sampleRate: buffer.sampleRate })
+    const dest = ctx.createMediaStreamDestination()
+    const src = ctx.createBufferSource()
+    src.buffer = buffer
+    src.connect(dest)
 
-  for (let ch = 0; ch < numChannels; ch++) {
-    const channelData = buffer.getChannelData(ch)
-    for (let i = 0; i < length; i++) {
-      interleaved[i * numChannels + ch] = channelData[i]
+    const mime = mimeType || 'audio/webm'
+    const mr = new MediaRecorder(dest.stream, MediaRecorder.isTypeSupported(mime) ? { mimeType: mime } : undefined)
+    const chunks: Blob[] = []
+    mr.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
+    mr.onstop = () => {
+      ctx.close()
+      resolve(new Blob(chunks, { type: mr.mimeType || mime }))
     }
-  }
+    mr.onerror = (e) => { ctx.close(); reject(e) }
 
-  const dataView = encodeWAV(interleaved, numChannels, sampleRate)
-  return new Blob([dataView.buffer as ArrayBuffer], { type: 'audio/wav' })
-}
-
-function encodeWAV(samples: Float32Array, numChannels: number, sampleRate: number): DataView {
-  const buffer = new ArrayBuffer(44 + samples.length * 2)
-  const view = new DataView(buffer)
-
-  const writeStr = (offset: number, str: string) => {
-    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i))
-  }
-  const floatTo16 = (v: number) => Math.max(-32768, Math.min(32767, v < 0 ? v * 32768 : v * 32767))
-
-  writeStr(0, 'RIFF')
-  view.setUint32(4, 36 + samples.length * 2, true)
-  writeStr(8, 'WAVE')
-  writeStr(12, 'fmt ')
-  view.setUint32(16, 16, true)
-  view.setUint16(20, 1, true)
-  view.setUint16(22, numChannels, true)
-  view.setUint32(24, sampleRate, true)
-  view.setUint32(28, sampleRate * numChannels * 2, true)
-  view.setUint16(32, numChannels * 2, true)
-  view.setUint16(34, 16, true)
-  writeStr(36, 'data')
-  view.setUint32(40, samples.length * 2, true)
-
-  let offset = 44
-  for (let i = 0; i < samples.length; i++, offset += 2) {
-    view.setInt16(offset, floatTo16(samples[i]), true)
-  }
-  return view
+    mr.start()
+    src.start(0)
+    src.onended = () => mr.stop()
+  })
 }
