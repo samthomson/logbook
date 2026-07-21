@@ -21,7 +21,25 @@ See: `.planning/PROJECT.md` (updated 2026-07-20)
 | 7 | v2 — Transcription | ✓ Complete | transcribe.worker.ts (Whisper), TranscriptCard.tsx, transcription.ts |
 | 8 | v2 — TTS Intro + Lightning | ✓ Complete | generate-intros.ts, LN splits in publish-rss.ts |
 
-**Build:** `npm run build` passes cleanly (441 modules, 346 kB index bundle).
+**Build:** `npm run build` passes cleanly (441 modules, 348 kB index bundle).
+**E2E:** `node e2e-smoke.mts` passes against live relays + Blossom (commit ea903b7).
+
+## Verified Working (2026-07-21)
+
+- **Core loop E2E** (e2e-smoke.mts): issue fetch → WAV upload to blossom.band `/upload` (201) → BUD-04 mirror to ditto.pub + oxtr.dev (200) → kind 4200 publish to 3 relays → fetch-back via `#t` filter → byte-range playback (206). ✅
+- **UI whitelisted login** (test key `3c457108…`): timeline loads Issue #1, 4 sections, record buttons visible, recorder opens with pitch selector, zero JS errors. ✅
+- **UI whitelist gating** (non-whitelisted key): timeline + playback work, record/reply hidden. ✅
+- `tsc -b` clean (client), `tsc --noEmit` clean (scripts), `oxlint` 0 errors. ✅
+
+## Fixed in commit ea903b7
+
+1. `blossom.ts` — BUD-01 upload endpoint `PUT /upload` (was `/<sha256>` → 404; the core breakage)
+2. `Recorder.tsx` — conditional-hook crash (useCallback after early return)
+3. `App.tsx` — Connect button permanently disabled in extension mode
+4. `whitelist.ts` — parser now handles `- pubkey:` list YAML + quotes
+5. `watch-compass.ts` — section IDs `sec-<slug>-<N>` per SPEC §4; manifest content per SPEC §2 (issueRef, excluded[], reviewed[], publishedRss); cutting trigger reads d-tag
+6. `stitch.ts` / `publish-rss.ts` — SPEC manifest types; per-segment exclusion arrays; section sentinel
+7. `scripts/config.ts` — relay list aligned with client; prod Compass key documented for go-live
 
 ## What's Been Built
 
