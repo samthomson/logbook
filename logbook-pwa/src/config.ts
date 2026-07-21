@@ -1,7 +1,11 @@
 // Compass Nostr pubkey (hex) — the authoritative source for issue manifests.
 // All kind 34200 queries MUST pin authors:[COMPASS_PUBKEY] and re-verify on receipt.
+// Real Compass key — authors the weekly kind 30023 newsletters (d-tag newsletter-N).
 export const COMPASS_PUBKEY =
-  'baa11ea074871c850de58b626288da51a9e8bb5df7cdb63859dfa19898659b7e'
+  '775954f7314112489a4a29ec692b72386fd60bcceb0308d423101ea979c57a80'
+
+// Test key (logbook-1 smoke tests only):
+// 'baa11ea074871c850de58b626288da51a9e8bb5df7cdb63859dfa19898659b7e'
 
 // Admin pubkeys (hex) — can access drag-to-reorder and lock episode.
 // COMPASS_PUBKEY is always implicitly an admin.

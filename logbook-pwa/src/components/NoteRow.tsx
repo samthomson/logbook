@@ -63,7 +63,13 @@ export default function NoteRow({ segment, onReply, isWhitelisted, isNew }: Prop
         onClick={() => playback.toggle(segment.event.id)}
         aria-label={isPlaying ? 'Pause note' : 'Play note'}
       >
-        {isCurrent && playback.loading ? '…' : isPlaying ? '⏸' : '▶'}
+        {isCurrent && playback.loading ? (
+          <span className="note-row__spinner" aria-hidden="true" />
+        ) : isPlaying ? (
+          '⏸'
+        ) : (
+          '▶'
+        )}
       </button>
 
       <div className="note-row__main">

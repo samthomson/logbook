@@ -35,11 +35,19 @@ export class VoiceChanger {
   async load(): Promise<void> {
     if (this._loaded) return
     await this.ctx.audioWorklet.addModule(PROCESSOR_URL)
-    this._node = new AudioWorkletNode(this.ctx, 'voice-changer-processor')
-    // Disconnect bypass, route through worklet
-    this._input.disconnect(this._bypassGain)
-    this._input.connect(this._node)
-    this._node.connect(this._output)
+    // Construct + connect the worklet FIRST; only remove the bypass path once
+    // the processed chain is provably wired up (a throw here would otherwise
+    // leave the graph silent).
+    const node = new AudioWorkletNode(this.ctx, 'voice-changer-processor')
+    this._input.connect(node)
+    node.connect(this._output)
+    // Now safe to remove bypass
+    try {
+      this._input.disconnect(this._bypassGain)
+    } catch {
+      // already disconnected — fine
+    }
+    this._node = node
     this._loaded = true
     this.setPitch(this._pitchFactor)
   }

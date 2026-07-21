@@ -26,12 +26,12 @@ interface Props {
 
 type RecorderState = 'idle' | 'recording' | 'recorded' | 'trimming'
 
-// Pitch options: label → factor
+// Pitch options: label → factor. Subtle shifts only — large factors sound
+// artificial and risk glitching on short notes.
 const PITCH_OPTIONS: { label: string; factor: number }[] = [
   { label: 'Normal', factor: 1.0 },
-  { label: 'Higher', factor: 1.3 },
-  { label: 'Lower', factor: 0.75 },
-  { label: 'Robot', factor: 0.9 },
+  { label: 'Higher', factor: 1.12 },
+  { label: 'Lower', factor: 0.9 },
 ]
 
 export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
@@ -109,6 +109,10 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
     // Web Audio analyser for real-time waveform
     const audioCtx = new AudioContext()
     audioCtxRef.current = audioCtx
+    // Chrome/Safari may start the context suspended even inside a click handler
+    if (audioCtx.state === 'suspended') {
+      await audioCtx.resume().catch(() => {})
+    }
     const source = audioCtx.createMediaStreamSource(stream)
     const analyser = audioCtx.createAnalyser()
     analyser.fftSize = 256
@@ -287,7 +291,7 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
           <button className="btn btn--ghost" onClick={() => setState('idle')}>Re-record</button>
           <button className="btn btn--ghost" onClick={onCancel}>Cancel</button>
           <button className="btn btn--primary" onClick={handleUseRecording}>
-            Use recording
+            Publish recording
           </button>
         </div>
       </div>
@@ -357,9 +361,10 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
 // ─── ReplayPreview ────────────────────────────────────────────────────────────
 
 /**
- * Lets the user listen back to their recording (respecting the trim selection)
- * before deciding to publish. Plays the raw blob via an object URL, starting
- * at trimStart and stopping at trimEnd.
+ * Listen back to the recording before publishing — same interaction model as
+ * the timeline note rows: round play button + scrollable timeline scrubber.
+ * Respects the trim selection: playback starts at trimStart and stops at
+ * trimEnd.
  */
 function ReplayPreview({
   rawBlobRef,
@@ -370,9 +375,11 @@ function ReplayPreview({
   trimStart: number
   trimEnd: number
 }) {
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const [playing, setPlaying] = useState(false)
+  const elRef = useRef<HTMLAudioElement | null>(null)
   const [url, setUrl] = useState<string | null>(null)
+  const [playing, setPlaying] = useState(false)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [duration, setDuration] = useState(0)
 
   // Create/revoke object URL for the raw blob
   useEffect(() => {
@@ -383,64 +390,109 @@ function ReplayPreview({
     return () => URL.revokeObjectURL(u)
   }, [rawBlobRef])
 
-  const stop = useCallback(() => {
-    const el = audioRef.current
-    if (el) { el.pause(); el.currentTime = 0 }
-    setPlaying(false)
-  }, [])
-
-  // Stop when unmounted
-  useEffect(() => stop, [stop])
-
-  const toggle = useCallback(async () => {
+  // Build the element once we have a URL
+  useEffect(() => {
     if (!url) return
-    if (playing) { stop(); return }
-
-    const blob = rawBlobRef.current
-    if (!blob) return
-
-    // If no meaningful trim, just play the whole blob in an <audio> element
-    if (trimStart < 0.001 && trimEnd > 0.999) {
-      let el = audioRef.current
-      if (!el) {
-        el = new Audio(url)
-        audioRef.current = el
-        el.onended = () => setPlaying(false)
+    const el = new Audio(url)
+    el.preload = 'auto'
+    elRef.current = el
+    const onTime = () => {
+      setCurrentTime(el.currentTime)
+      // Stop at trim end
+      if (el.duration && el.currentTime >= trimEnd * el.duration) {
+        el.pause()
       }
-      el.currentTime = 0
-      await el.play().catch(() => setPlaying(false))
-      setPlaying(true)
+    }
+    const onMeta = () => setDuration(el.duration || 0)
+    const onPlay = () => setPlaying(true)
+    const onPause = () => setPlaying(false)
+    const onEnded = () => setPlaying(false)
+    el.addEventListener('timeupdate', onTime)
+    el.addEventListener('loadedmetadata', onMeta)
+    el.addEventListener('play', onPlay)
+    el.addEventListener('pause', onPause)
+    el.addEventListener('ended', onEnded)
+    return () => {
+      el.removeEventListener('timeupdate', onTime)
+      el.removeEventListener('loadedmetadata', onMeta)
+      el.removeEventListener('play', onPlay)
+      el.removeEventListener('pause', onPause)
+      el.removeEventListener('ended', onEnded)
+      el.pause()
+      elRef.current = null
+    }
+  }, [url, trimEnd])
+
+  const toggle = useCallback(() => {
+    const el = elRef.current
+    if (!el) return
+    if (playing) {
+      el.pause()
       return
     }
-
-    // Trimmed preview via Web Audio: decode, play [trimStart, trimEnd] slice
-    try {
-      const ctx = new AudioContext()
-      const buf = await ctx.decodeAudioData(await blob.arrayBuffer())
-      const src = ctx.createBufferSource()
-      src.buffer = buf
-      src.connect(ctx.destination)
-      const start = trimStart * buf.duration
-      const dur = Math.max(0.05, (trimEnd - trimStart) * buf.duration)
-      src.onended = () => { setPlaying(false); void ctx.close() }
-      src.start(0, start, dur)
-      setPlaying(true)
-      // Keep ctx alive until ended
-      ;(audioRef as React.MutableRefObject<unknown>).current = { pause() { try { src.stop() } catch {} }, set currentTime(_v: number) {} }
-    } catch {
-      setPlaying(false)
+    // Start at trim start (or resume within the trim window)
+    if (el.duration) {
+      const start = trimStart * el.duration
+      const end = trimEnd * el.duration
+      if (el.currentTime < start || el.currentTime >= end - 0.05) {
+        el.currentTime = start
+      }
     }
-  }, [url, playing, stop, rawBlobRef, trimStart, trimEnd])
+    void el.play().catch(() => setPlaying(false))
+  }, [playing, trimStart, trimEnd])
+
+  const handleScrub = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const el = elRef.current
+    if (!el || !el.duration) return
+    const frac = Number(e.target.value)
+    const start = trimStart * el.duration
+    const end = trimEnd * el.duration
+    el.currentTime = start + frac * (end - start)
+    setCurrentTime(el.currentTime)
+  }
+
+  const progress = (() => {
+    if (!duration) return 0
+    const start = trimStart * duration
+    const end = trimEnd * duration
+    if (end <= start) return 0
+    return Math.max(0, Math.min(1, (currentTime - start) / (end - start)))
+  })()
+
+  const fmt = (s: number) => {
+    const m = Math.floor(s / 60)
+    const sec = s % 60
+    return `${m}:${sec < 10 && m === 0 && s < 10 ? sec.toFixed(1) : String(Math.floor(sec)).padStart(2, '0')}`
+  }
 
   return (
-    <button
-      type="button"
-      className="btn btn--ghost recorder__replay"
-      onClick={() => void toggle()}
-      aria-label={playing ? 'Stop preview' : 'Play preview'}
-    >
-      {playing ? '■ Stop preview' : '▶ Play preview'}
-    </button>
+    <div className="note-row recorder__replay-row">
+      <button
+        type="button"
+        className="note-row__play"
+        onClick={toggle}
+        aria-label={playing ? 'Pause preview' : 'Play preview'}
+      >
+        {playing ? '⏸' : '▶'}
+      </button>
+      <div className="note-row__main">
+        <div className="note-row__meta">
+          <span className="note-row__author">Preview</span>
+        </div>
+        <input
+          className="note-row__scrub"
+          type="range"
+          min={0}
+          max={1000}
+          step={1}
+          value={Math.round(progress * 1000)}
+          onChange={handleScrub}
+          aria-label="Seek in preview"
+          style={{ ['--progress' as string]: `${progress * 100}%` }}
+        />
+      </div>
+      <span className="note-row__time">{fmt(Math.max(0, currentTime - trimStart * duration))}</span>
+    </div>
   )
 }
 

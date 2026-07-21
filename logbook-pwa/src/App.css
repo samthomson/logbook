@@ -1,12 +1,13 @@
-/* ─── Design tokens ─────────────────────────────────────────────────────────── */
+/* ─── Design tokens (AMOLED black) ──────────────────────────────────────────── */
 :root {
-  --bg: #0f172a;
-  --bg-surface: #1e293b;
-  --bg-elevated: #273549;
-  --border: #334155;
-  --text: #e2e8f0;
-  --text-muted: #94a3b8;
-  --text-dim: #64748b;
+  --bg: #000000;
+  --bg-surface: #0a0a0a;
+  --bg-card: #0a0a0a;
+  --bg-elevated: #141414;
+  --border: #1f1f1f;
+  --text: #e8e8e8;
+  --text-muted: #9a9a9a;
+  --text-dim: #5c5c5c;
   --accent: #6366f1;
   --accent-hover: #818cf8;
   --accent-muted: #3730a3;
@@ -22,6 +23,14 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+button {
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
 
 body {
   background: var(--bg);
@@ -821,6 +830,7 @@ body {
   width: 100%;
   text-align: left;
   background: none;
+  border: none;
   padding: 0;
   cursor: pointer;
   color: inherit;
@@ -838,6 +848,7 @@ body {
   color: var(--accent);
   font-size: 0.85rem;
   background: none;
+  border: none;
   padding: 8px 0;
   cursor: pointer;
   text-align: left;
@@ -978,4 +989,16 @@ body {
 }
 .app-header {
   padding-top: env(safe-area-inset-top);
+}
+
+.note-row__spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255 255 255 / 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: note-row-spin 0.7s linear infinite;
+}
+@keyframes note-row-spin {
+  to { transform: rotate(360deg); }
 }
