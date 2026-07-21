@@ -48,8 +48,8 @@ function paragraphs(text: string): string[] {
     .filter(Boolean)
 }
 
-/** Extract npubs from nostr:npub1… mentions in non-code text. */
-function extractMentionedNpubs(text: string): string[] {
+/** Extract npubs from nostr:npub1… mentions in non-code text. Exported for batch prefetch. */
+export function extractMentionedNpubs(text: string): string[] {
   const out: string[] = []
   for (const span of splitCodeSpans(text)) {
     if (span.code) continue

@@ -7,12 +7,10 @@
  *   3. nsec / ncryptsec paste → PrivateKeySigner / PasswordSigner (in-memory only)
  */
 
-import {
-  NostrConnectSigner,
-  ExtensionSigner,
-  PrivateKeySigner,
-  PasswordSigner,
-} from 'applesauce-signers'
+import { NostrConnectSigner } from 'applesauce-signers/signers/nostr-connect-signer'
+import { ExtensionSigner } from 'applesauce-signers/signers/extension-signer'
+import { PrivateKeySigner } from 'applesauce-signers/signers/private-key-signer'
+import { PasswordSigner } from 'applesauce-signers/signers/password-signer'
 import { nip19 } from 'nostr-tools'
 import type { NostrSigner } from '../types/nostr'
 import { DEFAULT_RELAYS } from '../config'

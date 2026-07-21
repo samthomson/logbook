@@ -123,7 +123,15 @@ export function PlaybackProvider({ segments, children }: ProviderProps) {
     el.preload = 'metadata'
     audioRef.current = el
 
-    const onTime = () => setCurrentTime(el.currentTime)
+    let lastTimeUpdate = 0
+    const onTime = () => {
+      // Throttle UI updates to ~4fps — 10fps default timeupdate re-renders
+      // every consumer each tick for no perceptible gain
+      const now = performance.now()
+      if (now - lastTimeUpdate < 250) return
+      lastTimeUpdate = now
+      setCurrentTime(el.currentTime)
+    }
     const onMeta = () => {
       // Ignore metadata from a stale src (track switched before it fired)
       const cur = currentIdRef.current ? byIdRef.current.get(currentIdRef.current) : null

@@ -26,12 +26,13 @@ import type {
   NostrSigner,
   NostrEvent,
 } from '../types/nostr'
-import { fetchSegmentsForSection, parseSegment, publishSegment } from '../lib/segment'
+import { fetchSegmentsForIssue, parseSegment, publishSegment } from '../lib/segment'
+import { extractMentionedNpubs } from './SectionExcerpt'
 import { uploadBlob } from '../lib/blossom'
 import { computeSeedOrder } from '../lib/ordering'
 import { PlaybackProvider } from '../lib/playback'
 import { fetchProfiles, type Profile } from '../lib/profiles'
-import { SimplePool } from 'nostr-tools/pool'
+import { getPool } from '../lib/pool'
 import type { Filter } from 'nostr-tools'
 import { DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from '../config'
 
@@ -95,6 +96,23 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
   const groups = useMemo(() => recordingSections(issue), [issue])
   const allTargets = useMemo(() => groups.flatMap((g) => g.targets), [groups])
 
+  // Prefetch kind-0 profiles for every npub mentioned anywhere in the issue
+  // (ONE batched relay query) so excerpts render names without N waterfalls.
+  useEffect(() => {
+    const fullText = issue.sections
+      .flatMap((s) => s.items.map((it) => it.body))
+      .join('\n\n')
+    const npubs = extractMentionedNpubs(fullText)
+    if (!npubs.length) return
+    let alive = true
+    fetchProfiles(npubs).then((map) => {
+      if (alive) setProfiles((prev) => new Map([...prev, ...map]))
+    })
+    return () => {
+      alive = false
+    }
+  }, [issue])
+
   const toggleExcerpt = useCallback((id: string) => {
     setExpandedSections((prev) => {
       const next = new Set(prev)
@@ -104,61 +122,75 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
     })
   }, [])
 
-  // Load segments for every recording section
+  // Load ALL segments for the issue in ONE relay query, then group per section
   useEffect(() => {
     let mounted = true
-    for (const target of allTargets) {
-      setSections((prev) => {
-        const next = new Map(prev)
-        next.set(target.id, { segments: [], order: [], loading: true, error: null })
-        return next
-      })
 
-      fetchSegmentsForSection(target.id, `${ISSUE_PREFIX}-${issue.issueNumber}`)
-        .then((events: NostrEvent[]) => {
-          if (!mounted) return
-          const parsed = events.flatMap((e) => {
-            const s = parseSegment(e)
-            return s ? [s] : []
-          })
-          for (const seg of parsed) knownIdsRef.current.add(seg.event.id)
-          const order = computeSeedOrder(parsed)
-          setSections((prev) => {
-            const next = new Map(prev)
-            next.set(target.id, { segments: parsed, order, loading: false, error: null })
-            return next
-          })
-          // Fetch author profiles for these segments
-          if (parsed.length) {
-            fetchProfiles(parsed.map((s) => s.event.pubkey)).then((map) => {
-              if (!mounted) return
-              setProfiles((prev) => new Map([...prev, ...map]))
+    // Mark all targets loading up front (single setState)
+    setSections(() => {
+      const next = new Map<string, SectionState>()
+      for (const t of allTargets) {
+        next.set(t.id, { segments: [], order: [], loading: true, error: null })
+      }
+      return next
+    })
+
+    fetchSegmentsForIssue(`${ISSUE_PREFIX}-${issue.issueNumber}`)
+      .then((grouped) => {
+        if (!mounted) return
+
+        const allParsed: Segment[] = []
+        setSections(() => {
+          const next = new Map<string, SectionState>()
+          for (const t of allTargets) {
+            const events = grouped.get(t.id) ?? []
+            const parsed = events.flatMap((e) => {
+              const s = parseSegment(e)
+              return s ? [s] : []
+            })
+            for (const seg of parsed) {
+              knownIdsRef.current.add(seg.event.id)
+              allParsed.push(seg)
+            }
+            next.set(t.id, {
+              segments: parsed,
+              order: computeSeedOrder(parsed),
+              loading: false,
+              error: null,
             })
           }
+          return next
         })
-        .catch((err: unknown) => {
-          if (!mounted) return
-          setSections((prev) => {
-            const next = new Map(prev)
-            next.set(target.id, {
-              segments: [],
-              order: [],
-              loading: false,
-              error: err instanceof Error ? err.message : String(err),
-            })
-            return next
+
+        // ONE batched profile fetch for every author in the issue
+        if (allParsed.length) {
+          fetchProfiles(allParsed.map((s) => s.event.pubkey)).then((map) => {
+            if (!mounted) return
+            setProfiles((prev) => new Map([...prev, ...map]))
           })
+        }
+      })
+      .catch((err: unknown) => {
+        if (!mounted) return
+        const message = err instanceof Error ? err.message : String(err)
+        setSections((prev) => {
+          const next = new Map(prev)
+          for (const t of allTargets) {
+            next.set(t.id, { segments: [], order: [], loading: false, error: message })
+          }
+          return next
         })
-    }
+      })
+
     return () => {
       mounted = false
     }
   }, [allTargets, issue.issueNumber])
 
-  // Live subscription for late-arriving segments
+  // Live subscription for late-arriving segments (shares the app-wide pool)
   useEffect(() => {
     if (!allTargets.length) return
-    const pool = new SimplePool()
+    const pool = getPool()
     const issueId = `${ISSUE_PREFIX}-${issue.issueNumber}`
     const targetIds = new Set(allTargets.map((t) => t.id))
     const sub = pool.subscribeMany(
@@ -188,7 +220,6 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
     )
     return () => {
       sub.close()
-      pool.close(DEFAULT_RELAYS)
     }
   }, [allTargets, issue.issueNumber])
 

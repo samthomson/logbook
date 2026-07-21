@@ -1,3 +1,4 @@
+import { getPool } from './pool'
 /**
  * Manifest module — fetch and update kind 34200 issue manifests.
  *
@@ -5,7 +6,6 @@
  * The client re-verifies event.pubkey === COMPASS_PUBKEY on receipt.
  */
 
-import { SimplePool } from 'nostr-tools/pool'
 import { COMPASS_PUBKEY, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from '../config'
 import type {
   NostrEvent,
@@ -17,11 +17,6 @@ import type {
 import { parseManifestContent } from '../types/nostr'
 import { now } from './utils'
 
-let _pool: SimplePool | null = null
-function getPool(): SimplePool {
-  if (!_pool) _pool = new SimplePool()
-  return _pool
-}
 
 /** Fetch the manifest for a given issue number. Returns null if not found. */
 export async function fetchManifest(

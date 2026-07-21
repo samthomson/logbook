@@ -1,15 +1,9 @@
-import { SimplePool } from 'nostr-tools/pool'
 import { COMPASS_PUBKEY, DEFAULT_RELAYS, KINDS } from '../config'
 import type { NostrEvent, CompassIssue, IssueSection, IssueSectionItem } from '../types/nostr'
 import { slugify } from './utils'
 
-let _pool: SimplePool | null = null
 
-function getPool(): SimplePool {
-  if (!_pool) _pool = new SimplePool()
-  return _pool
-}
-
+import { getPool } from './pool'
 /** Fetch the most recent Compass kind 30023 long-form issue. */
 export async function fetchLatestIssue(
   relays: string[] = DEFAULT_RELAYS,

@@ -1,3 +1,4 @@
+import { getPool } from './pool'
 /**
  * Segment publishing module.
  *
@@ -5,7 +6,6 @@
  * Also handles companion transcript events (kind 1111).
  */
 
-import { SimplePool } from 'nostr-tools/pool'
 import { DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from '../config'
 import type {
   NostrEvent,
@@ -17,11 +17,6 @@ import type {
 import { getTag, parseSegmentContent } from '../types/nostr'
 import { now } from './utils'
 
-let _pool: SimplePool | null = null
-function getPool(): SimplePool {
-  if (!_pool) _pool = new SimplePool()
-  return _pool
-}
 
 export interface PublishSegmentParams {
   signer: NostrSigner
@@ -128,6 +123,35 @@ export async function publishTranscript(
 }
 
 /**
+ * Fetch ALL segments for an issue in ONE relay query, grouped by section id.
+ * Replaces the old per-section query pattern (N sections × same query).
+ * Returns a Map<sectionId, NostrEvent[]> sorted by created_at.
+ */
+export async function fetchSegmentsForIssue(
+  issueId: string,
+  relays: string[] = DEFAULT_RELAYS,
+): Promise<Map<string, NostrEvent[]>> {
+  const pool = getPool()
+  const events = await pool.querySync(relays, {
+    kinds: [KINDS.SEGMENT],
+    '#t': [issueId],
+    limit: 2000,
+  })
+  const grouped = new Map<string, NostrEvent[]>()
+  for (const e of events) {
+    const sectionId = e.tags.find((t) => t[0] === 'section')?.[1]
+    if (!sectionId) continue
+    const arr = grouped.get(sectionId) ?? []
+    arr.push(e)
+    grouped.set(sectionId, arr)
+  }
+  for (const arr of grouped.values()) {
+    arr.sort((a, b) => a.created_at - b.created_at)
+  }
+  return grouped
+}
+
+/**
  * Fetch all segment events for a given section.
  *
  * Uses '#t' (issue ID) as the relay-level filter since most relays only index
@@ -139,20 +163,16 @@ export async function fetchSegmentsForSection(
   issueId: string,
   relays: string[] = DEFAULT_RELAYS,
 ): Promise<NostrEvent[]> {
-  console.log('[segment] fetchSegmentsForSection', { sectionId, issueId, relays })
   const pool = getPool()
   const events = await pool.querySync(relays, {
     kinds: [KINDS.SEGMENT],
     '#t': [issueId],
     limit: 500,
   })
-  console.log('[segment] querySync returned', events.length, 'events for issueId:', issueId)
   // Filter client-side by section tag
-  const filtered = events
+  return events
     .filter((e) => e.tags.some((t) => t[0] === 'section' && t[1] === sectionId))
     .sort((a, b) => a.created_at - b.created_at)
-  console.log('[segment] filtered to', filtered.length, 'for section:', sectionId)
-  return filtered
 }
 
 /**

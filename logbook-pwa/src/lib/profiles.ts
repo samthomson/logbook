@@ -1,3 +1,4 @@
+import { getPool } from './pool'
 /**
  * Profile fetching (kind 0) with in-memory cache.
  *
@@ -6,7 +7,6 @@
  *  - resolving nostr:npub1... mentions in newsletter excerpts to usernames
  */
 
-import { SimplePool } from 'nostr-tools/pool'
 import { DEFAULT_RELAYS } from '../config'
 import type { NostrEvent } from '../types/nostr'
 
@@ -19,11 +19,6 @@ export interface Profile {
 const cache = new Map<string, Profile | null>()
 const pending = new Map<string, Promise<Profile | null>>()
 
-let _pool: SimplePool | null = null
-function getPool(): SimplePool {
-  if (!_pool) _pool = new SimplePool()
-  return _pool
-}
 
 function parseProfileEvent(pubkey: string, event: NostrEvent | null): Profile | null {
   if (!event) return null
