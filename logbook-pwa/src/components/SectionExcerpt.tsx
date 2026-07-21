@@ -33,10 +33,10 @@ function paragraphs(text: string): string[] {
 }
 
 export default function SectionExcerpt({ section, expanded, onToggle }: Props) {
-  // Lead = prose captured before the first H3 (items with empty title)
-  const leadItem = section.items.find((it) => !it.title)
+  // Lead prose items are title-less; there may be several of them.
+  const leadItems = section.items.filter((it) => !it.title)
   const named = section.items.filter((it) => it.title)
-  const lead = leadItem?.body?.trim() ?? ''
+  const lead = leadItems.map((it) => it.body).join('\n\n').trim()
 
   const hasContent = lead || named.some((it) => it.body.trim())
   const preview = expanded ? null : truncate(md(lead || named[0]?.body || ''), 220)

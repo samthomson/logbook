@@ -136,11 +136,11 @@ function parseMarkdownSections(markdown: string, issueNumber: number): IssueSect
       if (currentItem) {
         currentBody.push(line)
       } else if (currentSection) {
-        // Lead prose directly under the H2, before any H3 — keep it as a
-        // title-less item so the excerpt view can render it.
+        // Lead prose directly under the H2, before any H3 — keep it as
+        // title-less items, preserving blank lines (paragraph breaks).
         const last = currentSection.items[currentSection.items.length - 1]
         if (last && !last.title) {
-          last.body = `${last.body}\n${line}`.trim()
+          last.body = `${last.body}\n${line}`
         } else {
           currentSection.items.push({ title: '', body: line })
         }

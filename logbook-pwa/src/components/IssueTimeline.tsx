@@ -13,7 +13,7 @@
  * at the tapped spot, mic starts on the next tap.
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import NoteRow from './NoteRow'
 import Recorder from './Recorder'
 import SectionExcerpt from './SectionExcerpt'
@@ -61,8 +61,8 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set())
   const [newSegmentIds, setNewSegmentIds] = useState<Set<string>>(new Set())
-  const knownIdsRef = useMemo(() => ({ ids: new Set<string>() }), [])
-  const mountedAtRef = useMemo(() => ({ t: Math.floor(Date.now() / 1000) }), [])
+  const knownIdsRef = useRef<Set<string>>(new Set())
+  const mountedAtRef = useRef<number>(Math.floor(Date.now() / 1000))
 
   const toggleExcerpt = useCallback((id: string) => {
     setExpandedSections((prev) => {
@@ -90,7 +90,7 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
             const s = parseSegment(e)
             return s ? [s] : []
           })
-          for (const seg of parsed) knownIdsRef.ids.add(seg.event.id)
+          for (const seg of parsed) knownIdsRef.current.add(seg.event.id)
           const order = computeSeedOrder(parsed)
           setSections((prev) => {
             const next = new Map(prev)
@@ -125,11 +125,11 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
     const sectionIds = new Set(issue.sections.map((s) => s.id))
     const sub = pool.subscribeMany(
       DEFAULT_RELAYS,
-      { kinds: [KINDS.SEGMENT], '#t': [issueId], since: mountedAtRef.t } as Filter,
+      { kinds: [KINDS.SEGMENT], '#t': [issueId], since: mountedAtRef.current } as Filter,
       {
         onevent(event: NostrEvent) {
-          if (knownIdsRef.ids.has(event.id)) return
-          knownIdsRef.ids.add(event.id)
+          if (knownIdsRef.current.has(event.id)) return
+          knownIdsRef.current.add(event.id)
           const seg = parseSegment(event)
           if (!seg || !sectionIds.has(seg.sectionId)) return
           setSections((prev) => {
@@ -145,7 +145,10 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
         },
       },
     )
-    return () => sub.close()
+    return () => {
+      sub.close()
+      pool.close(DEFAULT_RELAYS)
+    }
   }, [issue, knownIdsRef, mountedAtRef])
 
   const handleRecord = useCallback(

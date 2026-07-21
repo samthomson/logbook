@@ -3,19 +3,21 @@
  *
  * A single HTMLAudioElement is shared across the whole timeline. Any note row
  * can start playback; when the current track ends, the next segment in issue
- * order starts automatically. Scrubbing uses a range input styled as a thin
- * timeline.
+ * order starts automatically.
  *
- * Design notes (from adversarial review):
- *  - The audio element is created once on mount and fully torn down on
- *    unmount (listeners removed, src cleared) — no leaks across issue switches.
- *  - The `ended` handler guards against stale/double fires by comparing the
- *    element's current src against the segment it thinks is playing.
+ * Design (adversarial-review hardened):
+ *  - Audio element created once on mount, fully torn down on unmount.
+ *  - order/byId read through refs (no stale closures in the ended handler).
+ *  - el.src assignment gated on URL equality, not currentId — reorders can't
+ *    leave the UI showing one row while another's audio plays.
+ *  - loadedmetadata events from a stale src are ignored (track-switch race).
  *  - Seeks requested before metadata loads are stashed and applied on
- *    `loadedmetadata` (scrub-before-load race).
- *  - Auto-advance play() failures (autoplay policy) are surfaced as
- *    `blocked: true` so the UI can show a resume button instead of silently
- *    stopping (iOS gesture-chain limits).
+ *    loadedmetadata (scrub-before-load race).
+ *  - Double `ended` events are de-duped via an epoch counter.
+ *  - play() rejections surface `blocked: true` (autoplay policy) instead of
+ *    silently stalling; `loading` is always reset.
+ *  - Track errors skip to the next segment instead of stalling the queue.
+ *  - No side effects inside React state updaters (StrictMode-safe).
  */
 
 import {
@@ -36,7 +38,7 @@ export interface PlaybackState {
   currentTime: number
   duration: number
   loading: boolean
-  /** True when autoplay policy blocked auto-advance; user must tap to resume. */
+  /** True when autoplay policy blocked playback; user must tap to resume. */
   blocked: boolean
   play: (segmentId: string) => void
   pause: () => void
@@ -54,6 +56,8 @@ interface ProviderProps {
 export function PlaybackProvider({ segments, children }: ProviderProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const pendingSeekRef = useRef<number | null>(null)
+  const currentIdRef = useRef<string | null>(null)
+  const epochRef = useRef(0)
   const [currentId, setCurrentId] = useState<string | null>(null)
   const [playing, setPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -69,6 +73,50 @@ export function PlaybackProvider({ segments, children }: ProviderProps) {
 
   const order = useMemo(() => segments.map((s) => s.event.id), [segments])
 
+  // Refs so event handlers always read the latest queue
+  const orderRef = useRef(order)
+  const byIdRef = useRef(byId)
+  orderRef.current = order
+  byIdRef.current = byId
+
+  /** Load a segment into the element and start playing it. */
+  const startTrack = useCallback((segmentId: string) => {
+    const seg = byIdRef.current.get(segmentId)
+    const el = audioRef.current
+    if (!seg || !el) return
+
+    epochRef.current += 1
+    setBlocked(false)
+    if (el.src !== seg.audio.url) {
+      el.src = seg.audio.url
+      setCurrentTime(0)
+      setDuration(seg.audio.duration || 0)
+    }
+    currentIdRef.current = segmentId
+    setCurrentId(segmentId)
+    el.play().catch(() => {
+      setPlaying(false)
+      setLoading(false)
+      setBlocked(true)
+    })
+  }, [])
+
+  /** Advance to the next track in queue order. */
+  const advance = useCallback(
+    (fromId: string, epoch: number) => {
+      if (epoch !== epochRef.current) return // superseded by a manual action
+      const idx = orderRef.current.indexOf(fromId)
+      const nextId = idx >= 0 ? orderRef.current[idx + 1] : undefined
+      if (!nextId) {
+        currentIdRef.current = null
+        setCurrentId(null)
+        return
+      }
+      startTrack(nextId)
+    },
+    [startTrack],
+  )
+
   // Create + wire the audio element once; tear down completely on unmount.
   useEffect(() => {
     const el = new Audio()
@@ -77,6 +125,9 @@ export function PlaybackProvider({ segments, children }: ProviderProps) {
 
     const onTime = () => setCurrentTime(el.currentTime)
     const onMeta = () => {
+      // Ignore metadata from a stale src (track switched before it fired)
+      const cur = currentIdRef.current ? byIdRef.current.get(currentIdRef.current) : null
+      if (cur && el.src !== cur.audio.url) return
       setDuration(el.duration || 0)
       if (pendingSeekRef.current !== null) {
         el.currentTime = Math.min(pendingSeekRef.current, el.duration || 0)
@@ -84,13 +135,23 @@ export function PlaybackProvider({ segments, children }: ProviderProps) {
         setCurrentTime(el.currentTime)
       }
     }
-    const onPlay = () => setPlaying(true)
+    const onPlay = () => {
+      setPlaying(true)
+      setLoading(false)
+    }
     const onPause = () => setPlaying(false)
     const onWaiting = () => setLoading(true)
     const onCanPlay = () => setLoading(false)
     const onError = () => {
       setPlaying(false)
       setLoading(false)
+      // Dead URL — skip to next rather than stalling the queue
+      const id = currentIdRef.current
+      if (id) advance(id, epochRef.current)
+    }
+    const onEnded = () => {
+      const id = currentIdRef.current
+      if (id) advance(id, epochRef.current)
     }
 
     el.addEventListener('timeupdate', onTime)
@@ -100,6 +161,7 @@ export function PlaybackProvider({ segments, children }: ProviderProps) {
     el.addEventListener('waiting', onWaiting)
     el.addEventListener('canplay', onCanPlay)
     el.addEventListener('error', onError)
+    el.addEventListener('ended', onEnded)
 
     return () => {
       el.removeEventListener('timeupdate', onTime)
@@ -109,62 +171,19 @@ export function PlaybackProvider({ segments, children }: ProviderProps) {
       el.removeEventListener('waiting', onWaiting)
       el.removeEventListener('canplay', onCanPlay)
       el.removeEventListener('error', onError)
+      el.removeEventListener('ended', onEnded)
       el.pause()
       el.removeAttribute('src')
       el.load()
       audioRef.current = null
     }
-  }, [])
-
-  // Auto-advance on track end. Registered once; reads latest order/byId via refs.
-  const orderRef = useRef(order)
-  const byIdRef = useRef(byId)
-  orderRef.current = order
-  byIdRef.current = byId
-
-  useEffect(() => {
-    const el = audioRef.current
-    if (!el) return
-
-    const onEnded = () => {
-      setCurrentId((prev) => {
-        if (!prev) return null
-        const idx = orderRef.current.indexOf(prev)
-        const nextId = idx >= 0 ? orderRef.current[idx + 1] : undefined
-        if (!nextId) return null
-        const next = byIdRef.current.get(nextId)
-        if (!next) return null
-
-        el.src = next.audio.url
-        setCurrentTime(0)
-        setDuration(next.audio.duration || 0)
-        el.play().catch(() => {
-          // Autoplay policy blocked continuation (iOS gesture chain) —
-          // surface as blocked so UI can offer a tap-to-resume.
-          setBlocked(true)
-        })
-        return nextId
-      })
-    }
-    el.addEventListener('ended', onEnded)
-    return () => el.removeEventListener('ended', onEnded)
-  }, [])
+  }, [advance])
 
   const play = useCallback(
     (segmentId: string) => {
-      const seg = byIdRef.current.get(segmentId)
-      const el = audioRef.current
-      if (!seg || !el) return
-      setBlocked(false)
-      if (audioRef.current && currentId !== segmentId) {
-        el.src = seg.audio.url
-        setCurrentTime(0)
-        setDuration(seg.audio.duration || 0)
-        setCurrentId(segmentId)
-      }
-      el.play().catch(() => setBlocked(true))
+      startTrack(segmentId)
     },
-    [currentId],
+    [startTrack],
   )
 
   const pause = useCallback(() => {
@@ -173,8 +192,12 @@ export function PlaybackProvider({ segments, children }: ProviderProps) {
 
   const toggle = useCallback(
     (segmentId: string) => {
-      if (currentId === segmentId && playing) pause()
-      else play(segmentId)
+      if (currentId === segmentId && playing) {
+        epochRef.current += 1 // cancel pending auto-advance intent
+        pause()
+      } else {
+        play(segmentId)
+      }
     },
     [currentId, playing, pause, play],
   )
@@ -183,12 +206,12 @@ export function PlaybackProvider({ segments, children }: ProviderProps) {
     const el = audioRef.current
     if (!el || !Number.isFinite(seconds)) return
     if (!el.duration || Number.isNaN(el.duration)) {
-      // Metadata not loaded yet — apply once it arrives
       pendingSeekRef.current = Math.max(0, seconds)
       return
     }
     el.currentTime = Math.max(0, Math.min(seconds, el.duration))
-    setCurrentTime(el.currentTime)
+    // Note: currentTime state updates on the next timeupdate event — no
+    // read-back here (browsers apply seeks asynchronously)
   }, [])
 
   const value = useMemo<PlaybackState>(

@@ -9,6 +9,7 @@
 import { usePlayback } from '../lib/playback'
 import type { Segment } from '../types/nostr'
 import { formatDuration } from '../lib/utils'
+import { useState } from 'react'
 
 interface Props {
   segment: Segment
@@ -22,10 +23,15 @@ export default function NoteRow({ segment, onReply, isWhitelisted, isNew }: Prop
   const isCurrent = playback.currentId === segment.event.id
   const isPlaying = isCurrent && playback.playing
 
+  // While dragging, the scrub value is local — timeupdate from the element
+  // can't fight the user's thumb (review finding 3d).
+  const [dragFrac, setDragFrac] = useState<number | null>(null)
+
   const progress =
-    isCurrent && playback.duration > 0
+    dragFrac ??
+    (isCurrent && playback.duration > 0
       ? playback.currentTime / playback.duration
-      : 0
+      : 0)
 
   const timeLabel = isCurrent
     ? `${formatDuration(playback.currentTime)} / ${formatDuration(playback.duration || segment.audio.duration)}`
@@ -33,14 +39,15 @@ export default function NoteRow({ segment, onReply, isWhitelisted, isNew }: Prop
 
   const handleScrub = (e: React.ChangeEvent<HTMLInputElement>) => {
     const frac = Number(e.target.value)
+    setDragFrac(frac)
+  }
+
+  const commitScrub = () => {
+    if (dragFrac === null) return
     const dur = playback.duration || segment.audio.duration
-    if (!isCurrent) {
-      playback.play(segment.event.id)
-      // Seek after metadata loads — set on next tick via duration hint
-      playback.seek(frac * dur)
-    } else {
-      playback.seek(frac * dur)
-    }
+    if (!isCurrent) playback.play(segment.event.id)
+    playback.seek(dragFrac * dur)
+    setDragFrac(null)
   }
 
   const ts = new Date(segment.event.created_at * 1000)
@@ -76,7 +83,10 @@ export default function NoteRow({ segment, onReply, isWhitelisted, isNew }: Prop
           step={1}
           value={Math.round(progress * 1000)}
           onChange={handleScrub}
-          aria-label="Seek"
+          onPointerUp={commitScrub}
+          onKeyUp={commitScrub}
+          onBlur={commitScrub}
+          aria-label={`Seek in note by ${segment.event.pubkey.slice(0, 8)}`}
           style={{ ['--progress' as string]: `${progress * 100}%` }}
         />
       </div>
