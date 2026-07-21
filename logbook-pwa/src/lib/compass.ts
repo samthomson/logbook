@@ -135,6 +135,15 @@ function parseMarkdownSections(markdown: string, issueNumber: number): IssueSect
     } else {
       if (currentItem) {
         currentBody.push(line)
+      } else if (currentSection) {
+        // Lead prose directly under the H2, before any H3 — keep it as a
+        // title-less item so the excerpt view can render it.
+        const last = currentSection.items[currentSection.items.length - 1]
+        if (last && !last.title) {
+          last.body = `${last.body}\n${line}`.trim()
+        } else {
+          currentSection.items.push({ title: '', body: line })
+        }
       }
     }
   }
