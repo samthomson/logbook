@@ -239,12 +239,12 @@ body {
 
 /* ─── Timeline ─────────────────────────────────────────────────────────────────── */
 .timeline {
-  max-width: 680px;
+  max-width: 760px;
   margin: 0 auto;
-  padding: 16px;
+  padding: 8px 6px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 12px;
 }
 
 .timeline__title {
@@ -1225,4 +1225,125 @@ body {
   bottom: calc(8px + var(--keyboard-offset, 0px));
   z-index: 30;
   box-shadow: 0 -2px 12px rgba(0 0 0 / 0.5);
+}
+
+/* ─── Dense layout (maximum screen usage) ──────────────────────────────────── */
+.timeline--dense { padding: 0 2px; }
+.timeline--dense .timeline__group { margin-bottom: 14px; }
+.timeline--dense .timeline__group-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin: 10px 0 4px;
+  padding-bottom: 3px;
+}
+.timeline--dense .timeline__section { margin-bottom: 10px; }
+.timeline--dense .section-excerpt { margin: 0 0 6px; font-size: 0.92rem; line-height: 1.5; }
+.timeline--dense .section-excerpt__para { margin: 0 0 6px; }
+.timeline--dense .timeline__notes { gap: 4px; margin-top: 4px; }
+.timeline--dense .timeline__group:last-child { margin-bottom: 80px; }
+
+/* Edge-to-edge app body */
+.app-body { padding: 0; }
+.app { max-width: 100%; }
+
+/* ─── Inline recorder row (Telegram-style, no boxes) ───────────────────────── */
+.irec__btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+  margin-top: 4px;
+}
+.irec__btn:hover { border-color: var(--record-red); }
+.irec__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--record-red);
+}
+
+.irec--live {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  margin-top: 4px;
+}
+.irec__stop {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--record-red);
+  color: #fff;
+  font-size: 0.75rem;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.irec__bars {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 30px;
+  overflow: hidden;
+}
+.irec__bar {
+  flex: 1;
+  background: var(--record-red);
+  border-radius: 1px;
+  min-width: 2px;
+  transition: height 0.06s;
+}
+.irec__time {
+  font-size: 0.78rem;
+  font-family: monospace;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.irec__cancel {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  color: var(--text-dim);
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+.irec__cancel:hover { color: var(--text); }
+
+.timeline__recrow { min-height: 38px; }
+
+/* ─── Published check (subtle) ─────────────────────────────────────────────── */
+.bubble__published {
+  color: var(--success);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+/* ─── Issue picker ─────────────────────────────────────────────────────────── */
+.issue-picker__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.issue-picker__item:hover { background: var(--bg-elevated); }
+.issue-picker__item--current { background: var(--accent-muted); }
+.issue-picker__num { font-family: monospace; color: var(--text-dim); min-width: 36px; }
+.issue-picker__item-title { flex: 1; color: var(--text); }
+.issue-picker__date { color: var(--text-dim); font-size: 0.8rem; }
+.issue-picker__badge {
+  font-size: 0.7rem;
+  color: var(--accent-hover);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }

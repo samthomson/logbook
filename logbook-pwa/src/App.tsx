@@ -5,11 +5,11 @@ import { useKeyboardOffset } from './lib/useKeyboardOffset'
 import IssueTimeline from './components/IssueTimeline'
 import IssuePicker from './components/IssuePicker'
 import InstallPrompt from './components/InstallPrompt'
-import { fetchLatestIssue, fetchIssueByDTag, parseIssue } from './lib/compass'
+import { fetchLatestIssue, parseIssue } from './lib/compass'
 import { checkRecordingSupport } from './lib/utils'
 import { IOS_RECORDING_MIN_VERSION } from './config'
 import { fetchWhitelist, isWhitelisted as checkWhitelist } from './lib/whitelist'
-import type { CompassIssue, IssueManifest } from './types/nostr'
+import type { CompassIssue, NostrEvent } from './types/nostr'
 import './App.css'
 
 type AppView = 'auth' | 'timeline' | 'issue-picker'
@@ -84,17 +84,15 @@ export default function App() {
       .finally(() => setIssueLoading(false))
   }, [auth])
 
-  const handleSelectIssue = async (manifest: IssueManifest) => {
+  const handleSelectIssue = async (event: NostrEvent) => {
     if (!auth) return
     setIssueLoading(true)
     setIssueError(null)
     try {
-      // Load the actual Compass issue that corresponds to this manifest d-tag
-      const event = await fetchIssueByDTag(manifest.issueId)
-      if (!event) throw new Error(`Issue ${manifest.issueId} not found on relays`)
       const parsed = parseIssue(event)
       setIssue(parsed)
-      const wl = await fetchWhitelist(manifest.issueId)
+      const issueId = `logbook-${parsed.issueNumber}`
+      const wl = await fetchWhitelist(issueId)
       setIsWhitelisted(checkWhitelist(auth.pubkey, wl))
       setView('timeline')
     } catch (err: unknown) {
@@ -181,6 +179,7 @@ export default function App() {
 
         {view === 'issue-picker' && (
           <IssuePicker
+            currentIssueNumber={issue?.issueNumber ?? null}
             onSelect={handleSelectIssue}
             onBack={() => setView('timeline')}
           />

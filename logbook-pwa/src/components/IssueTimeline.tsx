@@ -1,23 +1,16 @@
 /**
- * IssueTimeline — the podcast preparation surface.
+ * IssueTimeline — dense podcast preparation surface.
  *
- * Layout per topic group (H2):
- *   Lead stories
- *   ─────────────────────────────────────────
- *   [project item] excerpt text (expandable)
- *     💬 voice bubbles (Telegram-style, per project)
- *     [● Record]  ← one button, under the notes
- *   ─────────────────────────────────────────
- *
- * Playback is one issue-wide queue with auto-advance. Recording/replying is
- * one tap — the recorder pops inline at the tapped spot.
+ * Per project item: excerpt (expanded, edge-to-edge) → bubbles → one inline
+ * record row. Tapping the mic icon starts recording in place; tapping stop
+ * publishes and the bubble appears right where the row was. No boxes, no
+ * modal flows. Reply ↩ opens the same inline row under that bubble.
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import VoiceBubble from './VoiceBubble'
-import Recorder from './Recorder'
+import InlineRecorder, { type InlineRecordingResult } from './InlineRecorder'
 import SectionExcerpt from './SectionExcerpt'
-import type { RecordingResult } from './Recorder'
 import type {
   CompassIssue,
   Segment,
@@ -51,29 +44,19 @@ interface SectionState {
 
 interface RecordTarget {
   sectionId: string
-  issueNumber: number
   respondingTo?: string
 }
 
-type UploadStatus = 'idle' | 'uploading' | 'publishing' | 'done' | 'error'
-
-/** A recording target = one H3 project item, or the section itself if no H3s. */
 interface RecordingSection {
   id: string
   title: string
   item?: IssueSectionItem
 }
 
-/** Flatten the issue into recording sections: one per H3 item (plus lead). */
 function recordingSections(issue: CompassIssue): { group: IssueSection; targets: RecordingSection[] }[] {
   return issue.sections.map((group) => {
     const named = group.items.filter((it) => it.title && it.id)
-    const targets: RecordingSection[] = named.map((it) => ({
-      id: it.id!,
-      title: it.title,
-      item: it,
-    }))
-    // H2 lead prose (if any) gets its own target at the group level
+    const targets: RecordingSection[] = named.map((it) => ({ id: it.id!, title: it.title, item: it }))
     const lead = group.items.find((it) => !it.title)
     if (lead?.body.trim() || targets.length === 0) {
       targets.unshift({ id: group.id, title: group.title, item: lead })
@@ -85,9 +68,8 @@ function recordingSections(issue: CompassIssue): { group: IssueSection; targets:
 export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
   const [sections, setSections] = useState<Map<string, SectionState>>(new Map())
   const [recordTarget, setRecordTarget] = useState<RecordTarget | null>(null)
-  const [uploadStatus, setUploadStatus] = useState<UploadStatus>('idle')
-  const [uploadError, setUploadError] = useState<string | null>(null)
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set())
+  const [publishing, setPublishing] = useState(false)
+  const [justPublished, setJustPublished] = useState<Set<string>>(new Set())
   const [newSegmentIds, setNewSegmentIds] = useState<Set<string>>(new Set())
   const [profiles, setProfiles] = useState<Map<string, Profile>>(new Map())
   const knownIdsRef = useRef<Set<string>>(new Set())
@@ -96,52 +78,35 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
   const groups = useMemo(() => recordingSections(issue), [issue])
   const allTargets = useMemo(() => groups.flatMap((g) => g.targets), [groups])
 
-  // Prefetch kind-0 profiles for every npub mentioned anywhere in the issue
-  // (ONE batched relay query) so excerpts render names without N waterfalls.
+  // Prefetch mention profiles (one batched query)
   useEffect(() => {
-    const fullText = issue.sections
-      .flatMap((s) => s.items.map((it) => it.body))
-      .join('\n\n')
+    const fullText = issue.sections.flatMap((s) => s.items.map((it) => it.body)).join('\n\n')
     const npubs = extractMentionedNpubs(fullText)
     if (!npubs.length) return
     let alive = true
     fetchProfiles(npubs).then((map) => {
       if (alive) setProfiles((prev) => new Map([...prev, ...map]))
     })
-    return () => {
-      alive = false
-    }
+    return () => { alive = false }
   }, [issue])
 
-  const toggleExcerpt = useCallback((id: string) => {
-    setExpandedSections((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }, [])
-
-  // Load ALL segments for the issue in ONE relay query, then group per section
+  // Load all segments in one query
   useEffect(() => {
     let mounted = true
-
-    // Mark all targets loading up front (single setState)
     setSections(() => {
       const next = new Map<string, SectionState>()
-      for (const t of allTargets) {
-        next.set(t.id, { segments: [], order: [], loading: true, error: null })
-      }
+      for (const t of allTargets) next.set(t.id, { segments: [], order: [], loading: true, error: null })
       return next
     })
 
     fetchSegmentsForIssue(`${ISSUE_PREFIX}-${issue.issueNumber}`)
       .then((grouped) => {
         if (!mounted) return
-
         const allParsed: Segment[] = []
+        const orphaned: Segment[] = []
         setSections(() => {
           const next = new Map<string, SectionState>()
+          const knownIds = new Set(allTargets.map((t) => t.id))
           for (const t of allTargets) {
             const events = grouped.get(t.id) ?? []
             const parsed = events.flatMap((e) => {
@@ -152,17 +117,30 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
               knownIdsRef.current.add(seg.event.id)
               allParsed.push(seg)
             }
-            next.set(t.id, {
-              segments: parsed,
-              order: computeSeedOrder(parsed),
-              loading: false,
-              error: null,
-            })
+            next.set(t.id, { segments: parsed, order: computeSeedOrder(parsed), loading: false, error: null })
+          }
+          // Segments whose section tag no longer matches any item (old ID
+          // formats) — surface them under the first group so nothing is lost
+          for (const [secId, events] of grouped) {
+            if (knownIds.has(secId)) continue
+            for (const e of events) {
+              const s = parseSegment(e)
+              if (s) {
+                knownIdsRef.current.add(s.event.id)
+                orphaned.push(s)
+              }
+            }
+          }
+          if (orphaned.length && allTargets.length) {
+            const first = next.get(allTargets[0].id)
+            if (first) {
+              const merged = [...first.segments, ...orphaned]
+              next.set(allTargets[0].id, { ...first, segments: merged, order: computeSeedOrder(merged) })
+              allParsed.push(...orphaned)
+            }
           }
           return next
         })
-
-        // ONE batched profile fetch for every author in the issue
         if (allParsed.length) {
           fetchProfiles(allParsed.map((s) => s.event.pubkey)).then((map) => {
             if (!mounted) return
@@ -175,19 +153,15 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
         const message = err instanceof Error ? err.message : String(err)
         setSections((prev) => {
           const next = new Map(prev)
-          for (const t of allTargets) {
-            next.set(t.id, { segments: [], order: [], loading: false, error: message })
-          }
+          for (const t of allTargets) next.set(t.id, { segments: [], order: [], loading: false, error: message })
           return next
         })
       })
 
-    return () => {
-      mounted = false
-    }
+    return () => { mounted = false }
   }, [allTargets, issue.issueNumber])
 
-  // Live subscription for late-arriving segments (shares the app-wide pool)
+  // Live subscription
   useEffect(() => {
     if (!allTargets.length) return
     const pool = getPool()
@@ -201,14 +175,16 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
           if (knownIdsRef.current.has(event.id)) return
           knownIdsRef.current.add(event.id)
           const seg = parseSegment(event)
-          if (!seg || !targetIds.has(seg.sectionId)) return
+          if (!seg) return
+          const destId = targetIds.has(seg.sectionId) ? seg.sectionId : allTargets[0]?.id
+          if (!destId) return
           setSections((prev) => {
             const next = new Map(prev)
-            const cur = next.get(seg.sectionId)
+            const cur = next.get(destId)
             if (!cur) return prev
             const newSegments = [...cur.segments, seg]
             const newOrder = computeSeedOrder(newSegments)
-            next.set(seg.sectionId, { ...cur, segments: newSegments, order: newOrder })
+            next.set(destId, { ...cur, segments: newSegments, order: newOrder })
             return next
           })
           setNewSegmentIds((prev) => new Set([...prev, event.id]))
@@ -218,77 +194,63 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
         },
       },
     )
-    return () => {
-      sub.close()
-    }
+    return () => sub.close()
   }, [allTargets, issue.issueNumber])
 
-  const handleRecord = useCallback(
-    (sectionId: string) => {
-      setRecordTarget({ sectionId, issueNumber: issue.issueNumber })
-      setUploadStatus('idle')
-      setUploadError(null)
-    },
-    [issue.issueNumber],
-  )
-
-  const handleReply = useCallback(
-    (segment: Segment) => {
-      setRecordTarget({
-        sectionId: segment.sectionId,
-        issueNumber: issue.issueNumber,
-        respondingTo: segment.event.id,
-      })
-      setUploadStatus('idle')
-      setUploadError(null)
-    },
-    [issue.issueNumber],
-  )
+  const handleReply = useCallback((segment: Segment) => {
+    setRecordTarget({ sectionId: segment.sectionId, respondingTo: segment.event.id })
+  }, [])
 
   const handleRecorded = useCallback(
-    async (result: RecordingResult) => {
+    async (result: InlineRecordingResult) => {
       if (!recordTarget) return
-      setUploadStatus('uploading')
-      setUploadError(null)
+      const target = recordTarget
+      setPublishing(true)
       try {
         const descriptor = await uploadBlob(result.blob, signer)
-        setUploadStatus('publishing')
         const event = await publishSegment({
           signer,
           blob: descriptor,
           duration: result.duration,
           waveform: result.waveform,
-          sectionId: recordTarget.sectionId,
-          issueNumber: recordTarget.issueNumber,
-          respondingTo: recordTarget.respondingTo,
+          sectionId: target.sectionId,
+          issueNumber: issue.issueNumber,
+          respondingTo: target.respondingTo,
         })
         const newSeg = parseSegment(event)
         if (newSeg) {
+          knownIdsRef.current.add(newSeg.event.id)
           setSections((prev) => {
             const next = new Map(prev)
-            const cur = next.get(recordTarget.sectionId)
+            const cur = next.get(target.sectionId)
             if (cur) {
               const newSegments = [...cur.segments, newSeg]
               const newOrder = computeSeedOrder(newSegments)
-              next.set(recordTarget.sectionId, { ...cur, segments: newSegments, order: newOrder })
+              next.set(target.sectionId, { ...cur, segments: newSegments, order: newOrder })
             }
             return next
           })
+          // Subtle published indicator on the new bubble
+          setJustPublished((prev) => new Set([...prev, newSeg.event.id]))
+          setTimeout(() => {
+            setJustPublished((prev) => {
+              const next = new Set(prev)
+              next.delete(newSeg.event.id)
+              return next
+            })
+          }, 3000)
         }
-        setUploadStatus('done')
-        setTimeout(() => {
-          setRecordTarget(null)
-          setUploadStatus('idle')
-        }, 1200)
+        setRecordTarget(null)
       } catch (err) {
-        setUploadStatus('error')
-        setUploadError(err instanceof Error ? err.message : String(err))
+        // Keep the recorder open on failure so the user can retry
+        console.error('Publish failed:', err)
+      } finally {
+        setPublishing(false)
       }
     },
-    [recordTarget, signer],
+    [recordTarget, signer, issue.issueNumber],
   )
 
-  // Issue-wide playback queue in display order
   const queue = useMemo(() => {
     const out: Segment[] = []
     for (const target of allTargets) {
@@ -302,59 +264,29 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
     return out
   }, [allTargets, sections])
 
-  const recorderBlock = (
-    <div className="timeline__recorder">
-      {uploadStatus === 'idle' && (
-        <Recorder onRecorded={handleRecorded} onCancel={() => setRecordTarget(null)} />
-      )}
-      {uploadStatus === 'uploading' && <p className="upload-status">Uploading…</p>}
-      {uploadStatus === 'publishing' && <p className="upload-status">Publishing…</p>}
-      {uploadStatus === 'done' && <p className="upload-status upload-status--done">Published ✓</p>}
-      {uploadStatus === 'error' && (
-        <div className="upload-status upload-status--error">
-          <p>{uploadError}</p>
-          <button className="btn btn--ghost btn--small" onClick={() => setUploadStatus('idle')}>
-            Retry
-          </button>
-        </div>
-      )}
-    </div>
-  )
-
   return (
     <PlaybackProvider segments={queue}>
-      <main className="timeline">
+      <main className="timeline timeline--dense">
         {groups.map(({ group, targets }) => (
           <div key={group.id} className="timeline__group">
             <h2 className="timeline__group-title">{group.title}</h2>
 
             {targets.map((target) => {
               const state = sections.get(target.id)
-              const isRecordingHere =
-                recordTarget?.sectionId === target.id && !recordTarget?.respondingTo
-              const expanded = expandedSections.has(target.id)
+              const isRecordingHere = recordTarget?.sectionId === target.id && !recordTarget?.respondingTo
 
               return (
                 <section key={target.id} className="timeline__section">
                   {target.item && (
-                    <SectionExcerpt
-                      section={{ id: target.id, title: target.title, items: [target.item] }}
-                      expanded={expanded}
-                      onToggle={() => toggleExcerpt(target.id)}
-                    />
-                  )}
-                  {!target.item && (
-                    <h3 className="timeline__section-title">{target.title}</h3>
+                    <SectionExcerpt section={{ id: target.id, title: target.title, items: [target.item] }} expanded onToggle={() => {}} />
                   )}
 
                   <div className="timeline__notes">
-                    {state?.loading && <p className="timeline__loading">…</p>}
                     {state?.order.map((id) => {
                       const seg = state.segments.find((s) => s.event.id === id)
                       if (!seg) return null
                       const isReplyingHere =
-                        recordTarget?.sectionId === target.id &&
-                        recordTarget?.respondingTo === seg.event.id
+                        recordTarget?.sectionId === target.id && recordTarget?.respondingTo === seg.event.id
                       return (
                         <div key={id} className="timeline__note">
                           <VoiceBubble
@@ -364,23 +296,33 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
                             isWhitelisted={isWhitelisted}
                             isNew={newSegmentIds.has(id)}
                             isOwn={seg.event.pubkey === (signer as { _pubkey?: string })._pubkey}
+                            justPublished={justPublished.has(id)}
                           />
-                          {isReplyingHere && recorderBlock}
+                          {isReplyingHere && (
+                            <InlineRecorder
+                              onRecorded={handleRecorded}
+                              onCancel={() => setRecordTarget(null)}
+                              autoStart
+                            />
+                          )}
                         </div>
                       )
                     })}
                   </div>
 
-                  {isRecordingHere && recorderBlock}
-
-                  {isWhitelisted && !isRecordingHere && (
-                    <button
-                      className="btn btn--record-inline timeline__record-btn"
-                      onClick={() => handleRecord(target.id)}
-                      aria-label={`Record a note for ${target.title}`}
-                    >
-                      ● Record
-                    </button>
+                  {isWhitelisted && !isRecordingHere && !publishing && (
+                    <div className="timeline__recrow">
+                      <InlineRecorder onRecorded={handleRecorded} />
+                    </div>
+                  )}
+                  {isRecordingHere && (
+                    <div className="timeline__recrow">
+                      <InlineRecorder
+                        onRecorded={handleRecorded}
+                        onCancel={() => setRecordTarget(null)}
+                        autoStart
+                      />
+                    </div>
                   )}
                 </section>
               )

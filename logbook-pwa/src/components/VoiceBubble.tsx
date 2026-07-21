@@ -19,6 +19,7 @@ interface Props {
   isWhitelisted?: boolean
   isNew?: boolean
   isOwn?: boolean
+  justPublished?: boolean
 }
 
 export default function VoiceBubble({
@@ -28,6 +29,7 @@ export default function VoiceBubble({
   isWhitelisted,
   isNew,
   isOwn,
+  justPublished,
 }: Props) {
   const playback = usePlayback()
   const isCurrent = playback.currentId === segment.event.id
@@ -64,6 +66,7 @@ export default function VoiceBubble({
         <div className="bubble__meta">
           <span className="bubble__author">{name}</span>
           {isNew && <span className="bubble__new">new</span>}
+          {justPublished && <span className="bubble__published" title="Published">✓</span>}
         </div>
 
         <div className="bubble__player">
