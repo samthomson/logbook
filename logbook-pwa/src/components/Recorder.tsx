@@ -281,6 +281,8 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
           {formatTime(startSec)} – {formatTime(endSec)}
         </p>
 
+        <ReplayPreview rawBlobRef={rawBlobRef} trimStart={trimStart} trimEnd={trimEnd} />
+
         <div className="recorder__actions">
           <button className="btn btn--ghost" onClick={() => setState('idle')}>Re-record</button>
           <button className="btn btn--ghost" onClick={onCancel}>Cancel</button>
@@ -349,6 +351,96 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
         )}
       </div>
     </div>
+  )
+}
+
+// ─── ReplayPreview ────────────────────────────────────────────────────────────
+
+/**
+ * Lets the user listen back to their recording (respecting the trim selection)
+ * before deciding to publish. Plays the raw blob via an object URL, starting
+ * at trimStart and stopping at trimEnd.
+ */
+function ReplayPreview({
+  rawBlobRef,
+  trimStart,
+  trimEnd,
+}: {
+  rawBlobRef: React.RefObject<Blob | null>
+  trimStart: number
+  trimEnd: number
+}) {
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const [playing, setPlaying] = useState(false)
+  const [url, setUrl] = useState<string | null>(null)
+
+  // Create/revoke object URL for the raw blob
+  useEffect(() => {
+    const blob = rawBlobRef.current
+    if (!blob) return
+    const u = URL.createObjectURL(blob)
+    setUrl(u)
+    return () => URL.revokeObjectURL(u)
+  }, [rawBlobRef])
+
+  const stop = useCallback(() => {
+    const el = audioRef.current
+    if (el) { el.pause(); el.currentTime = 0 }
+    setPlaying(false)
+  }, [])
+
+  // Stop when unmounted
+  useEffect(() => stop, [stop])
+
+  const toggle = useCallback(async () => {
+    if (!url) return
+    if (playing) { stop(); return }
+
+    const blob = rawBlobRef.current
+    if (!blob) return
+
+    // If no meaningful trim, just play the whole blob in an <audio> element
+    if (trimStart < 0.001 && trimEnd > 0.999) {
+      let el = audioRef.current
+      if (!el) {
+        el = new Audio(url)
+        audioRef.current = el
+        el.onended = () => setPlaying(false)
+      }
+      el.currentTime = 0
+      await el.play().catch(() => setPlaying(false))
+      setPlaying(true)
+      return
+    }
+
+    // Trimmed preview via Web Audio: decode, play [trimStart, trimEnd] slice
+    try {
+      const ctx = new AudioContext()
+      const buf = await ctx.decodeAudioData(await blob.arrayBuffer())
+      const src = ctx.createBufferSource()
+      src.buffer = buf
+      src.connect(ctx.destination)
+      const start = trimStart * buf.duration
+      const dur = Math.max(0.05, (trimEnd - trimStart) * buf.duration)
+      src.onended = () => { setPlaying(false); void ctx.close() }
+      src.start(0, start, dur)
+      setPlaying(true)
+      // Keep ctx alive until ended
+      ;(audioRef as React.MutableRefObject<unknown>).current = { pause() { try { src.stop() } catch {} }, set currentTime(_v: number) {} }
+    } catch {
+      setPlaying(false)
+    }
+  }, [url, playing, stop, rawBlobRef, trimStart, trimEnd])
+
+  return (
+    <button
+      type="button"
+      className="btn btn--ghost recorder__replay"
+      onClick={() => void toggle()}
+      aria-label={playing ? 'Stop preview' : 'Play preview'}
+    >
+      {playing ? '■ Stop preview' : '▶ Play preview'}
+    </button>
   )
 }
 

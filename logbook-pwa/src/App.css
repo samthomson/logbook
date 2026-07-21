@@ -610,6 +610,17 @@ body {
   text-align: center;
 }
 
+.recorder__replay {
+  align-self: center;
+  margin: 2px 0;
+}
+
+.recorder--review {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .recorder__pitch-row {
   display: flex;
   gap: 4px;
