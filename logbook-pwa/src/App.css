@@ -1002,3 +1002,227 @@ body {
 @keyframes note-row-spin {
   to { transform: rotate(360deg); }
 }
+
+/* ─── Voice bubbles (Telegram-style) ────────────────────────────────────────── */
+.bubble {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  max-width: 85%;
+}
+.bubble--own { margin-left: auto; flex-direction: row-reverse; }
+
+.bubble__avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent-muted);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.bubble__avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+.bubble__body {
+  background: var(--bg-elevated);
+  border-radius: 14px 14px 14px 4px;
+  padding: 8px 10px;
+  min-width: 200px;
+  max-width: 100%;
+}
+.bubble--own .bubble__body {
+  background: var(--accent-muted);
+  border-radius: 14px 14px 4px 14px;
+}
+
+.bubble__meta {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+.bubble__author {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent-hover);
+}
+.bubble--own .bubble__author { color: #c7d2fe; }
+.bubble__new {
+  font-size: 0.65rem;
+  color: var(--success);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.bubble__player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bubble__play {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.85rem;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.bubble__scrub {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  min-width: 60px;
+  height: 20px;
+  background: linear-gradient(
+    to right,
+    var(--accent) 0%,
+    var(--accent) var(--progress, 0%),
+    rgba(255 255 255 / 0.15) var(--progress, 0%),
+    rgba(255 255 255 / 0.15) 100%
+  ) center/100% 4px no-repeat;
+  outline: none;
+  cursor: pointer;
+}
+.bubble__scrub::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+}
+.bubble__scrub::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: none;
+}
+.bubble__time {
+  font-size: 0.72rem;
+  font-family: monospace;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.bubble__reply {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+.bubble__reply:hover { color: var(--text); background: rgba(255 255 255 / 0.08); }
+
+/* ─── Timeline groups (H2) and record button placement ─────────────────────── */
+.timeline__group { margin-bottom: 28px; }
+.timeline__group-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.timeline__section { margin-bottom: 14px; }
+.timeline__record-btn { margin-top: 6px; align-self: flex-start; }
+
+/* ─── Review box (consolidated preview) ────────────────────────────────────── */
+.review-box {
+  background: var(--bg-elevated);
+  border-radius: var(--radius);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.review-box__trim {
+  position: relative;
+  height: 48px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  overflow: hidden;
+  touch-action: none;
+}
+.review-box__trim .trimmer__bars {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  height: 100%;
+  padding: 6px 4px;
+}
+
+/* ─── Recorder live state ──────────────────────────────────────────────────── */
+.recorder__idle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.recorder__pitch-details { position: relative; }
+.recorder__pitch-details summary {
+  list-style: none;
+  cursor: pointer;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.recorder__pitch-details summary::-webkit-details-marker { display: none; }
+.recorder__pitch-details[open] summary { color: var(--accent); border-color: var(--accent); }
+.recorder__pitch-details .recorder__pitch-row {
+  position: absolute;
+  top: 42px;
+  left: 0;
+  z-index: 20;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px;
+  display: flex;
+  gap: 4px;
+  box-shadow: var(--shadow);
+}
+
+.recorder__live {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg-elevated);
+  border-radius: var(--radius);
+}
+.recorder__live-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.recorder__live-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--record-red);
+  animation: live-pulse 1.2s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+}
+.recorder__live-label { font-size: 0.85rem; color: var(--text-muted); }
+
+/* ─── Sticky action buttons above keyboard ─────────────────────────────────── */
+.sticky-action {
+  position: sticky;
+  bottom: calc(8px + var(--keyboard-offset, 0px));
+  z-index: 30;
+  box-shadow: 0 -2px 12px rgba(0 0 0 / 0.5);
+}

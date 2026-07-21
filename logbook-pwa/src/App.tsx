@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import type { AuthState } from './lib/auth'
+import { useKeyboardOffset } from './lib/useKeyboardOffset'
 
 import IssueTimeline from './components/IssueTimeline'
 import IssuePicker from './components/IssuePicker'
@@ -23,11 +24,17 @@ export default function App() {
   const [isWhitelisted, setIsWhitelisted] = useState(false)
   const [issueLoading, setIssueLoading] = useState(false)
   const [issueError, setIssueError] = useState<string | null>(null)
+  const keyboardOffset = useKeyboardOffset()
 
   useEffect(() => {
     const { supported, message } = checkRecordingSupport(IOS_RECORDING_MIN_VERSION)
     if (!supported) setRecordingNotice(message)
   }, [])
+
+  // Expose keyboard offset as a CSS var so sticky actions float above the keyboard
+  useEffect(() => {
+    document.documentElement.style.setProperty('--keyboard-offset', `${keyboardOffset}px`)
+  }, [keyboardOffset])
 
   // Restore session on mount
   useEffect(() => {
@@ -334,7 +341,7 @@ function AuthScreen({ onAuth }: {
 
       {mode && (
         <button
-          className="btn btn--primary"
+          className="btn btn--primary sticky-action"
           onClick={handleConnect}
           disabled={loading || (mode !== 'extension' && !input.trim()) || (mode === 'extension' && !hasExtension)}
         >

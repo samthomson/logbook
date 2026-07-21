@@ -129,7 +129,14 @@ function parseMarkdownSections(markdown: string, issueNumber: number): IssueSect
       flushItem()
       if (currentSection) {
         const title = line.slice(4).trim()
-        currentItem = { title, body: '' }
+        // Item id: stable per project within the issue — used as the
+        // recording-section id for per-item voice notes.
+        const parentSlug = currentSection.id.replace(/^sec-/, '').replace(/-\d+$/, '')
+        currentItem = {
+          title,
+          body: '',
+          id: `sec-${parentSlug}-${slugify(title)}-${issueNumber}`,
+        }
         currentBody = []
       }
     } else {

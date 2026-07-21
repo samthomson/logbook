@@ -39,7 +39,7 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
   const [elapsed, setElapsed] = useState(0)
   const [liveBars, setLiveBars] = useState<number[]>(new Array(60).fill(0))
   const [pitchIdx, setPitchIdx] = useState(0)  // index into PITCH_OPTIONS
-  const [vcReady, setVcReady] = useState(false)  // true once AudioWorklet is loaded
+  const [, setVcReady] = useState(false)  // true once AudioWorklet is loaded
 
   const [trimStart, setTrimStart] = useState(0)
   const [trimEnd, setTrimEnd] = useState(1)
@@ -265,27 +265,19 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
 
   if (state === 'recorded') {
     const totalSecs = Math.round(durationRef.current)
-    const startSec = Math.round(trimStart * totalSecs)
-    const endSec = Math.round(trimEnd * totalSecs)
     const wf = fullWaveformRef.current
 
     return (
       <div className="recorder recorder--review">
-        <p className="recorder__label">Review your recording ({formatTime(totalSecs)})</p>
-
-        <WaveformTrimmer
-          waveform={wf}
+        <ReplayPreview
+          rawBlobRef={rawBlobRef}
           trimStart={trimStart}
           trimEnd={trimEnd}
+          waveform={wf}
           onTrimStart={setTrimStart}
           onTrimEnd={setTrimEnd}
+          totalSecs={totalSecs}
         />
-
-        <p className="recorder__trim-range">
-          {formatTime(startSec)} – {formatTime(endSec)}
-        </p>
-
-        <ReplayPreview rawBlobRef={rawBlobRef} trimStart={trimStart} trimEnd={trimEnd} />
 
         <div className="recorder__actions">
           <button className="btn btn--ghost" onClick={() => setState('idle')}>Re-record</button>
@@ -300,23 +292,42 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
 
   return (
     <div className="recorder">
-      {/* Pitch selector — shown in idle and recording states */}
-      <div className="recorder__pitch-row" aria-label="Voice pitch">
-        {PITCH_OPTIONS.map((opt, i) => (
+      {state === 'idle' && (
+        <div className="recorder__idle-row">
           <button
-            key={opt.label}
-            className={`btn btn--ghost btn--small${pitchIdx === i ? ' btn--active' : ''}`}
-            onClick={() => handlePitchChange(i)}
-            aria-pressed={pitchIdx === i}
-            title={vcReady && state === 'recording' ? `Pitch: ${opt.label}` : opt.label}
+            className="btn btn--record"
+            onClick={startRecording}
+            disabled={disabled}
+            aria-label="Start recording"
           >
-            {opt.label}
+            ● Record
           </button>
-        ))}
-      </div>
+          <details className="recorder__pitch-details">
+            <summary aria-label="Voice pitch options">🎚</summary>
+            <div className="recorder__pitch-row" aria-label="Voice pitch">
+              {PITCH_OPTIONS.map((opt, i) => (
+                <button
+                  key={opt.label}
+                  className={`btn btn--ghost btn--small${pitchIdx === i ? ' btn--active' : ''}`}
+                  onClick={() => handlePitchChange(i)}
+                  aria-pressed={pitchIdx === i}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </details>
+          <button className="btn btn--ghost" onClick={onCancel}>Cancel</button>
+        </div>
+      )}
 
       {state === 'recording' && (
-        <>
+        <div className="recorder__live">
+          <div className="recorder__live-top">
+            <span className="recorder__live-dot" aria-hidden="true" />
+            <span className="recorder__elapsed">{formatTime(elapsed)}</span>
+            <span className="recorder__live-label">Recording…</span>
+          </div>
           <div className="recorder__waveform" aria-hidden="true">
             {liveBars.map((v, i) => (
               <div
@@ -326,34 +337,15 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
               />
             ))}
           </div>
-          <p className="recorder__elapsed">{formatTime(elapsed)}</p>
-        </>
-      )}
-
-      <div className="recorder__actions">
-        {state === 'idle' && (
-          <>
-            <button
-              className="btn btn--record"
-              onClick={startRecording}
-              disabled={disabled}
-              aria-label="Start recording"
-            >
-              &#9679; Record
-            </button>
-            <button className="btn btn--ghost" onClick={onCancel}>Cancel</button>
-          </>
-        )}
-        {state === 'recording' && (
           <button
             className="btn btn--stop"
             onClick={stopRecording}
             aria-label="Stop recording"
           >
-            &#9632; Stop
+            ■ Stop
           </button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -361,19 +353,25 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
 // ─── ReplayPreview ────────────────────────────────────────────────────────────
 
 /**
- * Listen back to the recording before publishing — same interaction model as
- * the timeline note rows: round play button + scrollable timeline scrubber.
- * Respects the trim selection: playback starts at trimStart and stops at
- * trimEnd.
+ * Single consolidated review box: play/pause + scrub timeline + integrated
+ * waveform trim handles. This is the only preview UI in the review state.
  */
 function ReplayPreview({
   rawBlobRef,
   trimStart,
   trimEnd,
+  waveform,
+  onTrimStart,
+  onTrimEnd,
+  totalSecs,
 }: {
   rawBlobRef: React.RefObject<Blob | null>
   trimStart: number
   trimEnd: number
+  waveform: number[]
+  onTrimStart: (v: number) => void
+  onTrimEnd: (v: number) => void
+  totalSecs: number
 }) {
   const elRef = useRef<HTMLAudioElement | null>(null)
   const [url, setUrl] = useState<string | null>(null)
@@ -381,7 +379,6 @@ function ReplayPreview({
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
 
-  // Create/revoke object URL for the raw blob
   useEffect(() => {
     const blob = rawBlobRef.current
     if (!blob) return
@@ -390,7 +387,6 @@ function ReplayPreview({
     return () => URL.revokeObjectURL(u)
   }, [rawBlobRef])
 
-  // Build the element once we have a URL
   useEffect(() => {
     if (!url) return
     const el = new Audio(url)
@@ -398,10 +394,7 @@ function ReplayPreview({
     elRef.current = el
     const onTime = () => {
       setCurrentTime(el.currentTime)
-      // Stop at trim end
-      if (el.duration && el.currentTime >= trimEnd * el.duration) {
-        el.pause()
-      }
+      if (el.duration && el.currentTime >= trimEnd * el.duration) el.pause()
     }
     const onMeta = () => setDuration(el.duration || 0)
     const onPlay = () => setPlaying(true)
@@ -426,17 +419,11 @@ function ReplayPreview({
   const toggle = useCallback(() => {
     const el = elRef.current
     if (!el) return
-    if (playing) {
-      el.pause()
-      return
-    }
-    // Start at trim start (or resume within the trim window)
+    if (playing) { el.pause(); return }
     if (el.duration) {
       const start = trimStart * el.duration
       const end = trimEnd * el.duration
-      if (el.currentTime < start || el.currentTime >= end - 0.05) {
-        el.currentTime = start
-      }
+      if (el.currentTime < start || el.currentTime >= end - 0.05) el.currentTime = start
     }
     void el.play().catch(() => setPlaying(false))
   }, [playing, trimStart, trimEnd])
@@ -459,62 +446,14 @@ function ReplayPreview({
     return Math.max(0, Math.min(1, (currentTime - start) / (end - start)))
   })()
 
-  const fmt = (s: number) => {
-    const m = Math.floor(s / 60)
-    const sec = s % 60
-    return `${m}:${sec < 10 && m === 0 && s < 10 ? sec.toFixed(1) : String(Math.floor(sec)).padStart(2, '0')}`
-  }
+  const samples = downsample(waveform, 60)
+  const trimContainerRef = useRef<HTMLDivElement>(null)
 
-  return (
-    <div className="note-row recorder__replay-row">
-      <button
-        type="button"
-        className="note-row__play"
-        onClick={toggle}
-        aria-label={playing ? 'Pause preview' : 'Play preview'}
-      >
-        {playing ? '⏸' : '▶'}
-      </button>
-      <div className="note-row__main">
-        <div className="note-row__meta">
-          <span className="note-row__author">Preview</span>
-        </div>
-        <input
-          className="note-row__scrub"
-          type="range"
-          min={0}
-          max={1000}
-          step={1}
-          value={Math.round(progress * 1000)}
-          onChange={handleScrub}
-          aria-label="Seek in preview"
-          style={{ ['--progress' as string]: `${progress * 100}%` }}
-        />
-      </div>
-      <span className="note-row__time">{fmt(Math.max(0, currentTime - trimStart * duration))}</span>
-    </div>
-  )
-}
-
-// ─── WaveformTrimmer ──────────────────────────────────────────────────────────
-
-interface TrimmerProps {
-  waveform: number[]
-  trimStart: number
-  trimEnd: number
-  onTrimStart: (v: number) => void
-  onTrimEnd: (v: number) => void
-}
-
-function WaveformTrimmer({ waveform, trimStart, trimEnd, onTrimStart, onTrimEnd }: TrimmerProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const samples = downsample(waveform, 120)
-
-  const handleDrag = (setter: (v: number) => void, other: number, side: 'start' | 'end') =>
+  const handleTrimDrag = (setter: (v: number) => void, other: number, side: 'start' | 'end') =>
     (e: React.PointerEvent) => {
       e.currentTarget.setPointerCapture(e.pointerId)
       const onMove = (ev: PointerEvent) => {
-        const rect = containerRef.current?.getBoundingClientRect()
+        const rect = trimContainerRef.current?.getBoundingClientRect()
         if (!rect) return
         let frac = (ev.clientX - rect.left) / rect.width
         frac = Math.max(0, Math.min(1, frac))
@@ -530,51 +469,81 @@ function WaveformTrimmer({ waveform, trimStart, trimEnd, onTrimStart, onTrimEnd 
       window.addEventListener('pointerup', onUp)
     }
 
+  const fmt = (s: number) => {
+    const m = Math.floor(s / 60)
+    const sec = s % 60
+    return `${m}:${sec < 10 && m === 0 && s < 10 ? sec.toFixed(1) : String(Math.floor(sec)).padStart(2, '0')}`
+  }
+
   return (
-    <div className="trimmer" ref={containerRef}>
-      <div className="trimmer__bars">
-        {samples.map((v, i) => {
-          const frac = i / samples.length
-          const inRange = frac >= trimStart && frac <= trimEnd
-          return (
-            <div
-              key={i}
-              className={`trimmer__bar ${inRange ? 'trimmer__bar--active' : ''}`}
-              style={{ height: `${Math.max(4, v * 100)}%` }}
-            />
-          )
-        })}
+    <div className="review-box">
+      <div className="note-row">
+        <button
+          type="button"
+          className="note-row__play"
+          onClick={toggle}
+          aria-label={playing ? 'Pause preview' : 'Play preview'}
+        >
+          {playing ? '⏸' : '▶'}
+        </button>
+        <div className="note-row__main">
+          <input
+            className="note-row__scrub"
+            type="range"
+            min={0}
+            max={1000}
+            step={1}
+            value={Math.round(progress * 1000)}
+            onChange={handleScrub}
+            aria-label="Seek in preview"
+            style={{ ['--progress' as string]: `${progress * 100}%` }}
+          />
+        </div>
+        <span className="note-row__time">{fmt(Math.max(0, currentTime - trimStart * duration))}</span>
       </div>
 
-      <div
-        className="trimmer__handle trimmer__handle--start"
-        style={{ left: `${trimStart * 100}%` }}
-        onPointerDown={handleDrag(onTrimStart, trimEnd, 'start')}
-        role="slider"
-        aria-label="Trim start"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.round(trimStart * 100)}
-      />
-
-      <div
-        className="trimmer__handle trimmer__handle--end"
-        style={{ left: `${trimEnd * 100}%` }}
-        onPointerDown={handleDrag(onTrimEnd, trimStart, 'end')}
-        role="slider"
-        aria-label="Trim end"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.round(trimEnd * 100)}
-      />
-
-      <div
-        className="trimmer__selection"
-        style={{
-          left: `${trimStart * 100}%`,
-          width: `${(trimEnd - trimStart) * 100}%`,
-        }}
-      />
+      <div className="review-box__trim" ref={trimContainerRef}>
+        <div className="trimmer__bars">
+          {samples.map((v, i) => {
+            const frac = i / samples.length
+            const inRange = frac >= trimStart && frac <= trimEnd
+            return (
+              <div
+                key={i}
+                className={`trimmer__bar ${inRange ? 'trimmer__bar--active' : ''}`}
+                style={{ height: `${Math.max(4, Math.min(1, v) * 100)}%` }}
+              />
+            )
+          })}
+        </div>
+        <div
+          className="trimmer__handle trimmer__handle--start"
+          style={{ left: `${trimStart * 100}%` }}
+          onPointerDown={handleTrimDrag(onTrimStart, trimEnd, 'start')}
+          role="slider"
+          aria-label="Trim start"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(trimStart * 100)}
+        />
+        <div
+          className="trimmer__handle trimmer__handle--end"
+          style={{ left: `${trimEnd * 100}%` }}
+          onPointerDown={handleTrimDrag(onTrimEnd, trimStart, 'end')}
+          role="slider"
+          aria-label="Trim end"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(trimEnd * 100)}
+        />
+        <div
+          className="trimmer__selection"
+          style={{ left: `${trimStart * 100}%`, width: `${(trimEnd - trimStart) * 100}%` }}
+        />
+      </div>
+      <p className="recorder__trim-range">
+        {fmt(Math.round(trimStart * totalSecs))} – {fmt(Math.round(trimEnd * totalSecs))}
+      </p>
     </div>
   )
 }

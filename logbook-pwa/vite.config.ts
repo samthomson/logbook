@@ -12,7 +12,7 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
       manifest: {
-        id: './',
+        id: 'logbook',
         name: 'Logbook',
         short_name: 'Logbook',
         description: 'Async voice podcast for Nostr Compass',

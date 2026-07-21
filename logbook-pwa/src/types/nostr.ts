@@ -87,6 +87,8 @@ export interface IssueSection {
 }
 
 export interface IssueSectionItem {
+  /** Stable per-item id: sec-<h2slug>-<h3slug>-<issueNumber>. Empty for lead prose. */
+  id?: string
   title: string          // H3 title
   body: string           // prose under the H3
 }
