@@ -195,6 +195,20 @@ export function parseSegment(event: NostrEvent): Segment | null {
   const issueId = getTag(event, 'issue')
   if (!sectionId || !issueId) return null
 
+  // Normalize waveform to 0–1 range. SPEC.md says 0–255; this client writes
+  // 0–1. Defensively downscale anything that looks like the 0–255 scale and
+  // clamp every sample so out-of-range relay data can't break layout.
+  if (Array.isArray(content.audio.waveform)) {
+    const max = Math.max(...content.audio.waveform.map((v) => Number(v) || 0), 0)
+    const scale = max > 2 ? 255 : 1
+    content.audio.waveform = content.audio.waveform.map((v) => {
+      const n = (Number(v) || 0) / scale
+      return Math.min(1, Math.max(0, n))
+    })
+  } else {
+    content.audio.waveform = []
+  }
+
   return {
     event,
     audio: content.audio,

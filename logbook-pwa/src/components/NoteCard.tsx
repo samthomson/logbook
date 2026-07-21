@@ -107,7 +107,7 @@ function MiniWaveform({ waveform }: { waveform: number[] }) {
         <div
           key={i}
           className="mini-waveform__bar"
-          style={{ height: `${Math.max(4, v * 100)}%` }}
+          style={{ height: `${Math.max(4, Math.min(1, Math.max(0, v)) * 100)}%` }}
         />
       ))}
     </div>

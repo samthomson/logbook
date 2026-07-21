@@ -43,9 +43,12 @@ export function now(): number {
   return Math.floor(Date.now() / 1000)
 }
 
-/** Format seconds as mm:ss. */
+/** Format seconds as mm:ss (sub-10s shows one decimal: 0:03.5). */
 export function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60)
+  if (m === 0 && seconds < 10) {
+    return `0:0${seconds.toFixed(1)}`
+  }
   const s = Math.floor(seconds % 60)
   return `${m}:${s.toString().padStart(2, '0')}`
 }

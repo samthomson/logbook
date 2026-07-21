@@ -123,7 +123,7 @@ function WaveformProgress({ waveform, progress }: { waveform: number[]; progress
         <div
           key={i}
           className={`audio-player__wf-bar ${i < filled ? 'audio-player__wf-bar--played' : ''}`}
-          style={{ height: `${Math.max(4, v * 100)}%` }}
+          style={{ height: `${Math.max(4, Math.min(1, Math.max(0, v)) * 100)}%` }}
         />
       ))}
     </div>

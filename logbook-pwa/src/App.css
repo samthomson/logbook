@@ -131,7 +131,7 @@ body {
 .btn--ghost:hover:not(:disabled) { background: var(--bg-elevated); color: var(--text); }
 .btn--active { border-color: var(--accent); color: var(--accent); }
 
-.btn--small { padding: 4px 10px; font-size: 0.8rem; }
+.btn--small { padding: 8px 14px; font-size: 0.8rem; min-height: 36px; }
 
 .btn--record {
   background: var(--record-red);
@@ -432,8 +432,8 @@ body {
 .note-card__waveform-tap:hover { background: var(--bg-elevated); }
 
 .note-card__play-hint {
-  font-size: 0.75rem;
-  color: var(--text-dim);
+  font-size: 0.8rem;
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 
@@ -450,12 +450,14 @@ body {
   height: 32px;
   flex: 1;
   min-width: 0;
+  overflow: hidden;
 }
 
 .mini-waveform__bar {
   flex: 1;
-  background: var(--text-dim);
+  background: var(--text-muted);
   border-radius: 2px;
+  opacity: 0.85;
   min-width: 1px;
   transition: height 0.05s;
 }
@@ -473,6 +475,7 @@ body {
   align-items: center;
   gap: 1px;
   height: 40px;
+  overflow: hidden;
 }
 
 .audio-player__wf-bar {
@@ -569,6 +572,7 @@ body {
   gap: 2px;
   height: 60px;
   width: 100%;
+  overflow: hidden;
 }
 
 .recorder__bar {

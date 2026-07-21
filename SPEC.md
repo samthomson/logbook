@@ -46,7 +46,7 @@ JSON string:
     "sha256": "abc123...",
     "mime": "audio/webm",
     "duration": 187,
-    "waveform": [0, 3, 7, 12, 8, 4, 1]
+    "waveform": [0.0, 0.12, 0.45, 0.8, 0.6, 0.3, 0.05]
   },
   "isIntro": false
 }
@@ -56,7 +56,7 @@ JSON string:
 - `audio.sha256` — hex sha256 of the raw audio file (same value as `x` tag)
 - `audio.mime` — always `"audio/webm"` for contributor segments; may be `"audio/mpeg"` for AI intro TTS
 - `audio.duration` — seconds (integer or float, 2 decimal places max)
-- `audio.waveform` — amplitude array (0–255), ~100 samples, used for waveform thumbnail rendering
+- `audio.waveform` — amplitude array normalized to 0–1 floats, ~100 samples, used for waveform thumbnail rendering (clients MUST clamp at render; values >2 on ingest should be assumed 0–255 scale and downscaled)
 - `isIntro` — `true` only for AI-generated intro segments signed by the Compass npub
 
 ### Required Tags

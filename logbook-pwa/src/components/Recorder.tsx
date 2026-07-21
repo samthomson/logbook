@@ -316,7 +316,7 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
               <div
                 key={i}
                 className="recorder__bar"
-                style={{ height: `${Math.max(4, v * 100)}%` }}
+                style={{ height: `${Math.max(4, Math.min(1, v) * 100)}%` }}
               />
             ))}
           </div>
