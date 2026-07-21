@@ -1,8 +1,9 @@
 # Standing contributor roster for Logbook whitelist.
-# Format: display_name: npub1... or display_name: <hex pubkey>
-# Any npub on this list can record under any section in any issue.
-# Generated/maintained by the Compass team.
-#
-# Example entries (replace with real npubs before launch):
-# satoshi: npub1qyqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
-# compass: 7fa56f5d6962ab1e3cd424e758c3002b8665f7b0d8dcee9fe9e288d7751aca95
+# Format: display_name: <hex pubkey>
+# Any pubkey on this list can record under any section in any issue.
+
+contributors:
+  - name: testuser
+    pubkey: "24b859838aca43694d0285f9c0130e2ca24fdb72e5f48a90dfb747279fc6f7fe"
+  - name: e2e-tester
+    pubkey: "3c457108865e05d95ce3848aa0bc51cd64f984c5c61689a3d49809ab71fa1d64"

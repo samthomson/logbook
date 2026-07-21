@@ -45,16 +45,19 @@ interface SegmentContent {
 interface ManifestSection {
   id: string
   title: string
+  introEventId: string | null
   order: string[]        // ordered segment event ids
-  excluded: boolean
+  excluded: string[]     // excluded segment event ids (SPEC §2)
+  reviewed: string[]
 }
 
 interface ManifestContent {
-  issueId: string
-  issueNumber: number
-  issueTitle: string
+  issueRef: string
+  issueNumber?: number
+  title?: string
   sections: ManifestSection[]
   episodeStatus: string
+  publishedRss: unknown
 }
 
 interface Segment {
@@ -266,8 +269,18 @@ async function main(): Promise<void> {
   }
 
   // Collect all segment ids referenced in non-excluded sections
-  const activeSections = manifest.sections.filter((s) => !s.excluded && s.order.length > 0)
-  const allSegmentIds = [...new Set(activeSections.flatMap((s) => s.order))]
+  // A section is excluded iff all its segments are in excluded[], or it has no order
+  const activeSections = manifest.sections.filter(
+    (s) =>
+      s.introEventId !== 'excluded' && // AdminPanel section-exclude sentinel
+      s.order.some((id) => !s.excluded.includes(id)),
+  )
+  // Within a section, only include segments NOT in the excluded list
+  const allSegmentIds = [
+    ...new Set(
+      activeSections.flatMap((s) => s.order.filter((id) => !s.excluded.includes(id))),
+    ),
+  ]
 
   console.log(
     `[stitch] ${activeSections.length} active sections, ${allSegmentIds.length} segments`,
@@ -300,6 +313,7 @@ async function main(): Promise<void> {
     const clipWavs: string[] = []
 
     for (const segId of section.order) {
+      if (section.excluded.includes(segId)) continue
       const seg = segments.get(segId)
       if (!seg) {
         console.warn(`[stitch] Segment ${segId} not found, skipping`)
@@ -391,7 +405,9 @@ async function main(): Promise<void> {
   }
 
   // CUR-01: publish kind 7 reaction (🎙️) from Compass npub on each included segment
-  const includedIds = activeSections.flatMap(s => s.order).filter(id => segments.has(id))
+  const includedIds = activeSections
+    .flatMap(s => s.order.filter(id => !s.excluded.includes(id)))
+    .filter(id => segments.has(id))
   if (includedIds.length > 0) {
     console.log(`[stitch] Publishing ${includedIds.length} kind 7 reactions...`)
     const reactPool = new SimplePool()

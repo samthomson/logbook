@@ -65,15 +65,18 @@ async function fetchStandingRoster(): Promise<string[]> {
   return parseNpubsYml(text)
 }
 
-/** Parse a minimal npubs.yml: lines of the form "name: npub1..." or "name: hex" */
+/** Parse npubs.yml — supports both formats:
+ *  Flat:   "name: npub1..." or "name: <hex>"
+ *  Nested: "- pubkey: <hex>" / "pubkey: <hex>" / "- npub: npub1..." list entries
+ */
 function parseNpubsYml(yaml: string): string[] {
   const pubkeys: string[] = []
   for (const line of yaml.split('\n')) {
-    const trimmed = line.trim()
+    const trimmed = line.trim().replace(/^-\s*/, '')
     if (!trimmed || trimmed.startsWith('#')) continue
     const colonIdx = trimmed.indexOf(':')
     if (colonIdx === -1) continue
-    const value = trimmed.slice(colonIdx + 1).trim()
+    const value = trimmed.slice(colonIdx + 1).trim().replace(/^["']|["']$/g, '')
     const hex = normalizeToHex(value)
     if (hex) pubkeys.push(hex)
   }

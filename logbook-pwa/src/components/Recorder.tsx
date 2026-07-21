@@ -245,6 +245,12 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
 
   const formatTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 
+  const handlePitchChange = useCallback((idx: number) => {
+    setPitchIdx(idx)
+    const vc = voiceChangerRef.current
+    if (vc?.loaded) vc.setPitch(PITCH_OPTIONS[idx]?.factor ?? 1.0)
+  }, [])
+
   if (state === 'trimming') {
     return (
       <div className="recorder recorder--trimming">
@@ -285,12 +291,6 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
       </div>
     )
   }
-
-  const handlePitchChange = useCallback((idx: number) => {
-    setPitchIdx(idx)
-    const vc = voiceChangerRef.current
-    if (vc?.loaded) vc.setPitch(PITCH_OPTIONS[idx]?.factor ?? 1.0)
-  }, [])
 
   return (
     <div className="recorder">

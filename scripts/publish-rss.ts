@@ -86,16 +86,19 @@ ${recipients.join('\n')}
 interface ManifestSection {
   id: string
   title: string
+  introEventId: string | null
   order: string[]
-  excluded: boolean
+  excluded: string[]     // SPEC §2: array of excluded segment ids
+  reviewed: string[]
 }
 
 interface ManifestContent {
-  issueId: string
-  issueNumber: number
-  issueTitle: string
+  issueRef: string
+  issueNumber?: number
+  title?: string
   sections: ManifestSection[]
   episodeStatus: string
+  publishedRss: unknown
 }
 
 interface Chapter {
@@ -331,8 +334,8 @@ async function main(): Promise<void> {
 
   // Collect segment pubkeys from all included sections
   const allSegmentIds = manifest.sections
-    .filter((s) => !s.excluded)
-    .flatMap((s) => s.order)
+    .filter((s) => s.introEventId !== 'excluded')
+    .flatMap((s) => s.order.filter((id) => !s.excluded.includes(id)))
   const segmentEvents =
     allSegmentIds.length > 0
       ? await pool.querySync(DEFAULT_RELAYS, {
@@ -342,17 +345,19 @@ async function main(): Promise<void> {
       : []
   const participantPubkeys = [...new Set(segmentEvents.map((e) => e.pubkey))]
 
+  const issueNumber = manifest.issueNumber ?? parseInt(issueId.replace(/^\D+/, ''), 10) ?? 0
+  const issueTitle = manifest.title ?? `Logbook Episode ${issueNumber}`
   const ep: EpisodeData = {
     issueId,
-    issueNumber: manifest.issueNumber,
-    issueTitle: manifest.issueTitle,
+    issueNumber,
+    issueTitle,
     mp3Url,
     chaptersUrl,
     mp3Size,
     durationSeconds,
     pubDate: new Date(),
     chapters,
-    description: `Async voice notes from Nostr Compass contributors on issue #${manifest.issueNumber}.`,
+    description: `Async voice notes from Nostr Compass contributors on issue #${issueNumber}.`,
     participantPubkeys,
   }
 

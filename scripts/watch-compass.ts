@@ -1,6 +1,6 @@
 import { SimplePool } from 'nostr-tools'
 import type { Filter, NostrEvent } from 'nostr-tools'
-import { finalizeEvent } from 'nostr-tools'
+import { finalizeEvent, nip19 } from 'nostr-tools'
 import { spawnSync } from 'node:child_process'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -29,7 +29,7 @@ function extractIssueNumber(event: NostrEvent): number {
   return event.created_at
 }
 
-function parseIssue(event: NostrEvent): Section[] {
+function parseIssue(event: NostrEvent, issueNumber: number): Section[] {
   const lines = event.content.split('\n')
   const sections: Section[] = []
   let current: Section | null = null
@@ -38,8 +38,15 @@ function parseIssue(event: NostrEvent): Section[] {
     if (line.startsWith('## ')) {
       if (current) sections.push(current)
       const title = line.slice(3).trim()
-      const slug = title.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
-      current = { id: slug, title, items: [] }
+      // SPEC §4: sec-<slug>-<issueNumber>, slug truncated to 40 chars
+      const slug = title
+        .toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 40)
+      current = { id: `sec-${slug}-${issueNumber}`, title, items: [] }
     } else if (line.startsWith('### ') && current) {
       current.items.push({ title: line.slice(4).trim() })
     }
@@ -53,19 +60,29 @@ function parseIssue(event: NostrEvent): Section[] {
 async function createManifest(event: NostrEvent, privkey: Uint8Array): Promise<void> {
   const issueNumber = extractIssueNumber(event)
   const issueId = `${ISSUE_PREFIX}-${issueNumber}`
-  const sections = parseIssue(event)
+  const sections = parseIssue(event, issueNumber)
+
+  // SPEC §2: content must carry issueRef + sections[].introEventId/order/excluded[]/reviewed[]
+  const issueRef = nip19.naddrEncode({
+    kind: KINDS.COMPASS_ISSUE,
+    pubkey: COMPASS_PUBKEY,
+    identifier: event.tags.find(t => t[0] === 'd')?.[1] ?? '',
+  })
 
   const manifestContent = JSON.stringify({
-    issueId,
+    issueRef,
     issueNumber,
     title: event.tags.find(t => t[0] === 'title')?.[1] ?? `Logbook #${issueNumber}`,
     sections: sections.map(s => ({
       id: s.id,
       title: s.title,
+      introEventId: null,
       order: [],
-      excluded: false,
+      excluded: [] as string[],
+      reviewed: [] as string[],
     })),
     episodeStatus: 'draft',
+    publishedRss: null,
     createdAt: Math.floor(Date.now() / 1000),
   })
 
@@ -91,8 +108,11 @@ async function createManifest(event: NostrEvent, privkey: Uint8Array): Promise<v
 // ── AUTO-01: stitch trigger ──────────────────────────────────────────────────
 
 interface ManifestContent {
-  issueId: string
+  issueRef: string
+  issueNumber?: number
+  title?: string
   episodeStatus: string
+  sections: { id: string; order: string[]; excluded: string[] }[]
 }
 
 async function pollCuttingManifests(stitched: Set<string>): Promise<void> {
@@ -113,32 +133,34 @@ async function pollCuttingManifests(stitched: Set<string>): Promise<void> {
       continue
     }
     if (content.episodeStatus !== 'cutting') continue
-    if (stitched.has(content.issueId)) continue
-    stitched.add(content.issueId)
+    const issueId = event.tags.find(t => t[0] === 'd')?.[1]
+    if (!issueId) continue
+    if (stitched.has(issueId)) continue
+    stitched.add(issueId)
 
-    console.log(`[watch-compass] Manifest ${content.issueId} is cutting — triggering stitch`)
+    console.log(`[watch-compass] Manifest ${issueId} is cutting — triggering stitch`)
     const __dir = dirname(fileURLToPath(import.meta.url))
 
     const stitchResult = spawnSync(
       'node',
-      ['--loader', 'ts-node/esm', 'stitch.ts', '--issue', content.issueId],
+      ['--loader', 'ts-node/esm', 'stitch.ts', '--issue', issueId],
       { cwd: __dir, stdio: 'inherit', env: process.env },
     )
     if (stitchResult.status !== 0) {
-      console.error(`[watch-compass] stitch.ts failed for ${content.issueId}`)
-      stitched.delete(content.issueId) // allow retry next cycle
+      console.error(`[watch-compass] stitch.ts failed for ${issueId}`)
+      stitched.delete(issueId) // allow retry next cycle
       continue
     }
 
     const rssResult = spawnSync(
       'node',
-      ['--loader', 'ts-node/esm', 'publish-rss.ts', '--issue', content.issueId],
+      ['--loader', 'ts-node/esm', 'publish-rss.ts', '--issue', issueId],
       { cwd: __dir, stdio: 'inherit', env: process.env },
     )
     if (rssResult.status !== 0) {
-      console.error(`[watch-compass] publish-rss.ts failed for ${content.issueId}`)
+      console.error(`[watch-compass] publish-rss.ts failed for ${issueId}`)
     } else {
-      console.log(`[watch-compass] Episode ${content.issueId} published successfully`)
+      console.log(`[watch-compass] Episode ${issueId} published successfully`)
     }
   }
 }

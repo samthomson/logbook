@@ -13,6 +13,8 @@ import './App.css'
 
 type AppView = 'auth' | 'timeline' | 'issue-picker'
 
+const SESSION_KEY = 'logbook_auth'
+
 export default function App() {
   const [auth, setAuth] = useState<AuthState | null>(null)
   const [view, setView] = useState<AppView>('auth')
@@ -25,6 +27,32 @@ export default function App() {
   useEffect(() => {
     const { supported, message } = checkRecordingSupport(IOS_RECORDING_MIN_VERSION)
     if (!supported) setRecordingNotice(message)
+  }, [])
+
+  // Restore session on mount
+  useEffect(() => {
+    const saved = sessionStorage.getItem(SESSION_KEY)
+    if (!saved) return
+    try {
+      const { method, input, passphrase } = JSON.parse(saved) as {
+        method: string; input?: string; passphrase?: string
+      }
+      if (method === 'extension' && typeof window !== 'undefined' && 'nostr' in window) {
+        import('./lib/auth').then(({ connectWindowNostr }) =>
+          connectWindowNostr().then((state) => { setAuth(state); setView('timeline') }).catch(() => {})
+        )
+      } else if ((method === 'nsec' || method === 'bunker') && input) {
+        import('./lib/auth').then(async ({ connectNsec, connectBunker }) => {
+          try {
+            const state = method === 'nsec'
+              ? await connectNsec(input, passphrase)
+              : await connectBunker(input)
+            setAuth(state)
+            setView('timeline')
+          } catch { /* session expired or invalid — just show auth screen */ }
+        })
+      }
+    } catch { /* corrupt storage */ }
   }, [])
 
   // Load latest issue + whitelist check after login
@@ -77,7 +105,11 @@ export default function App() {
             {recordingNotice}
           </div>
         )}
-        <AuthScreen onAuth={(state) => { setAuth(state); setView('timeline') }} />
+        <AuthScreen onAuth={(state, method, input, passphrase) => {
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify({ method, input, passphrase }))
+        setAuth(state)
+        setView('timeline')
+      }} />
       </div>
     )
   }
@@ -153,12 +185,16 @@ export default function App() {
 
 // ─── Auth Screen ──────────────────────────────────────────────────────────────
 
-function AuthScreen({ onAuth }: { onAuth: (state: AuthState) => void }) {
+function AuthScreen({ onAuth }: {
+  onAuth: (state: AuthState, method: string, input?: string, passphrase?: string) => void
+}) {
   const [mode, setMode] = useState<'bunker' | 'extension' | 'nsec' | null>(null)
   const [input, setInput] = useState('')
   const [passphrase, setPassphrase] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const hasExtension = typeof window !== 'undefined' && 'nostr' in window
+  const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)
 
   async function handleConnect() {
     setError(null)
@@ -177,7 +213,7 @@ function AuthScreen({ onAuth }: { onAuth: (state: AuthState) => void }) {
       } else {
         return
       }
-      onAuth(state)
+      onAuth(state, mode, input || undefined, passphrase || undefined)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -202,9 +238,27 @@ function AuthScreen({ onAuth }: { onAuth: (state: AuthState) => void }) {
         </button>
         <button
           className={`auth-btn ${mode === 'extension' ? 'auth-btn--active' : ''}`}
-          onClick={() => setMode('extension')}
+          onClick={async () => {
+            if (hasExtension) {
+              // Already injected — connect immediately, no extra click needed
+              setMode('extension')
+              setError(null)
+              setLoading(true)
+              try {
+                const { connectWindowNostr } = await import('./lib/auth')
+                const state = await connectWindowNostr()
+                onAuth(state, 'extension')
+              } catch (err) {
+                setError(err instanceof Error ? err.message : String(err))
+              } finally {
+                setLoading(false)
+              }
+            } else {
+              setMode('extension')
+            }
+          }}
         >
-          Amber / Extension
+          {hasExtension ? 'Amber / Extension' : isAndroid ? 'Open in Amber' : 'Amber / Extension'}
         </button>
         <button
           className={`auth-btn auth-btn--advanced ${mode === 'nsec' ? 'auth-btn--active' : ''}`}
@@ -254,13 +308,35 @@ function AuthScreen({ onAuth }: { onAuth: (state: AuthState) => void }) {
         </div>
       )}
 
+      {mode === 'extension' && !hasExtension && (
+        <div className="auth-form">
+          {isAndroid ? (
+            <>
+              <p className="auth-warning">
+                Open this page inside Amber's built-in browser to sign in with one tap.
+              </p>
+              <a
+                className="btn btn--primary"
+                href={`nostrsigner:${encodeURIComponent(window.location.href)}?compressionType=none&returnType=signature&type=get_public_key`}
+              >
+                Open in Amber
+              </a>
+            </>
+          ) : (
+            <p className="auth-warning">
+              Install a NIP-07 browser extension (e.g. Alby, nos2x) or open this page inside Amber on Android.
+            </p>
+          )}
+        </div>
+      )}
+
       {error && <p className="auth-error">{error}</p>}
 
       {mode && (
         <button
           className="btn btn--primary"
           onClick={handleConnect}
-          disabled={loading || (mode !== 'extension' && !input.trim())}
+          disabled={loading || (mode !== 'extension' && !input.trim()) || (mode === 'extension' && !hasExtension)}
         >
           {loading ? 'Connecting…' : 'Connect'}
         </button>

@@ -52,7 +52,7 @@ async function uploadToPrimary(
   const authEvent = await makeBlossomAuth(sha256, 'upload', signer)
   const authHeader = `Nostr ${btoa(JSON.stringify(authEvent))}`
 
-  const res = await fetch(`${serverUrl.replace(/\/$/, '')}/${sha256}`, {
+  const res = await fetch(`${serverUrl.replace(/\/$/, '')}/upload`, {
     method: 'PUT',
     headers: {
       'Content-Type': blob.type,
