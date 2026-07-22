@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { AuthState } from './lib/auth'
+import { startAmberConnect } from './lib/auth'
 import { useKeyboardOffset } from './lib/useKeyboardOffset'
 
 import IssueTimeline from './components/IssueTimeline'
@@ -41,13 +42,21 @@ export default function App() {
     const saved = sessionStorage.getItem(SESSION_KEY)
     if (!saved) return
     try {
-      const { method, input, passphrase } = JSON.parse(saved) as {
-        method: string; input?: string; passphrase?: string
+      const { method, input, passphrase, session } = JSON.parse(saved) as {
+        method: string; input?: string; passphrase?: string; session?: string
       }
       if (method === 'extension' && typeof window !== 'undefined' && 'nostr' in window) {
         import('./lib/auth').then(({ connectWindowNostr }) =>
           connectWindowNostr().then((state) => { setAuth(state); setView('timeline') }).catch(() => {})
         )
+      } else if ((method === 'amber' || method === 'bunker') && session) {
+        import('./lib/auth').then(async ({ restoreSession }) => {
+          try {
+            const state = await restoreSession(session, method as 'amber' | 'bunker')
+            setAuth(state)
+            setView('timeline')
+          } catch { /* session expired or invalid — just show auth screen */ }
+        })
       } else if ((method === 'nsec' || method === 'bunker') && input) {
         import('./lib/auth').then(async ({ connectNsec, connectBunker }) => {
           try {
@@ -111,7 +120,7 @@ export default function App() {
           </div>
         )}
         <AuthScreen onAuth={(state, method, input, passphrase) => {
-        sessionStorage.setItem(SESSION_KEY, JSON.stringify({ method, input, passphrase }))
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify({ method, input, passphrase, session: state.session }))
         setAuth(state)
         setView('timeline')
       }} />
@@ -203,41 +212,80 @@ export default function App() {
 function AuthScreen({ onAuth }: {
   onAuth: (state: AuthState, method: string, input?: string, passphrase?: string) => void
 }) {
-  const [mode, setMode] = useState<'bunker' | 'extension' | 'nsec' | null>(null)
+  const [advanced, setAdvanced] = useState<'bunker' | 'nsec' | null>(null)
   const [input, setInput] = useState('')
   const [passphrase, setPassphrase] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState<string | null>(null) // which method is connecting
+  const [amberWaiting, setAmberWaiting] = useState(false)
+  const amberCancelRef = useRef<(() => void) | null>(null)
   const hasExtension = typeof window !== 'undefined' && 'nostr' in window
   const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)
 
-  async function handleConnect() {
+  // Cancel any pending Amber connection on unmount
+  useEffect(() => () => { amberCancelRef.current?.() }, [])
+
+  function handleAmber() {
+    // Everything before the navigation must be synchronous — Android Chrome
+    // blocks scheme navigations that aren't tied directly to the user gesture.
     setError(null)
-    setLoading(true)
+    try {
+      const handle = startAmberConnect()
+      amberCancelRef.current = handle.cancel
+      setAmberWaiting(true)
+      handle.wait()
+        .then((state) => { amberCancelRef.current = null; onAuth(state, 'amber') })
+        .catch((err) => {
+          setAmberWaiting(false)
+          if (!(err instanceof Error && err.message === 'Aborted')) {
+            setError(err instanceof Error ? err.message : String(err))
+          }
+        })
+      window.location.href = handle.uri // synchronous deep link into Amber
+    } catch (err) {
+      setAmberWaiting(false)
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function handleExtension() {
+    setError(null)
+    setLoading('extension')
+    try {
+      const { connectWindowNostr } = await import('./lib/auth')
+      const state = await connectWindowNostr()
+      onAuth(state, 'extension')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(null)
+    }
+  }
+
+  async function handleAdvancedConnect() {
+    setError(null)
+    setLoading(advanced)
     try {
       let state: AuthState
-      if (mode === 'bunker') {
+      if (advanced === 'bunker') {
         const { connectBunker } = await import('./lib/auth')
         state = await connectBunker(input.trim())
-      } else if (mode === 'extension') {
-        const { connectWindowNostr } = await import('./lib/auth')
-        state = await connectWindowNostr()
-      } else if (mode === 'nsec') {
+      } else if (advanced === 'nsec') {
         const { connectNsec } = await import('./lib/auth')
         state = await connectNsec(input.trim(), passphrase || undefined)
       } else {
         return
       }
-      onAuth(state, mode, input || undefined, passphrase || undefined)
+      onAuth(state, advanced, input || undefined, passphrase || undefined)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
-      setLoading(false)
+      setLoading(null)
     }
   }
 
   return (
-    <div className="auth-screen">
+    <div className="auth-screen auth-screen--compact">
       <div className="auth-logo">
         <div className="auth-logo__mark" aria-hidden="true">📻</div>
         <h1 className="auth-title">Logbook</h1>
@@ -245,117 +293,125 @@ function AuthScreen({ onAuth }: {
       <p className="auth-subtitle">Async voice podcast for Nostr Compass</p>
 
       <div className="auth-methods">
+        {isAndroid && (
+          amberWaiting ? (
+            <div className="auth-waiting" role="status">
+              <div className="spinner spinner--small" aria-hidden="true" />
+              <span>Approve in Amber…</span>
+              <button
+                className="btn btn--ghost btn--small"
+                onClick={() => {
+                  amberCancelRef.current?.()
+                  amberCancelRef.current = null
+                  setAmberWaiting(false)
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button className="btn btn--primary auth-primary" onClick={handleAmber}>
+              Sign in with Amber
+            </button>
+          )
+        )}
+
+        {hasExtension && (
+          <button
+            className={`btn ${isAndroid ? 'btn--ghost' : 'btn--primary auth-primary'}`}
+            onClick={handleExtension}
+            disabled={loading === 'extension'}
+          >
+            {loading === 'extension' ? 'Connecting…' : 'Sign in with extension'}
+          </button>
+        )}
+
+        {!isAndroid && !hasExtension && (
+          <p className="auth-hint">
+            On Android? Install <a href="https://github.com/greenart7c3/Amber" target="_blank" rel="noreferrer">Amber</a> for
+            one-tap sign-in. On desktop, use a NIP-07 extension (Alby, nos2x) or the advanced options below.
+          </p>
+        )}
+
         <button
-          className={`auth-btn ${mode === 'bunker' ? 'auth-btn--active' : ''}`}
-          onClick={() => setMode('bunker')}
+          className="auth-toggle"
+          onClick={() => setAdvanced(advanced ? null : 'bunker')}
+          aria-expanded={advanced !== null}
         >
-          Bunker (NIP-46)
-        </button>
-        <button
-          className={`auth-btn ${mode === 'extension' ? 'auth-btn--active' : ''}`}
-          onClick={async () => {
-            if (hasExtension) {
-              // Already injected — connect immediately, no extra click needed
-              setMode('extension')
-              setError(null)
-              setLoading(true)
-              try {
-                const { connectWindowNostr } = await import('./lib/auth')
-                const state = await connectWindowNostr()
-                onAuth(state, 'extension')
-              } catch (err) {
-                setError(err instanceof Error ? err.message : String(err))
-              } finally {
-                setLoading(false)
-              }
-            } else {
-              setMode('extension')
-            }
-          }}
-        >
-          {hasExtension ? 'Amber / Extension' : isAndroid ? 'Open in Amber' : 'Amber / Extension'}
-        </button>
-        <button
-          className={`auth-btn auth-btn--advanced ${mode === 'nsec' ? 'auth-btn--active' : ''}`}
-          onClick={() => setMode('nsec')}
-        >
-          nsec (advanced)
+          {advanced ? 'Hide advanced options' : 'Advanced options'}
         </button>
       </div>
 
-      {mode === 'bunker' && (
+      {advanced && (
         <div className="auth-form">
-          <input
-            className="auth-input"
-            type="text"
-            placeholder="bunker://..."
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </div>
-      )}
+          <div className="auth-tabs" role="tablist">
+            <button
+              role="tab"
+              aria-selected={advanced === 'bunker'}
+              className={`auth-tab ${advanced === 'bunker' ? 'auth-tab--active' : ''}`}
+              onClick={() => { setAdvanced('bunker'); setInput(''); setError(null) }}
+            >
+              Bunker (NIP-46)
+            </button>
+            <button
+              role="tab"
+              aria-selected={advanced === 'nsec'}
+              className={`auth-tab ${advanced === 'nsec' ? 'auth-tab--active' : ''}`}
+              onClick={() => { setAdvanced('nsec'); setInput(''); setError(null) }}
+            >
+              nsec
+            </button>
+          </div>
 
-      {mode === 'nsec' && (
-        <div className="auth-form">
-          <input
-            className="auth-input"
-            type="password"
-            placeholder="nsec1... or ncryptsec..."
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            autoComplete="off"
-            spellCheck={false}
-          />
-          {input.startsWith('ncryptsec') && (
+          {advanced === 'bunker' && (
             <input
               className="auth-input"
-              type="password"
-              placeholder="Passphrase"
-              value={passphrase}
-              onChange={(e) => setPassphrase(e.target.value)}
+              type="text"
+              placeholder="bunker://..."
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              autoComplete="off"
+              spellCheck={false}
             />
           )}
-          <p className="auth-warning">
-            Key held in memory only — never stored. Prefer Bunker or Amber.
-          </p>
-        </div>
-      )}
 
-      {mode === 'extension' && !hasExtension && (
-        <div className="auth-form">
-          {isAndroid ? (
+          {advanced === 'nsec' && (
             <>
+              <input
+                className="auth-input"
+                type="password"
+                placeholder="nsec1... or ncryptsec..."
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+              />
+              {input.startsWith('ncryptsec') && (
+                <input
+                  className="auth-input"
+                  type="password"
+                  placeholder="Passphrase"
+                  value={passphrase}
+                  onChange={(e) => setPassphrase(e.target.value)}
+                />
+              )}
               <p className="auth-warning">
-                Open this page inside Amber's built-in browser to sign in with one tap.
+                Key held in memory only — never stored. Prefer Amber or Bunker.
               </p>
-              <a
-                className="btn btn--primary"
-                href={`nostrsigner:${encodeURIComponent(window.location.href)}?compressionType=none&returnType=signature&type=get_public_key`}
-              >
-                Open in Amber
-              </a>
             </>
-          ) : (
-            <p className="auth-warning">
-              Install a NIP-07 browser extension (e.g. Alby, nos2x) or open this page inside Amber on Android.
-            </p>
           )}
+
+          <button
+            className="btn btn--primary"
+            onClick={handleAdvancedConnect}
+            disabled={loading !== null || !input.trim()}
+          >
+            {loading === advanced ? 'Connecting…' : 'Connect'}
+          </button>
         </div>
       )}
 
       {error && <p className="auth-error">{error}</p>}
-
-      {mode && (
-        <button
-          className="btn btn--primary sticky-action"
-          onClick={handleConnect}
-          disabled={loading || (mode !== 'extension' && !input.trim()) || (mode === 'extension' && !hasExtension)}
-        >
-          {loading ? 'Connecting…' : 'Connect'}
-        </button>
-      )}
     </div>
   )
 }
