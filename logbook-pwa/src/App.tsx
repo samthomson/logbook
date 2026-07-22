@@ -185,6 +185,7 @@ export default function App() {
           <IssueTimeline
             issue={issue}
             signer={auth.signer}
+            myPubkey={auth.pubkey}
             isWhitelisted={isWhitelisted}
           />
         )}

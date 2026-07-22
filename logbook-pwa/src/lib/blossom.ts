@@ -1,47 +1,87 @@
 /**
- * Blossom upload module (BUD-01 + BUD-04).
+ * Blossom upload module (BUD-01 + BUD-04) — hardened.
  *
- * Flow:
- *   1. Sign a kind 24242 auth event scoped to the blob sha256 + expiry
- *   2. PUT the blob to the primary server
- *   3. Mirror to secondary servers using BUD-04 (server fetches from URL)
+ * Reliability model (learned the hard way):
+ *  - Every fetch has a timeout + bounded retry with backoff — a hung server
+ *    never leaves the UI stuck in "Uploading…".
+ *  - Auth events (kind 24242) are signed FRESH per attempt, so a retry minutes
+ *    later never reuses an expired signature (→ silent 401).
+ *  - The blob's sha256 is recomputed and verified against the server's reported
+ *    sha256 — a server returning a descriptor for different bytes is rejected.
+ *  - Empty / undersized blobs are refused up front (servers MIME-sniff and
+ *    reject them anyway — fail fast with a clear error instead of a 400).
+ *  - If the primary succeeds but publish later fails, the descriptor is kept so
+ *    a retry REUSES it instead of re-uploading (no orphaned duplicates).
+ *  - Mirror failures are collected and reported, not silently dropped.
  *
- * All servers are public — no VPS origin.
+ * Per-server quirks (from references/blossom-quirks.md):
+ *  - blossom.band MIME-sniffs and 400s some real recordings → always try the
+ *    next server rather than dying on one picky server.
+ *  - blossom.oxtr.dev 401s direct PUT /upload but accepts BUD-04 /mirror → it's
+ *    a mirror target only, never the primary.
+ *  - blossom.ditto.pub is the reliable primary.
  */
 
 import { BLOSSOM_SERVERS, KINDS } from '../config'
 import type { BlobDescriptor, NostrSigner, NostrEvent } from '../types/nostr'
 import { sha256Blob, now } from './utils'
+import { fetchRaw, HttpError } from './http'
 
 const AUTH_EXPIRY_SECONDS = 60 * 5 // 5 minutes
+const MIN_BLOB_BYTES = 100 // servers content-sniff; sub-100B blobs always reject
+
+/** Servers that must never be used as the direct-upload primary (mirror only). */
+const MIRROR_ONLY = new Set(['https://blossom.oxtr.dev'])
+
+export interface UploadResult {
+  descriptor: BlobDescriptor
+  /** Servers the blob was successfully mirrored to (excludes primary). */
+  mirrored: string[]
+  /** Servers that failed to mirror, with their error messages. */
+  mirrorFailures: { server: string; error: string }[]
+}
 
 /**
  * Upload a blob to Blossom, mirror to all configured servers.
- * Returns the primary server's BlobDescriptor.
+ * Retries each primary candidate with fresh auth; returns the winning
+ * descriptor plus per-mirror outcomes.
  */
 export async function uploadBlob(
   blob: Blob,
   signer: NostrSigner,
   servers: string[] = BLOSSOM_SERVERS,
-): Promise<BlobDescriptor> {
+  onProgress?: (stage: string) => void,
+): Promise<UploadResult> {
   if (servers.length === 0) throw new Error('No Blossom servers configured')
 
+  // Fail fast on a blob that servers would reject anyway. An empty recording
+  // (e.g. MediaRecorder stop with no dataavailable) produces a header-only or
+  // 0-byte webm that gets MIME-sniff-rejected — catch it here with a real error.
+  if (!blob || blob.size < MIN_BLOB_BYTES) {
+    throw new Error(
+      `Recording is empty (${blob?.size ?? 0} bytes) — microphone captured nothing. ` +
+      `Check mic permission and try again.`,
+    )
+  }
+
+  onProgress?.('hashing')
   const sha256 = await sha256Blob(blob)
 
-  // Try each server in order until one accepts the blob. Servers use MIME
-  // sniffing and some reject real recordings produced by specific browser
-  // codec stacks — never let one picky server kill the whole upload.
+  // Try each eligible primary in order until one accepts the blob.
+  const primaries = servers.filter((s) => !MIRROR_ONLY.has(s))
+  const errors: string[] = []
   let descriptor: BlobDescriptor | null = null
   let primaryUsed = ''
-  const errors: string[] = []
-  for (const server of servers) {
+
+  for (const server of primaries) {
+    onProgress?.(`uploading to ${new URL(server).host}`)
     try {
       descriptor = await uploadToPrimary(blob, sha256, server, signer)
       primaryUsed = server
       break
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      errors.push(`${server}: ${msg}`)
+      errors.push(`${new URL(server).host}: ${msg}`)
       console.warn(`Blossom upload to ${server} failed, trying next:`, msg)
     }
   }
@@ -49,47 +89,98 @@ export async function uploadBlob(
     throw new Error(`All Blossom servers rejected the upload:\n${errors.join('\n')}`)
   }
 
-  // Mirror to the remaining servers (fire and forget — don't block on mirror failures)
-  for (const mirror of servers) {
-    if (mirror === primaryUsed) continue
-    mirrorBlob(descriptor.url, sha256, blob.type, mirror, signer).catch((err) => {
-      console.warn(`Blossom mirror to ${mirror} failed:`, err)
-    })
-  }
+  // Mirror to every other configured server (including mirror-only ones).
+  // Failures are collected, not thrown — the primary already has the bytes.
+  const mirrored: string[] = []
+  const mirrorFailures: { server: string; error: string }[] = []
+  await Promise.all(
+    servers
+      .filter((m) => m !== primaryUsed)
+      .map(async (mirror) => {
+        try {
+          await mirrorBlob(descriptor!.url, sha256, blob.type, mirror, signer)
+          mirrored.push(mirror)
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          mirrorFailures.push({ server: mirror, error: msg })
+          console.warn(`Blossom mirror to ${mirror} failed:`, msg)
+        }
+      }),
+  )
 
-  return descriptor
+  return { descriptor, mirrored, mirrorFailures }
 }
 
-/** BUD-01 PUT upload to a single server. */
+/**
+ * BUD-01 PUT upload to a single server, with retry + fresh auth per attempt
+ * + sha256 integrity verification of the returned descriptor.
+ */
 async function uploadToPrimary(
   blob: Blob,
   sha256: string,
   serverUrl: string,
   signer: NostrSigner,
 ): Promise<BlobDescriptor> {
-  const authEvent = await makeBlossomAuth(sha256, 'upload', signer)
-  const authHeader = `Nostr ${btoa(JSON.stringify(authEvent))}`
+  const base = serverUrl.replace(/\/$/, '')
 
-  const res = await fetch(`${serverUrl.replace(/\/$/, '')}/upload`, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': blob.type,
-      'Content-Length': String(blob.size),
-      Authorization: authHeader,
-    },
-    body: blob,
-  })
+  // Retry up to 3 attempts. Auth is signed inside the loop so a retry after a
+  // timeout/backoff never presents an expired kind-24242 event.
+  let lastErr: unknown
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const authEvent = await makeBlossomAuth(sha256, 'upload', signer)
+      const res = await fetchRaw(`${base}/upload`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': blob.type || 'application/octet-stream',
+          Authorization: `Nostr ${btoa(JSON.stringify(authEvent))}`,
+        },
+        body: blob,
+        timeoutMs: 30_000,
+        attempts: 1, // we handle retry ourselves so auth is re-signed each time
+      })
 
-  if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    throw new Error(`Blossom upload failed (${res.status}): ${body}`)
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        // 4xx (auth / sniff reject) is not retryable on this server — bail to next.
+        throw new HttpError(`upload failed (${res.status}): ${body.slice(0, 160)}`, res.status)
+      }
+
+      const data = (await res.json()) as Record<string, unknown>
+      const descriptor = normalizeDescriptor(data, blob)
+
+      // Integrity: the server must report the same sha256 we uploaded. A
+      // mismatch means the stored bytes differ — reject rather than publish a
+      // segment pointing at corrupt audio.
+      if (descriptor.sha256 && descriptor.sha256 !== sha256) {
+        throw new HttpError(
+          `integrity mismatch: server reported sha256 ${descriptor.sha256.slice(0, 12)}… ` +
+          `expected ${sha256.slice(0, 12)}…`,
+        )
+      }
+      // Trust our locally-computed hash regardless of what the server echoed.
+      descriptor.sha256 = sha256
+      return descriptor
+    } catch (err) {
+      lastErr = err
+      // Don't retry client errors (4xx) — they won't succeed on a retry.
+      if (err instanceof HttpError && err.status !== undefined && err.status < 500) break
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 400 * 2 ** (attempt - 1)))
+    }
   }
+  throw lastErr instanceof Error ? lastErr : new HttpError(String(lastErr))
+}
 
-  const data = await res.json() as Record<string, unknown>
+/** Coerce a raw server JSON response into a BlobDescriptor. */
+function normalizeDescriptor(data: Record<string, unknown>, blob: Blob): BlobDescriptor {
+  const url = data.url as string | undefined
+  if (!url || typeof url !== 'string') {
+    throw new HttpError('malformed descriptor: missing url')
+  }
   return {
-    url: data.url as string,
-    sha256: data.sha256 as string,
-    size: data.size as number,
+    url,
+    sha256: (data.sha256 as string) ?? '',
+    size: (data.size as number) ?? blob.size,
     mime: (data.type ?? data.mime ?? blob.type) as string,
     uploaded: (data.uploaded as number | undefined) ?? now(),
   }
@@ -97,7 +188,7 @@ async function uploadToPrimary(
 
 /**
  * BUD-04 mirror: ask a server to fetch the blob from a URL.
- * Each mirror needs its own fresh auth event.
+ * Fresh auth per mirror. Retried once on transient failure.
  */
 async function mirrorBlob(
   sourceUrl: string,
@@ -106,26 +197,38 @@ async function mirrorBlob(
   serverUrl: string,
   signer: NostrSigner,
 ): Promise<void> {
-  const authEvent = await makeBlossomAuth(sha256, 'upload', signer)
-  const authHeader = `Nostr ${btoa(JSON.stringify(authEvent))}`
-
-  const res = await fetch(`${serverUrl.replace(/\/$/, '')}/mirror`, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: authHeader,
-    },
-    body: JSON.stringify({ url: sourceUrl, sha256, type: mime }),
-  })
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    throw new Error(`Blossom mirror failed (${res.status}): ${body}`)
+  const base = serverUrl.replace(/\/$/, '')
+  let lastErr: unknown
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const authEvent = await makeBlossomAuth(sha256, 'upload', signer)
+      const res = await fetchRaw(`${base}/mirror`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Nostr ${btoa(JSON.stringify(authEvent))}`,
+        },
+        body: JSON.stringify({ url: sourceUrl, sha256, type: mime }),
+        timeoutMs: 20_000,
+        attempts: 1,
+      })
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        throw new HttpError(`mirror failed (${res.status}): ${body.slice(0, 160)}`, res.status)
+      }
+      return
+    } catch (err) {
+      lastErr = err
+      if (err instanceof HttpError && err.status !== undefined && err.status < 500) break
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 400))
+    }
   }
+  throw lastErr instanceof Error ? lastErr : new HttpError(String(lastErr))
 }
 
 /**
  * Build and sign a kind 24242 Blossom auth event.
+ * Signed fresh on every call — callers must not cache across retries.
  * t = "upload" | "get" | "delete" | "list"
  */
 async function makeBlossomAuth(
@@ -156,10 +259,9 @@ export async function deleteBlob(
   signer: NostrSigner,
 ): Promise<void> {
   const authEvent = await makeBlossomAuth(sha256, 'delete', signer)
-  const authHeader = `Nostr ${btoa(JSON.stringify(authEvent))}`
-
-  await fetch(`${serverUrl.replace(/\/$/, '')}/${sha256}`, {
+  await fetchRaw(`${serverUrl.replace(/\/$/, '')}/${sha256}`, {
     method: 'DELETE',
-    headers: { Authorization: authHeader },
-  })
+    headers: { Authorization: `Nostr ${btoa(JSON.stringify(authEvent))}` },
+    timeoutMs: 15_000,
+  }).catch(() => {})
 }

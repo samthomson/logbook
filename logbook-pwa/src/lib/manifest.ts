@@ -16,6 +16,7 @@ import type {
 } from '../types/nostr'
 import { parseManifestContent } from '../types/nostr'
 import { now } from './utils'
+import { publishToRelays, filterVerified } from './relay'
 
 
 /** Fetch the manifest for a given issue number. Returns null if not found. */
@@ -42,6 +43,11 @@ export async function fetchManifest(
     console.error('Manifest pubkey mismatch — discarding spoofed manifest', event)
     return null
   }
+  // Cryptographic verification — a malicious relay can spoof the pubkey field
+  if (!filterVerified([event]).length) {
+    console.error('Manifest failed signature verification — discarding', event.id)
+    return null
+  }
 
   return parseManifestEvent(event)
 }
@@ -58,8 +64,8 @@ export async function fetchAllManifests(
     limit: 50,
   })
 
-  return events
-    .filter((e) => e.pubkey === COMPASS_PUBKEY)  // re-verify
+  return filterVerified(events)
+    .filter((e) => e.pubkey === COMPASS_PUBKEY)  // re-verify author
     .map(parseManifestEvent)
     .filter((m): m is IssueManifest => m !== null)
     .sort((a, b) => b.event.created_at - a.event.created_at)
@@ -96,8 +102,7 @@ export async function updateManifest(
 
   if (relays.length === 0) throw new Error('No relays configured')
   const event = await signer.signEvent(unsigned)
-  const pool = getPool()
-  await Promise.any(pool.publish(relays, event))
+  await publishToRelays(event, relays)
   return event
 }
 

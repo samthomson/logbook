@@ -164,7 +164,9 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
           aria-label="Record a voice note"
           title="Record"
         >
-          <span className="irec__dot" aria-hidden="true" />
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+            <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5.4-3a5.4 5.4 0 0 1-10.8 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-1.6Z" />
+          </svg>
         </button>
         {micError && <span className="irec__error" role="alert">{micError}</span>}
       </span>

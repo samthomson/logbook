@@ -1,6 +1,7 @@
 import { COMPASS_PUBKEY, DEFAULT_RELAYS, KINDS } from '../config'
 import type { NostrEvent, CompassIssue, IssueSection, IssueSectionItem } from '../types/nostr'
 import { slugify } from './utils'
+import { filterVerified } from './relay'
 
 
 import { getPool } from './pool'
@@ -15,8 +16,11 @@ export async function fetchLatestIssue(
     limit: 1,
   })
   if (!events.length) return null
+  // Only trust cryptographically valid issues (a malicious relay can spoof pubkey)
+  const verified = filterVerified(events)
+  if (!verified.length) return null
   // Return most recent by created_at
-  return events.reduce((a, b) => (a.created_at > b.created_at ? a : b))
+  return verified.reduce((a, b) => (a.created_at > b.created_at ? a : b))
 }
 
 /** Fetch a specific Compass issue by its d-tag (issue number slug). */
@@ -31,7 +35,7 @@ export async function fetchIssueByDTag(
     '#d': [dTag],
     limit: 1,
   })
-  return events[0] ?? null
+  return filterVerified(events)[0] ?? null
 }
 
 /** Fetch all available Compass issues (for the issue picker). */
@@ -44,7 +48,7 @@ export async function fetchAllIssues(
     authors: [COMPASS_PUBKEY],
     limit: 50,
   })
-  return events.sort((a, b) => b.created_at - a.created_at)
+  return filterVerified(events).sort((a, b) => b.created_at - a.created_at)
 }
 
 /**

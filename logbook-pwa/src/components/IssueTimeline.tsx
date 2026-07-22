@@ -33,6 +33,7 @@ import { DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from '../config'
 interface Props {
   issue: CompassIssue
   signer: NostrSigner
+  myPubkey: string
   isWhitelisted: boolean
 }
 
@@ -66,7 +67,7 @@ function recordingSections(issue: CompassIssue): { group: IssueSection; targets:
   })
 }
 
-export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
+export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }: Props) {
   const [sections, setSections] = useState<Map<string, SectionState>>(new Map())
   const [recordTarget, setRecordTarget] = useState<RecordTarget | null>(null)
   const [publishing, setPublishing] = useState(false)
@@ -232,17 +233,38 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
   // Tracks which section's plain (non-reply) recorder was last armed, so
   // handleRecorded can resolve the target even when recordTarget is null.
   const plainTargetRef = useRef<RecordTarget | null>(null)
+  // Cache the upload descriptor + recording across a failed publish so a retry
+  // REUSES the already-uploaded blob instead of re-uploading (no duplicates).
+  const pendingRef = useRef<{
+    target: RecordTarget
+    result: InlineRecordingResult
+    descriptor: import('../types/nostr').BlobDescriptor | null
+  } | null>(null)
+  const [uploadStage, setUploadStage] = useState<string | null>(null)
 
   const handleRecorded = useCallback(
     async (result: InlineRecordingResult) => {
       // Fallback: plain (non-reply) recorders don't set recordTarget — infer
       // the section from the most recently armed plain recorder.
-      const target = recordTarget ?? plainTargetRef.current
+      const target = recordTarget ?? plainTargetRef.current ?? pendingRef.current?.target
       if (!target) return
       setPublishing(true)
       setPublishError(null)
       try {
-        const descriptor = await uploadBlob(result.blob, signer)
+        // Reuse a prior attempt's descriptor if the upload already succeeded —
+        // otherwise the blob gets re-uploaded and the old one is orphaned.
+        let descriptor = pendingRef.current?.descriptor ?? null
+        if (!descriptor) {
+          const up = await uploadBlob(result.blob, signer, undefined, (stage) =>
+            setUploadStage(stage),
+          )
+          descriptor = up.descriptor
+          if (up.mirrorFailures.length) {
+            console.warn('Some mirrors failed:', up.mirrorFailures)
+          }
+        }
+        pendingRef.current = { target, result, descriptor }
+
         const event = await publishSegment({
           signer,
           blob: descriptor,
@@ -252,6 +274,8 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
           issueNumber: issue.issueNumber,
           respondingTo: target.respondingTo,
         })
+        // Published — clear the pending retry cache.
+        pendingRef.current = null
         const newSeg = parseSegment(event)
         if (newSeg) {
           knownIdsRef.current.add(newSeg.event.id)
@@ -281,12 +305,14 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
           // transcript will arrive via the live fetch on next load; nothing else to do
         })
       } catch (err) {
-        // Keep the recorder open on failure so the user can retry
+        // Keep the pending recording + descriptor so the user can retry without
+        // re-recording or re-uploading. Surface a visible banner — never silent.
         console.error('Publish failed:', err)
         const msg = err instanceof Error ? err.message : String(err)
-        setPublishError(`Publish failed — recording NOT lost, tap Publish to retry. (${msg.slice(0, 160)})`)
+        setPublishError(`Publish failed — recording NOT lost, tap Record again to retry. (${msg.slice(0, 160)})`)
       } finally {
         setPublishing(false)
+        setUploadStage(null)
       }
     },
     [recordTarget, signer, issue.issueNumber],
@@ -330,7 +356,9 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
           {leadProse && <SectionExcerpt section={{ id: '__lead', title: '', items: [{ title: '', body: leadProse }] }} />}
         </header>
         {publishing && (
-          <div className="timeline__publish-status">Uploading &amp; publishing recording…</div>
+          <div className="timeline__publish-status">
+            {uploadStage ? `Uploading… ${uploadStage}` : 'Publishing recording…'}
+          </div>
         )}
         {publishError && (
           <div className="timeline__publish-error" role="alert">{publishError}</div>
@@ -365,7 +393,7 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
                               onReply={isWhitelisted ? handleReply : undefined}
                               isWhitelisted={isWhitelisted}
                               isNew={newSegmentIds.has(id)}
-                              isOwn={seg.event.pubkey === (signer as { _pubkey?: string })._pubkey}
+                              isOwn={seg.event.pubkey === myPubkey}
                               justPublished={justPublished.has(id)}
                             />
                             {isReplyingHere && (

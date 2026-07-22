@@ -16,6 +16,7 @@ import type {
 } from '../types/nostr'
 import { getTag, parseSegmentContent } from '../types/nostr'
 import { now } from './utils'
+import { publishToRelays } from './relay'
 
 
 export interface PublishSegmentParams {
@@ -84,8 +85,7 @@ export async function publishSegment(params: PublishSegmentParams): Promise<Nost
 
   if (relays.length === 0) throw new Error('No relays configured')
   const event = await signer.signEvent(unsigned)
-  const pool = getPool()
-  await Promise.any(pool.publish(relays, event))
+  await publishToRelays(event, relays)
   return event
 }
 
@@ -117,8 +117,7 @@ export async function publishTranscript(
 
   if (relays.length === 0) throw new Error('No relays configured')
   const event = await signer.signEvent(unsigned)
-  const pool = getPool()
-  await Promise.any(pool.publish(relays, event))
+  await publishToRelays(event, relays)
   return event
 }
 
