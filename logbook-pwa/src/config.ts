@@ -7,11 +7,16 @@ export const COMPASS_PUBKEY =
 // Test key (logbook-1 smoke tests only):
 // 'baa11ea074871c850de58b626288da51a9e8bb5df7cdb63859dfa19898659b7e'
 
-// Admin pubkeys (hex) — can access drag-to-reorder and lock episode.
+// Admin pubkeys (hex) — BOOTSTRAP FALLBACK only.
+// The authoritative admin list is the kind 34201 event d-tagged D_ADMINS,
+// authored by COMPASS_PUBKEY. These keys are used only when no verified
+// admins event is fetchable, and are NEVER locked out by whitelist fetch
+// failures (they must always be able to reach the UI that fixes the list).
 // COMPASS_PUBKEY is always implicitly an admin.
 export const ADMIN_PUBKEYS: string[] = [
   COMPASS_PUBKEY,
   '24b859838aca43694d0285f9c0130e2ca24fdb72e5f48a90dfb747279fc6f7fe', // test user
+  '3c457108865e05d95ce3848aa0bc51cd64f984c5c61689a3d49809ab71fa1d64', // e2e-tester (dev verification)
 ]
 
 // Default Nostr relays
@@ -41,10 +46,18 @@ export const KINDS = {
   BLOSSOM_AUTH: 24242,     // Blossom upload auth
   TRANSCRIPT: 1111,        // Companion transcript (scoped to segment)
   REACTION: 7,             // "Made the cut" marker
+  WHITELIST: 34201,        // Whitelist event (addressable) — contributors/standing/admins
 } as const
 
 // Issue ID prefix
 export const ISSUE_PREFIX = 'logbook'
+
+// Whitelist d-tags (kind 34201, authored by COMPASS_PUBKEY).
+// Per-issue reuses the manifest issue-id scheme so correlation can't drift.
+export const D_STANDING = `${ISSUE_PREFIX}-wl-standing`
+export const D_ADMINS = `${ISSUE_PREFIX}-wl-admins`
+export const D_ISSUE_WL = (issueNumber: number): string =>
+  `${ISSUE_PREFIX}-wl-${issueNumber}`
 
 // Supported recording MIME type — iOS 18.4+ and Chrome/Android
 export const RECORDING_MIME = 'audio/webm;codecs=opus'

@@ -25,6 +25,7 @@ import { CSS } from '@dnd-kit/utilities'
 import type { CompassIssue, IssueManifest, ManifestContent, Segment, NostrSigner } from '../types/nostr'
 import { fetchManifest, updateManifest } from '../lib/manifest'
 import AudioPlayer from './AudioPlayer'
+import WhitelistPanel from './WhitelistPanel'
 
 interface Props {
   issue: CompassIssue
@@ -138,6 +139,7 @@ export default function AdminPanel({ issue, signer, pubkey }: Props) {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [lockConfirm, setLockConfirm] = useState(false)
   const [playbackRate, setPlaybackRate] = useState(1)
+  const [section, setSection] = useState<'episode' | 'whitelist'>('episode')
 
   // Load manifest + segments
   useEffect(() => {
@@ -290,9 +292,45 @@ export default function AdminPanel({ issue, signer, pubkey }: Props) {
     )
   }
 
+  const sectionToggle = (
+    <div className="admin-panel__tabs" role="tablist">
+      <button
+        role="tab"
+        aria-selected={section === 'episode'}
+        className={`btn btn--small ${section === 'episode' ? 'btn--active' : 'btn--ghost'}`}
+        onClick={() => setSection('episode')}
+      >
+        Episode
+      </button>
+      <button
+        role="tab"
+        aria-selected={section === 'whitelist'}
+        className={`btn btn--small ${section === 'whitelist' ? 'btn--active' : 'btn--ghost'}`}
+        onClick={() => setSection('whitelist')}
+      >
+        Whitelist
+      </button>
+    </div>
+  )
+
+  if (section === 'whitelist') {
+    return (
+      <div className="admin-panel">
+        {sectionToggle}
+        <WhitelistPanel
+          issueNumber={issue.issueNumber}
+          issueMarkdown={issue.event.content}
+          signer={signer}
+          pubkey={pubkey}
+        />
+      </div>
+    )
+  }
+
   if (!manifest) {
     return (
       <div className="admin-panel">
+        {sectionToggle}
         <p className="admin-panel__notice">No manifest found for issue #{issue.issueNumber}. The VPS watcher will create one automatically when it detects the Compass issue.</p>
       </div>
     )
@@ -303,6 +341,7 @@ export default function AdminPanel({ issue, signer, pubkey }: Props) {
 
   return (
     <div className="admin-panel">
+      {sectionToggle}
       <div className="admin-panel__header">
         <h2 className="admin-panel__title">Admin — {issue.title}</h2>
         <div className="admin-panel__header-controls">

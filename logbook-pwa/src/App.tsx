@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import type { AuthState } from './lib/auth'
 import { startAmberConnect } from './lib/auth'
 import { useKeyboardOffset } from './lib/useKeyboardOffset'
@@ -6,14 +6,15 @@ import { useKeyboardOffset } from './lib/useKeyboardOffset'
 import IssueTimeline from './components/IssueTimeline'
 import IssuePicker from './components/IssuePicker'
 import InstallPrompt from './components/InstallPrompt'
+import AdminPanel from './components/AdminPanel'
 import { fetchLatestIssue, parseIssue } from './lib/compass'
 import { checkRecordingSupport } from './lib/utils'
 import { IOS_RECORDING_MIN_VERSION } from './config'
-import { fetchWhitelist, isWhitelisted as checkWhitelist } from './lib/whitelist'
+import { fetchAccessLists } from './lib/whitelist'
 import type { CompassIssue, NostrEvent } from './types/nostr'
 import './App.css'
 
-type AppView = 'auth' | 'timeline' | 'issue-picker'
+type AppView = 'auth' | 'timeline' | 'issue-picker' | 'admin'
 
 const SESSION_KEY = 'logbook_auth'
 
@@ -23,9 +24,28 @@ export default function App() {
   const [recordingNotice, setRecordingNotice] = useState<string | null>(null)
   const [issue, setIssue] = useState<CompassIssue | null>(null)
   const [isWhitelisted, setIsWhitelisted] = useState(false)
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [accessDegraded, setAccessDegraded] = useState(false)
   const [issueLoading, setIssueLoading] = useState(false)
   const [issueError, setIssueError] = useState<string | null>(null)
   const keyboardOffset = useKeyboardOffset()
+
+  /** Single access-control fetch — canRecord + isAdmin derive from the same
+   *  call, so the two gates can never race or disagree. */
+  const loadAccess = useCallback(async (issueNumber: number, pubkey: string) => {
+    try {
+      const access = await fetchAccessLists(issueNumber)
+      setIsWhitelisted(access.contributors.has(pubkey) || access.admins.has(pubkey))
+      setIsAdmin(access.admins.has(pubkey))
+      setAccessDegraded(access.degraded)
+    } catch {
+      // Total failure — fail closed on record, but never lock out bootstrap
+      // admins (they need the UI that fixes the list). fetchAccessLists
+      // already encodes this; a throw here means something truly unexpected.
+      setIsWhitelisted(false)
+      setAccessDegraded(true)
+    }
+  }, [])
 
   useEffect(() => {
     const { supported, message } = checkRecordingSupport(IOS_RECORDING_MIN_VERSION)
@@ -82,16 +102,13 @@ export default function App() {
         if (!event) return
         const parsed = parseIssue(event)
         setIssue(parsed)
-        // Check whitelist for this issue
-        const issueId = `logbook-${parsed.issueNumber}`
-        const wl = await fetchWhitelist(issueId)
-        setIsWhitelisted(checkWhitelist(auth.pubkey, wl))
+        await loadAccess(parsed.issueNumber, auth.pubkey)
       })
       .catch((err: unknown) => {
         setIssueError(err instanceof Error ? err.message : String(err))
       })
       .finally(() => setIssueLoading(false))
-  }, [auth])
+  }, [auth, loadAccess])
 
   const handleSelectIssue = async (event: NostrEvent) => {
     if (!auth) return
@@ -100,9 +117,7 @@ export default function App() {
     try {
       const parsed = parseIssue(event)
       setIssue(parsed)
-      const issueId = `logbook-${parsed.issueNumber}`
-      const wl = await fetchWhitelist(issueId)
-      setIsWhitelisted(checkWhitelist(auth.pubkey, wl))
+      await loadAccess(parsed.issueNumber, auth.pubkey)
       setView('timeline')
     } catch (err: unknown) {
       setIssueError(err instanceof Error ? err.message : String(err))
@@ -153,6 +168,14 @@ export default function App() {
           >
             Episodes
           </button>
+          {isAdmin && (
+            <button
+              className={`btn btn--ghost btn--small ${view === 'admin' ? 'btn--active' : ''}`}
+              onClick={() => setView('admin')}
+            >
+              Admin
+            </button>
+          )}
         </nav>
         <button
           className="btn btn--ghost btn--small app-logout"
@@ -169,6 +192,17 @@ export default function App() {
       </header>
 
       <div className="app-body">
+        {accessDegraded && (
+          <div className="notice notice--warning" role="alert">
+            Couldn't load the contributor list — recording is paused.
+            <button
+              className="btn btn--ghost btn--small"
+              onClick={() => { if (issue && auth) void loadAccess(issue.issueNumber, auth.pubkey) }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
         {issueLoading && (
           <div className="app-loading">
             <div className="spinner" aria-label="Loading" />
@@ -202,6 +236,19 @@ export default function App() {
             onSelect={handleSelectIssue}
             onBack={() => setView('timeline')}
           />
+        )}
+
+        {view === 'admin' && isAdmin && issue && (
+          <AdminPanel
+            issue={issue}
+            signer={auth.signer}
+            pubkey={auth.pubkey}
+          />
+        )}
+        {view === 'admin' && isAdmin && !issue && (
+          <div className="app-empty">
+            <p>Load an episode from the Timeline first.</p>
+          </div>
         )}
       </div>
     </div>
