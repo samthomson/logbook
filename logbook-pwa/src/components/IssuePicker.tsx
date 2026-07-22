@@ -16,14 +16,17 @@ interface Props {
   onBack: () => void
 }
 
+// Module-level cache: revisiting Episodes is instant; relays re-validate in background
+let issuesCache: NostrEvent[] | null = null
+
 export default function IssuePicker({ currentIssueNumber, onSelect, onBack }: Props) {
-  const [issues, setIssues] = useState<NostrEvent[]>([])
-  const [loading, setLoading] = useState(true)
+  const [issues, setIssues] = useState<NostrEvent[]>(issuesCache ?? [])
+  const [loading, setLoading] = useState(!issuesCache)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     fetchAllIssues()
-      .then(setIssues)
+      .then((list) => { issuesCache = list; setIssues(list) })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false))
   }, [])
@@ -54,7 +57,6 @@ export default function IssuePicker({ currentIssueNumber, onSelect, onBack }: Pr
                 className={`issue-picker__item ${isCurrent ? 'issue-picker__item--current' : ''}`}
                 onClick={() => onSelect(ev)}
               >
-                <span className="issue-picker__num">#{num}</span>
                 <span className="issue-picker__item-title">{title}</span>
                 <span className="issue-picker__date">{label}</span>
                 {isCurrent && <span className="issue-picker__badge">current</span>}

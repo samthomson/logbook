@@ -145,9 +145,6 @@ export default function App() {
             Episodes
           </button>
         </nav>
-        <span className="app-pubkey" title={auth.pubkey}>
-          {auth.pubkey.slice(0, 8)}…
-        </span>
         <button
           className="btn btn--ghost btn--small app-logout"
           onClick={() => {

@@ -217,8 +217,17 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
   }, [allTargets, issue.issueNumber])
 
   const handleReply = useCallback((segment: Segment) => {
-    setRecordTarget({ sectionId: segment.sectionId, respondingTo: segment.event.id })
-  }, [])
+    // Resolve the section where this segment is actually displayed — relay
+    // data may carry legacy section ids (e.g. old H2-style slugs) that don't
+    // match any current per-item target id.
+    let home = segment.sectionId
+    if (!sections.has(home)) {
+      for (const [id, st] of sections) {
+        if (st.segments.some((s) => s.event.id === segment.event.id)) { home = id; break }
+      }
+    }
+    setRecordTarget({ sectionId: home, respondingTo: segment.event.id })
+  }, [sections])
 
   // Tracks which section's plain (non-reply) recorder was last armed, so
   // handleRecorded can resolve the target even when recordTarget is null.
@@ -296,9 +305,30 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
     return out
   }, [allTargets, sections])
 
+  // Opening paragraph = prose before the first H2 in the newsletter body
+  const leadProse = useMemo(() => {
+    const content = issue.event.content
+    const idx = content.indexOf('\n## ')
+    const head = (idx === -1 ? content : content.slice(0, idx))
+      .replace(/^#\s+.*\n/, '') // drop the H1 title line itself
+      .trim()
+    return head
+  }, [issue.event.content])
+
   return (
     <PlaybackProvider segments={queue}>
       <main className="timeline timeline--dense">
+        <header className="timeline__issue-head">
+          <h1 className="timeline__issue-title">
+            Compass #{issue.issueNumber}
+            <span className="timeline__issue-date">
+              {new Date(issue.event.created_at * 1000).toLocaleDateString([], {
+                month: 'short', day: 'numeric', year: 'numeric',
+              })}
+            </span>
+          </h1>
+          {leadProse && <SectionExcerpt section={{ id: '__lead', title: '', items: [{ title: '', body: leadProse }] }} />}
+        </header>
         {publishing && (
           <div className="timeline__publish-status">Uploading &amp; publishing recording…</div>
         )}
@@ -319,35 +349,37 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
                     <SectionExcerpt section={{ id: target.id, title: target.title, items: [target.item] }} />
                   )}
 
-                  <div className="timeline__notes">
-                    {state?.order.map((id) => {
-                      const seg = state.segments.find((s) => s.event.id === id)
-                      if (!seg) return null
-                      const isReplyingHere =
-                        recordTarget?.sectionId === target.id && recordTarget?.respondingTo === seg.event.id
-                      return (
-                        <div key={id} className="timeline__note">
-                          <VoiceBubble
-                            segment={seg}
-                            profile={profiles.get(seg.event.pubkey)}
-                            transcript={transcripts.get(id)}
-                            onReply={isWhitelisted ? handleReply : undefined}
-                            isWhitelisted={isWhitelisted}
-                            isNew={newSegmentIds.has(id)}
-                            isOwn={seg.event.pubkey === (signer as { _pubkey?: string })._pubkey}
-                            justPublished={justPublished.has(id)}
-                          />
-                          {isReplyingHere && (
-                            <InlineRecorder
-                              onRecorded={handleRecorded}
-                              onCancel={() => setRecordTarget(null)}
-                              autoStart
+                  {(state?.order.length ?? 0) > 0 && (
+                    <div className="timeline__notes">
+                      {state!.order.map((id) => {
+                        const seg = state!.segments.find((s) => s.event.id === id)
+                        if (!seg) return null
+                        const isReplyingHere =
+                          recordTarget?.sectionId === target.id && recordTarget?.respondingTo === seg.event.id
+                        return (
+                          <div key={id} className="timeline__note">
+                            <VoiceBubble
+                              segment={seg}
+                              profile={profiles.get(seg.event.pubkey)}
+                              transcript={transcripts.get(id)}
+                              onReply={isWhitelisted ? handleReply : undefined}
+                              isWhitelisted={isWhitelisted}
+                              isNew={newSegmentIds.has(id)}
+                              isOwn={seg.event.pubkey === (signer as { _pubkey?: string })._pubkey}
+                              justPublished={justPublished.has(id)}
                             />
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
+                            {isReplyingHere && (
+                              <InlineRecorder
+                                onRecorded={handleRecorded}
+                                onCancel={() => setRecordTarget(null)}
+                                autoStart
+                              />
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
 
                   {isWhitelisted && !isRecordingHere && !publishing && (
                     <div className="timeline__recrow">

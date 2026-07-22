@@ -39,6 +39,8 @@ body {
   overflow-x: hidden;
 }
 
+html, #root { overflow-x: hidden; max-width: 100vw; }
+
 /* ─── Layout ─────────────────────────────────────────────────────────────────── */
 .app {
   display: flex;
@@ -239,12 +241,13 @@ body {
 
 /* ─── Timeline ─────────────────────────────────────────────────────────────────── */
 .timeline {
-  max-width: 760px;
+  max-width: min(760px, 100vw);
   margin: 0 auto;
   padding: 8px 6px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow-x: hidden;
 }
 
 .timeline__title {
@@ -1251,21 +1254,23 @@ body {
 
 /* ─── Inline recorder row (Telegram-style, no boxes) ───────────────────────── */
 .irec__btn {
-  width: 34px;
-  height: 34px;
+  width: 46px;
+  height: 46px;
   border-radius: 50%;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
+  background: var(--record-red);
+  border: none;
   display: grid;
   place-items: center;
   margin-top: 4px;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 3px rgba(255 59 48 / 0.25);
 }
-.irec__btn:hover { border-color: var(--record-red); }
+.irec__btn:hover { box-shadow: 0 0 0 5px rgba(255 59 48 / 0.35); }
 .irec__dot {
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
-  background: var(--record-red);
+  background: #fff;
 }
 
 .irec--live {
@@ -1317,7 +1322,34 @@ body {
 }
 .irec__cancel:hover { color: var(--text); }
 
-.timeline__recrow { min-height: 36px; }
+.timeline__recrow {
+  min-height: 36px;
+  display: flex;
+  justify-content: flex-start; /* left-aligned with bubbles/text, not centered */
+}
+
+/* ─── Issue headline ───────────────────────────────────────────────────────── */
+.timeline__issue-head { margin-bottom: 10px; }
+.timeline__issue-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.timeline__issue-date {
+  font-size: 0.78rem;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.timeline__issue-lead {
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+  margin: 4px 0 0;
+  white-space: pre-line;
+}
 
 /* ─── Published check (subtle) ─────────────────────────────────────────────── */
 .bubble__published {
