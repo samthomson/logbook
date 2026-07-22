@@ -818,10 +818,10 @@ body {
 .btn--record-inline:hover:not(:disabled) { background: #dc2626; }
 
 .section-excerpt {
-  margin: 8px 0 12px;
+  margin: 0;
   font-size: 0.95rem;
-  line-height: 1.65;
-  color: var(--text-muted);
+  line-height: 1.5;
+  color: var(--text);
 }
 .section-excerpt__preview {
   display: flex;
@@ -1229,20 +1229,20 @@ body {
 
 /* ─── Dense layout (maximum screen usage) ──────────────────────────────────── */
 .timeline--dense { padding: 0 2px; }
-.timeline--dense .timeline__group { margin-bottom: 14px; }
+.timeline--dense .timeline__group { margin-bottom: 10px; }
 .timeline--dense .timeline__group-title {
   font-size: 0.8rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-dim);
-  margin: 10px 0 4px;
-  padding-bottom: 3px;
+  margin: 8px 0 3px;
+  padding-bottom: 2px;
 }
-.timeline--dense .timeline__section { margin-bottom: 10px; }
-.timeline--dense .section-excerpt { margin: 0 0 6px; font-size: 0.92rem; line-height: 1.5; }
-.timeline--dense .section-excerpt__para { margin: 0 0 6px; }
-.timeline--dense .timeline__notes { gap: 4px; margin-top: 4px; }
+.timeline--dense .timeline__section { margin-bottom: 6px; }
+.timeline--dense .section-excerpt { margin: 0; font-size: 0.92rem; line-height: 1.45; color: var(--text); }
+.timeline--dense .section-excerpt__para { margin: 0 0 4px; }
+.timeline--dense .timeline__notes { gap: 3px; margin-top: 3px; }
 .timeline--dense .timeline__group:last-child { margin-bottom: 80px; }
 
 /* Edge-to-edge app body */
@@ -1317,7 +1317,7 @@ body {
 }
 .irec__cancel:hover { color: var(--text); }
 
-.timeline__recrow { min-height: 38px; }
+.timeline__recrow { min-height: 36px; }
 
 /* ─── Published check (subtle) ─────────────────────────────────────────────── */
 .bubble__published {
@@ -1347,3 +1347,30 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
+
+/* ─── Transcript + logout ──────────────────────────────────────────────────── */
+.bubble__transcript {
+  margin-top: 6px;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+  border-top: 1px solid rgba(255 255 255 / 0.08);
+  padding-top: 6px;
+}
+.app-logout { flex-shrink: 0; }
+
+/* Publish status / error banners */
+.timeline__publish-status,
+.timeline__publish-error {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  text-align: center;
+}
+.timeline__publish-status { background: #0a2a0a; color: #7dd87d; }
+.timeline__publish-error { background: #2a0a0a; color: #ff8a8a; }
+
+.irec__idle { display: inline-flex; align-items: center; gap: 8px; }
+.irec__error { font-size: 0.75rem; color: #ff8a8a; max-width: 220px; }

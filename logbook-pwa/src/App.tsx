@@ -148,6 +148,18 @@ export default function App() {
         <span className="app-pubkey" title={auth.pubkey}>
           {auth.pubkey.slice(0, 8)}…
         </span>
+        <button
+          className="btn btn--ghost btn--small app-logout"
+          onClick={() => {
+            sessionStorage.removeItem(SESSION_KEY)
+            setAuth(null)
+            setIssue(null)
+            setView('auth')
+          }}
+          aria-label="Log out"
+        >
+          Log out
+        </button>
       </header>
 
       <div className="app-body">

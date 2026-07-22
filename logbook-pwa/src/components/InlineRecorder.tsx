@@ -22,13 +22,17 @@ export interface InlineRecordingResult {
 interface Props {
   onRecorded: (result: InlineRecordingResult) => void
   onCancel?: () => void
+  onArm?: () => void   // called when recording actually starts (mic acquired)
   autoStart?: boolean
 }
 
-export default function InlineRecorder({ onRecorded, onCancel, autoStart }: Props) {
+const MAX_RECORDING_SECONDS = 600 // 10 min hard cap
+
+export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart }: Props) {
   const [recording, setRecording] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [bars, setBars] = useState<number[]>(new Array(36).fill(0))
+  const [micError, setMicError] = useState<string | null>(null)
 
   const streamRef = useRef<MediaStream | null>(null)
   const audioCtxRef = useRef<AudioContext | null>(null)
@@ -62,7 +66,9 @@ export default function InlineRecorder({ onRecorded, onCancel, autoStart }: Prop
     let stream: MediaStream
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-    } catch {
+    } catch (err) {
+      setMicError('Microphone unavailable — check browser permission and retry.')
+      console.error('getUserMedia failed:', err)
       return
     }
     streamRef.current = stream
@@ -99,9 +105,14 @@ export default function InlineRecorder({ onRecorded, onCancel, autoStart }: Prop
     mr.start(100)
     startRef.current = Date.now()
     setRecording(true)
+    onArm?.()
 
     timerRef.current = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startRef.current) / 1000))
+      const secs = Math.floor((Date.now() - startRef.current) / 1000)
+      setElapsed(secs)
+      // Hard cap: auto-stop before chunk memory grows unbounded (desktop tabs
+      // recording for many minutes otherwise accumulate giant in-memory blobs)
+      if (secs >= MAX_RECORDING_SECONDS) stopRef.current()
     }, 500)
 
     const data = new Uint8Array(analyser.frequencyBinCount)
@@ -127,6 +138,10 @@ export default function InlineRecorder({ onRecorded, onCancel, autoStart }: Prop
     cleanup()
   }, [cleanup])
 
+  // Stable ref so the interval callback can trigger auto-stop
+  const stopRef = useRef(stop)
+  stopRef.current = stop
+
   const cancel = useCallback(() => {
     cancelledRef.current = true
     const mr = mrRef.current
@@ -142,14 +157,17 @@ export default function InlineRecorder({ onRecorded, onCancel, autoStart }: Prop
 
   if (!recording) {
     return (
-      <button
-        className="irec__btn"
-        onClick={start}
-        aria-label="Record a voice note"
-        title="Record"
-      >
-        <span className="irec__dot" aria-hidden="true" />
-      </button>
+      <span className="irec__idle">
+        <button
+          className="irec__btn"
+          onClick={() => { setMicError(null); void start() }}
+          aria-label="Record a voice note"
+          title="Record"
+        >
+          <span className="irec__dot" aria-hidden="true" />
+        </button>
+        {micError && <span className="irec__error" role="alert">{micError}</span>}
+      </span>
     )
   }
 

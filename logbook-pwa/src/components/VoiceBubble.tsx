@@ -15,6 +15,7 @@ import { useState } from 'react'
 interface Props {
   segment: Segment
   profile?: Profile
+  transcript?: string
   onReply?: (segment: Segment) => void
   isWhitelisted?: boolean
   isNew?: boolean
@@ -25,6 +26,7 @@ interface Props {
 export default function VoiceBubble({
   segment,
   profile,
+  transcript,
   onReply,
   isWhitelisted,
   isNew,
@@ -112,6 +114,10 @@ export default function VoiceBubble({
             </button>
           )}
         </div>
+
+        {transcript && (
+          <p className="bubble__transcript">{transcript}</p>
+        )}
       </div>
     </div>
   )

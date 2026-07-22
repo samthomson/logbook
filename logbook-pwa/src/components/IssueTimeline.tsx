@@ -19,9 +19,10 @@ import type {
   NostrSigner,
   NostrEvent,
 } from '../types/nostr'
-import { fetchSegmentsForIssue, parseSegment, publishSegment } from '../lib/segment'
+import { fetchSegmentsForIssue, parseSegment, publishSegment, fetchTranscripts } from '../lib/segment'
 import { extractMentionedNpubs } from './SectionExcerpt'
 import { uploadBlob } from '../lib/blossom'
+import { transcribeAndPublish } from '../lib/transcription'
 import { computeSeedOrder } from '../lib/ordering'
 import { PlaybackProvider } from '../lib/playback'
 import { fetchProfiles, type Profile } from '../lib/profiles'
@@ -69,9 +70,11 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
   const [sections, setSections] = useState<Map<string, SectionState>>(new Map())
   const [recordTarget, setRecordTarget] = useState<RecordTarget | null>(null)
   const [publishing, setPublishing] = useState(false)
+  const [publishError, setPublishError] = useState<string | null>(null)
   const [justPublished, setJustPublished] = useState<Set<string>>(new Set())
   const [newSegmentIds, setNewSegmentIds] = useState<Set<string>>(new Set())
   const [profiles, setProfiles] = useState<Map<string, Profile>>(new Map())
+  const [transcripts, setTranscripts] = useState<Map<string, string>>(new Map())
   const knownIdsRef = useRef<Set<string>>(new Set())
   const mountedAtRef = useRef<number>(Math.floor(Date.now() / 1000))
 
@@ -146,6 +149,22 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
             if (!mounted) return
             setProfiles((prev) => new Map([...prev, ...map]))
           })
+          // Fetch transcripts for all segments (kind 1111 companions)
+          fetchTranscripts(allParsed.map((s) => s.event.id)).then((map) => {
+            if (!mounted) return
+            setTranscripts((prev) => {
+              const next = new Map(prev)
+              for (const [id, t] of map) {
+                try {
+                  const parsed = JSON.parse(t.text) as { text?: string }
+                  next.set(id, parsed.text ?? t.text)
+                } catch {
+                  next.set(id, t.text)
+                }
+              }
+              return next
+            })
+          })
         }
       })
       .catch((err: unknown) => {
@@ -201,11 +220,18 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
     setRecordTarget({ sectionId: segment.sectionId, respondingTo: segment.event.id })
   }, [])
 
+  // Tracks which section's plain (non-reply) recorder was last armed, so
+  // handleRecorded can resolve the target even when recordTarget is null.
+  const plainTargetRef = useRef<RecordTarget | null>(null)
+
   const handleRecorded = useCallback(
     async (result: InlineRecordingResult) => {
-      if (!recordTarget) return
-      const target = recordTarget
+      // Fallback: plain (non-reply) recorders don't set recordTarget — infer
+      // the section from the most recently armed plain recorder.
+      const target = recordTarget ?? plainTargetRef.current
+      if (!target) return
       setPublishing(true)
+      setPublishError(null)
       try {
         const descriptor = await uploadBlob(result.blob, signer)
         const event = await publishSegment({
@@ -241,9 +267,15 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
           }, 3000)
         }
         setRecordTarget(null)
+        // Transcribe in background (client-side Whisper) and publish transcript
+        void transcribeAndPublish(result.blob, event, signer).then(() => {
+          // transcript will arrive via the live fetch on next load; nothing else to do
+        })
       } catch (err) {
         // Keep the recorder open on failure so the user can retry
         console.error('Publish failed:', err)
+        const msg = err instanceof Error ? err.message : String(err)
+        setPublishError(`Publish failed — recording NOT lost, tap Publish to retry. (${msg.slice(0, 160)})`)
       } finally {
         setPublishing(false)
       }
@@ -267,6 +299,12 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
   return (
     <PlaybackProvider segments={queue}>
       <main className="timeline timeline--dense">
+        {publishing && (
+          <div className="timeline__publish-status">Uploading &amp; publishing recording…</div>
+        )}
+        {publishError && (
+          <div className="timeline__publish-error" role="alert">{publishError}</div>
+        )}
         {groups.map(({ group, targets }) => (
           <div key={group.id} className="timeline__group">
             <h2 className="timeline__group-title">{group.title}</h2>
@@ -278,7 +316,7 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
               return (
                 <section key={target.id} className="timeline__section">
                   {target.item && (
-                    <SectionExcerpt section={{ id: target.id, title: target.title, items: [target.item] }} expanded onToggle={() => {}} />
+                    <SectionExcerpt section={{ id: target.id, title: target.title, items: [target.item] }} />
                   )}
 
                   <div className="timeline__notes">
@@ -292,6 +330,7 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
                           <VoiceBubble
                             segment={seg}
                             profile={profiles.get(seg.event.pubkey)}
+                            transcript={transcripts.get(id)}
                             onReply={isWhitelisted ? handleReply : undefined}
                             isWhitelisted={isWhitelisted}
                             isNew={newSegmentIds.has(id)}
@@ -312,7 +351,10 @@ export default function IssueTimeline({ issue, signer, isWhitelisted }: Props) {
 
                   {isWhitelisted && !isRecordingHere && !publishing && (
                     <div className="timeline__recrow">
-                      <InlineRecorder onRecorded={handleRecorded} />
+                      <InlineRecorder
+                        onRecorded={handleRecorded}
+                        onArm={() => { plainTargetRef.current = { sectionId: target.id } }}
+                      />
                     </div>
                   )}
                   {isRecordingHere && (

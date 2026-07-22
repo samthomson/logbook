@@ -25,8 +25,8 @@ export const DEFAULT_RELAYS = [
 // Upload goes to all listed servers; each gets its own kind 24242 auth event.
 // BUD-04: client uploads to first, then mirrors to the rest.
 export const BLOSSOM_SERVERS = [
-  'https://blossom.band',       // primary: byte-range + CORS confirmed
-  'https://blossom.ditto.pub',  // mirror 1: Cloudflare-backed, Content-Range exposed
+  'https://blossom.ditto.pub',  // primary: reliable BUD-01 (blossom.band sniff-rejects some recordings)
+  'https://blossom.band',       // mirror 1: byte-range + CORS confirmed
   'https://blossom.oxtr.dev',   // mirror 2: BUD-01+BUD-04 confirmed
 ]
 

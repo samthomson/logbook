@@ -13,8 +13,6 @@ import { fetchProfiles, type Profile } from '../lib/profiles'
 
 interface Props {
   section: IssueSection
-  expanded: boolean
-  onToggle: () => void
 }
 
 /** Split markdown into code and non-code spans (``` fenced + `inline`). */
@@ -77,7 +75,7 @@ function renderWithProfiles(text: string, profiles: Map<string, Profile>): strin
   })
 }
 
-export default function SectionExcerpt({ section, expanded, onToggle }: Props) {
+export default function SectionExcerpt({ section }: Props) {
   const leadItems = section.items.filter((it) => !it.title)
   const named = section.items.filter((it) => it.title)
   const lead = leadItems.map((it) => it.body).join('\n\n').trim()
@@ -85,7 +83,6 @@ export default function SectionExcerpt({ section, expanded, onToggle }: Props) {
   const hasContent = lead || named.some((it) => it.body.trim())
   const fullText = [lead, ...named.map((it) => it.body)].join('\n\n')
 
-  // Resolve mentioned npubs to profiles (kind 0)
   const npubs = useMemo(() => extractMentionedNpubs(fullText), [fullText])
   const [profiles, setProfiles] = useState<Map<string, Profile>>(new Map())
   useEffect(() => {
@@ -99,44 +96,25 @@ export default function SectionExcerpt({ section, expanded, onToggle }: Props) {
     }
   }, [npubs])
 
-  const preview = expanded ? null : truncate(md(renderWithProfiles(lead || named[0]?.body || '', profiles)), 220)
-
   if (!hasContent) return null
 
+  // Always fully expanded — no read-more toggle (per product direction:
+  // participants must read the full text before recording).
   return (
     <div className="section-excerpt">
-      {expanded ? (
-        <div className="section-excerpt__full">
-          {lead &&
-            paragraphs(md(renderWithProfiles(lead, profiles))).map((p, i) => (
-              <p key={i} className="section-excerpt__para">{p}</p>
+      {lead &&
+        paragraphs(md(renderWithProfiles(lead, profiles))).map((p, i) => (
+          <p key={i} className="section-excerpt__para">{p}</p>
+        ))}
+      {named.map((item, i) => (
+        <div key={i} className="section-excerpt__item">
+          <h3 className="section-excerpt__item-title">{item.title}</h3>
+          {item.body.trim() &&
+            paragraphs(md(renderWithProfiles(item.body, profiles))).map((p, j) => (
+              <p key={j} className="section-excerpt__para">{p}</p>
             ))}
-          {named.map((item, i) => (
-            <div key={i} className="section-excerpt__item">
-              <h3 className="section-excerpt__item-title">{item.title}</h3>
-              {item.body.trim() &&
-                paragraphs(md(renderWithProfiles(item.body, profiles))).map((p, j) => (
-                  <p key={j} className="section-excerpt__para">{p}</p>
-                ))}
-            </div>
-          ))}
-          <button className="section-excerpt__toggle" onClick={onToggle}>
-            Show less ▲
-          </button>
         </div>
-      ) : (
-        <button className="section-excerpt__preview" onClick={onToggle}>
-          {preview && <span className="section-excerpt__para">{preview}</span>}
-          <span className="section-excerpt__toggle">Read section ▼</span>
-        </button>
-      )}
+      ))}
     </div>
   )
-}
-
-function truncate(text: string, max: number): string {
-  if (text.length <= max) return text
-  const cut = text.slice(0, max)
-  const lastSpace = cut.lastIndexOf(' ')
-  return `${cut.slice(0, lastSpace > 0 ? lastSpace : max)}…`
 }

@@ -27,13 +27,31 @@ export async function uploadBlob(
   if (servers.length === 0) throw new Error('No Blossom servers configured')
 
   const sha256 = await sha256Blob(blob)
-  const [primary, ...mirrors] = servers
 
-  // Upload to primary
-  const descriptor = await uploadToPrimary(blob, sha256, primary, signer)
+  // Try each server in order until one accepts the blob. Servers use MIME
+  // sniffing and some reject real recordings produced by specific browser
+  // codec stacks — never let one picky server kill the whole upload.
+  let descriptor: BlobDescriptor | null = null
+  let primaryUsed = ''
+  const errors: string[] = []
+  for (const server of servers) {
+    try {
+      descriptor = await uploadToPrimary(blob, sha256, server, signer)
+      primaryUsed = server
+      break
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      errors.push(`${server}: ${msg}`)
+      console.warn(`Blossom upload to ${server} failed, trying next:`, msg)
+    }
+  }
+  if (!descriptor) {
+    throw new Error(`All Blossom servers rejected the upload:\n${errors.join('\n')}`)
+  }
 
-  // Mirror to remaining servers (fire and forget — don't block on mirror failures)
-  for (const mirror of mirrors) {
+  // Mirror to the remaining servers (fire and forget — don't block on mirror failures)
+  for (const mirror of servers) {
+    if (mirror === primaryUsed) continue
     mirrorBlob(descriptor.url, sha256, blob.type, mirror, signer).catch((err) => {
       console.warn(`Blossom mirror to ${mirror} failed:`, err)
     })
