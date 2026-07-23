@@ -22,7 +22,7 @@ import type {
 import { fetchSegmentsForIssue, parseSegment, publishSegment, fetchTranscripts } from '../lib/segment'
 import { extractMentionedNpubs } from './SectionExcerpt'
 import { uploadBlob } from '../lib/blossom'
-import { transcribeAndPublish } from '../lib/transcription'
+import { isLocalTranscriptionEnabled, transcribeAndPublish } from '../lib/transcription'
 import { computeSeedOrder } from '../lib/ordering'
 import { PlaybackProvider } from '../lib/playback'
 import { fetchProfiles, type Profile } from '../lib/profiles'
@@ -300,11 +300,14 @@ export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }
           }, 3000)
         }
         setRecordTarget(null)
-        // Transcribe in background (client-side Whisper) and publish transcript
-        void transcribeAndPublish(result.blob, event, signer).then(() => {
-          // transcript will arrive via the live fetch on next load; nothing else to do
-        })
-      } catch (err) {
+        // Transcription is deliberately opt-in while the browser inference
+        // dependency tree has unresolved upstream audit findings.
+        if (isLocalTranscriptionEnabled()) {
+          void transcribeAndPublish(result.blob, event, signer).then(() => {
+            // Transcript will arrive via the live fetch on next load.
+          })
+        }
+    } catch (err) {
         // Keep the pending recording + descriptor so the user can retry without
         // re-recording or re-uploading. Surface a visible banner — never silent.
         console.error('Publish failed:', err)

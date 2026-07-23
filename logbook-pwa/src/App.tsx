@@ -1,12 +1,13 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { lazy, Suspense, useState, useEffect, useRef, useCallback } from 'react'
 import type { AuthState } from './lib/auth'
-import { startAmberConnect } from './lib/auth'
+import { connectBunker, connectNsec, connectWindowNostr, restoreSession, startAmberConnect } from './lib/auth'
+import { AUTH_SESSION_KEY, readRestorableAuthSession } from './lib/session'
 import { useKeyboardOffset } from './lib/useKeyboardOffset'
 
 import IssueTimeline from './components/IssueTimeline'
 import IssuePicker from './components/IssuePicker'
 import InstallPrompt from './components/InstallPrompt'
-import AdminPanel from './components/AdminPanel'
+const AdminPanel = lazy(() => import('./components/AdminPanel'))
 import { fetchLatestIssue, parseIssue } from './lib/compass'
 import { checkRecordingSupport } from './lib/utils'
 import { IOS_RECORDING_MIN_VERSION } from './config'
@@ -15,8 +16,6 @@ import type { CompassIssue, NostrEvent } from './types/nostr'
 import './App.css'
 
 type AppView = 'auth' | 'timeline' | 'issue-picker' | 'admin'
-
-const SESSION_KEY = 'logbook_auth'
 
 export default function App() {
   const [auth, setAuth] = useState<AuthState | null>(null)
@@ -57,38 +56,18 @@ export default function App() {
     document.documentElement.style.setProperty('--keyboard-offset', `${keyboardOffset}px`)
   }, [keyboardOffset])
 
-  // Restore session on mount
+  // Restore only a revocable NIP-46 session or extension identity on mount.
   useEffect(() => {
-    const saved = sessionStorage.getItem(SESSION_KEY)
+    const saved = readRestorableAuthSession(sessionStorage)
     if (!saved) return
-    try {
-      const { method, input, passphrase, session } = JSON.parse(saved) as {
-        method: string; input?: string; passphrase?: string; session?: string
-      }
-      if (method === 'extension' && typeof window !== 'undefined' && 'nostr' in window) {
-        import('./lib/auth').then(({ connectWindowNostr }) =>
-          connectWindowNostr().then((state) => { setAuth(state); setView('timeline') }).catch(() => {})
-        )
-      } else if ((method === 'amber' || method === 'bunker') && session) {
-        import('./lib/auth').then(async ({ restoreSession }) => {
-          try {
-            const state = await restoreSession(session, method as 'amber' | 'bunker')
-            setAuth(state)
-            setView('timeline')
-          } catch { /* session expired or invalid — just show auth screen */ }
-        })
-      } else if ((method === 'nsec' || method === 'bunker') && input) {
-        import('./lib/auth').then(async ({ connectNsec, connectBunker }) => {
-          try {
-            const state = method === 'nsec'
-              ? await connectNsec(input, passphrase)
-              : await connectBunker(input)
-            setAuth(state)
-            setView('timeline')
-          } catch { /* session expired or invalid — just show auth screen */ }
-        })
-      }
-    } catch { /* corrupt storage */ }
+
+    if (saved.method === 'extension' && typeof window !== 'undefined' && 'nostr' in window) {
+      connectWindowNostr().then((state) => { setAuth(state); setView('timeline') }).catch(() => {})
+    } else if ((saved.method === 'amber' || saved.method === 'bunker') && saved.session) {
+      restoreSession(saved.session, saved.method)
+        .then((state) => { setAuth(state); setView('timeline') })
+        .catch(() => {}) // Session expired or invalid — keep the auth screen.
+    }
   }, [])
 
   // Load latest issue + whitelist check after login
@@ -134,8 +113,10 @@ export default function App() {
             {recordingNotice}
           </div>
         )}
-        <AuthScreen onAuth={(state, method, input, passphrase) => {
-        sessionStorage.setItem(SESSION_KEY, JSON.stringify({ method, input, passphrase, session: state.session }))
+        <AuthScreen onAuth={(state, method) => {
+        // nsec and bunker URIs can grant direct key access. Keep them in
+        // memory only; NIP-46 sessions supply a revocable nbunksec instead.
+        sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ method, session: state.session }))
         setAuth(state)
         setView('timeline')
       }} />
@@ -180,7 +161,7 @@ export default function App() {
         <button
           className="btn btn--ghost btn--small app-logout"
           onClick={() => {
-            sessionStorage.removeItem(SESSION_KEY)
+            sessionStorage.removeItem(AUTH_SESSION_KEY)
             setAuth(null)
             setIssue(null)
             setView('auth')
@@ -239,11 +220,13 @@ export default function App() {
         )}
 
         {view === 'admin' && isAdmin && issue && (
-          <AdminPanel
-            issue={issue}
-            signer={auth.signer}
-            pubkey={auth.pubkey}
-          />
+          <Suspense fallback={<div className="app-empty"><p>Loading admin tools…</p></div>}>
+            <AdminPanel
+              issue={issue}
+              signer={auth.signer}
+              pubkey={auth.pubkey}
+            />
+          </Suspense>
         )}
         {view === 'admin' && isAdmin && !issue && (
           <div className="app-empty">
@@ -258,7 +241,7 @@ export default function App() {
 // ─── Auth Screen ──────────────────────────────────────────────────────────────
 
 function AuthScreen({ onAuth }: {
-  onAuth: (state: AuthState, method: string, input?: string, passphrase?: string) => void
+  onAuth: (state: AuthState, method: string) => void
 }) {
   const [advanced, setAdvanced] = useState<'bunker' | 'nsec' | null>(null)
   const [input, setInput] = useState('')
@@ -300,7 +283,6 @@ function AuthScreen({ onAuth }: {
     setError(null)
     setLoading('extension')
     try {
-      const { connectWindowNostr } = await import('./lib/auth')
       const state = await connectWindowNostr()
       onAuth(state, 'extension')
     } catch (err) {
@@ -316,15 +298,13 @@ function AuthScreen({ onAuth }: {
     try {
       let state: AuthState
       if (advanced === 'bunker') {
-        const { connectBunker } = await import('./lib/auth')
         state = await connectBunker(input.trim())
       } else if (advanced === 'nsec') {
-        const { connectNsec } = await import('./lib/auth')
         state = await connectNsec(input.trim(), passphrase || undefined)
       } else {
         return
       }
-      onAuth(state, advanced, input || undefined, passphrase || undefined)
+      onAuth(state, advanced)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {

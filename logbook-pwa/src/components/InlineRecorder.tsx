@@ -127,7 +127,7 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
       rafRef.current = requestAnimationFrame(loop)
     }
     rafRef.current = requestAnimationFrame(loop)
-  }, [onRecorded])
+  }, [onArm, onRecorded])
 
   const stop = useCallback(() => {
     cancelAnimationFrame(rafRef.current)

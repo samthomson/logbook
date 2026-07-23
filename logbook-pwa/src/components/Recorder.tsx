@@ -164,7 +164,7 @@ export default function Recorder({ onRecorded, onCancel, disabled }: Props) {
       animFrameRef.current = requestAnimationFrame(drawLoop)
     }
     animFrameRef.current = requestAnimationFrame(drawLoop)
-  }, [])
+  }, [pitchIdx])
 
   const stopRecording = useCallback(() => {
     cancelAnimationFrame(animFrameRef.current)

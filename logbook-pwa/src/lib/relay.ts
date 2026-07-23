@@ -8,10 +8,11 @@
  * rejects, throws a descriptive error listing each relay's rejection reason —
  * so publish failures are diagnosable instead of opaque.
  */
-
 import type { NostrEvent } from '../types/nostr'
 import { getPool } from './pool'
-import { verifyEvent } from 'nostr-tools'
+import { getEventHash } from 'nostr-tools'
+import { schnorr } from '@noble/curves/secp256k1.js'
+import { hexToBytes } from '@noble/hashes/utils.js'
 
 /** Publish an event; resolve on first relay ack, throw a rich error if all fail. */
 export async function publishToRelays(event: NostrEvent, relays: string[]): Promise<void> {
@@ -53,7 +54,10 @@ export async function publishToRelays(event: NostrEvent, relays: string[]): Prom
 export function filterVerified<T extends { id: string; pubkey: string; sig: string }>(events: T[]): T[] {
   return events.filter((e) => {
     try {
-      return verifyEvent(e as unknown as Parameters<typeof verifyEvent>[0])
+      return (
+        getEventHash(e as unknown as Parameters<typeof getEventHash>[0]) === e.id &&
+        schnorr.verify(hexToBytes(e.sig), hexToBytes(e.id), hexToBytes(e.pubkey))
+      )
     } catch {
       return false
     }

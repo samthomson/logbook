@@ -11,6 +11,13 @@ interface TranscribeResult {
   chunks?: WordChunk[]
 }
 
+const LOCAL_TRANSCRIPTION_ENABLED = import.meta.env.VITE_ENABLE_LOCAL_TRANSCRIPTION === 'true'
+
+/** Browser transcription is opt-in until its dependency tree has a clean audit. */
+export function isLocalTranscriptionEnabled(): boolean {
+  return LOCAL_TRANSCRIPTION_ENABLED
+}
+
 let worker: Worker | null = null
 let pendingCallbacks = new Map<string, (result: TranscribeResult | null, error?: string) => void>()
 let requestCounter = 0
@@ -34,6 +41,7 @@ function getWorker(): Worker {
 }
 
 export async function transcribeBlob(blob: Blob): Promise<TranscribeResult | null> {
+  if (!LOCAL_TRANSCRIPTION_ENABLED) return null
   const id = String(++requestCounter)
   const arrayBuffer = await blob.arrayBuffer()
 

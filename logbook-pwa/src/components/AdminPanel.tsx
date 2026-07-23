@@ -24,6 +24,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import type { CompassIssue, IssueManifest, ManifestContent, Segment, NostrSigner } from '../types/nostr'
 import { fetchManifest, updateManifest } from '../lib/manifest'
+import { fetchSegmentsByIds, parseSegment } from '../lib/segment'
 import AudioPlayer from './AudioPlayer'
 import WhitelistPanel from './WhitelistPanel'
 
@@ -162,11 +163,10 @@ export default function AdminPanel({ issue, signer, pubkey }: Props) {
         if (uniqueIds.length === 0) return
 
         // Fetch segment events
-        const { fetchSegmentsByIds } = await import('../lib/segment')
         const events = await fetchSegmentsByIds(uniqueIds)
         if (cancelled) return
 
-        const { parseSegment } = await import('../lib/segment')
+
         const map = new Map<string, Segment>()
         for (const e of events) {
           const seg = parseSegment(e)
