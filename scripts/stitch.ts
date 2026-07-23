@@ -29,6 +29,7 @@ import {
 } from './config.ts'
 import { uploadToBlossom } from './blossom.ts'
 import { getTrustedBlobCandidates, parseVerifiedSegment, verifyNostrEvent } from './segment-security.ts'
+import { assertLockedSegmentsPresent, assertStitchableManifest, collectLockedSegmentIds, selectActiveSections } from './stitch-state.ts'
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -305,27 +306,16 @@ async function main(): Promise<void> {
   console.log(`[stitch] Fetching manifest for ${issueId}…`)
   const manifest = await fetchManifest(issueId, pool)
 
-  if (manifest.episodeStatus === 'published') {
+  const stitchState = assertStitchableManifest(manifest, { force: args.includes('--force') })
+  if (stitchState === 'already-published') {
     console.log('[stitch] Episode already published. Use --force to re-stitch.')
-    if (!args.includes('--force')) {
-      pool.close(DEFAULT_RELAYS)
-      process.exit(0)
-    }
+    pool.close(DEFAULT_RELAYS)
+    return
   }
 
-  // Collect all segment ids referenced in non-excluded sections
-  // A section is excluded iff all its segments are in excluded[], or it has no order
-  const activeSections = manifest.sections.filter(
-    (s) =>
-      s.introEventId !== 'excluded' && // AdminPanel section-exclude sentinel
-      s.order.some((id) => !s.excluded.includes(id)),
-  )
-  // Within a section, only include segments NOT in the excluded list
-  const allSegmentIds = [
-    ...new Set(
-      activeSections.flatMap((s) => s.order.filter((id) => !s.excluded.includes(id))),
-    ),
-  ]
+  // Collect all segment ids referenced in non-excluded sections.
+  const activeSections = selectActiveSections(manifest.sections)
+  const allSegmentIds = collectLockedSegmentIds(activeSections)
 
   console.log(
     `[stitch] ${activeSections.length} active sections, ${allSegmentIds.length} segments`,
@@ -333,6 +323,7 @@ async function main(): Promise<void> {
 
   const segments = await fetchSegments(allSegmentIds, pool)
   pool.close(DEFAULT_RELAYS)
+  assertLockedSegmentsPresent(activeSections, segments)
 
   if (dryRun) {
     console.log('[stitch] Dry run — segment inventory:')
