@@ -5,6 +5,8 @@ import { spawnSync } from 'node:child_process'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { COMPASS_PUBKEY, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX, loadPrivateKey } from './config.ts'
+import { missingManifestIssueIds } from './watch-state.ts'
+import { verifyNostrEvent } from './segment-security.ts'
 
 // ── types ────────────────────────────────────────────────────────────────────
 
@@ -142,8 +144,8 @@ async function pollCuttingManifests(stitched: Set<string>): Promise<void> {
     const __dir = dirname(fileURLToPath(import.meta.url))
 
     const stitchResult = spawnSync(
-      'node',
-      ['--loader', 'ts-node/esm', 'stitch.ts', '--issue', issueId],
+      'npx',
+      ['tsx', 'stitch.ts', '--issue', issueId],
       { cwd: __dir, stdio: 'inherit', env: process.env },
     )
     if (stitchResult.status !== 0) {
@@ -153,8 +155,8 @@ async function pollCuttingManifests(stitched: Set<string>): Promise<void> {
     }
 
     const rssResult = spawnSync(
-      'node',
-      ['--loader', 'ts-node/esm', 'publish-rss.ts', '--issue', issueId],
+      'npx',
+      ['tsx', 'publish-rss.ts', '--issue', issueId],
       { cwd: __dir, stdio: 'inherit', env: process.env },
     )
     if (rssResult.status !== 0) {
@@ -179,6 +181,10 @@ async function poll(privkey: Uint8Array, seen: Set<string>): Promise<void> {
   pool.close(DEFAULT_RELAYS)
 
   for (const event of events) {
+    if (event.pubkey !== COMPASS_PUBKEY || !verifyNostrEvent(event)) {
+      console.warn(`[watch-compass] Ignoring unverified issue ${event.id}`)
+      continue
+    }
     if (seen.has(event.id)) continue
     seen.add(event.id)
     console.log(`[watch-compass] New issue detected: ${event.id}`)
@@ -190,13 +196,28 @@ async function main(): Promise<void> {
   const privkey = await loadPrivateKey()
   const seen = new Set<string>()
 
-  // Bootstrap — mark existing issues as seen without creating manifests
+  // Bootstrap existing issues, then idempotently backfill any that do not
+  // already have a valid Compass-authored manifest. This fixes the historical
+  // gap created when the watcher first starts after an issue has published.
   const pool = new SimplePool()
   const filter: Filter = { kinds: [KINDS.COMPASS_ISSUE], authors: [COMPASS_PUBKEY], limit: 50 }
-  const existing = await pool.querySync(DEFAULT_RELAYS, filter)
+  const [existing, manifests] = await Promise.all([
+    pool.querySync(DEFAULT_RELAYS, filter),
+    pool.querySync(DEFAULT_RELAYS, { kinds: [KINDS.MANIFEST], authors: [COMPASS_PUBKEY], limit: 50 }),
+  ])
   pool.close(DEFAULT_RELAYS)
-  for (const e of existing) seen.add(e.id)
-  console.log(`[watch-compass] Bootstrapped with ${seen.size} existing issues`)
+  const validIssues = existing.filter((event) => event.pubkey === COMPASS_PUBKEY && verifyNostrEvent(event))
+  const validManifests = manifests.filter((event) => event.pubkey === COMPASS_PUBKEY && verifyNostrEvent(event))
+  const issueById = new Map(validIssues.map((event) => [event.id, event]))
+  const missingIds = missingManifestIssueIds(validIssues, validManifests)
+  for (const id of missingIds) {
+    const issue = issueById.get(id)
+    if (!issue) continue
+    console.log(`[watch-compass] Backfilling missing manifest for ${id}`)
+    await createManifest(issue, privkey)
+  }
+  for (const event of validIssues) seen.add(event.id)
+  console.log(`[watch-compass] Bootstrapped with ${seen.size} verified issues; backfilled ${missingIds.length} manifest(s)`)
 
   const stitched = new Set<string>()
 

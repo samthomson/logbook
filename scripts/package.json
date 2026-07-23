@@ -5,20 +5,27 @@
   "type": "module",
   "scripts": {
     "watch-compass": "node --loader ts-node/esm watch-compass.ts",
-    "stitch": "node --loader ts-node/esm stitch.ts",
+    "stitch": "tsx stitch.ts",
     "publish-rss": "node --loader ts-node/esm publish-rss.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "rss": "tsx publish-rss.ts",
+    "watch": "tsx watch-compass.ts",
+    "transcribe-missing": "tsx transcribe-missing.ts",
+    "seed-whitelist": "tsx seed-whitelist.mts"
   },
   "dependencies": {
-    "nostr-tools": "^2.7.0",
-    "applesauce-signers": "^6.2.2",
+    "@anthropic-ai/sdk": "^0.27.0",
     "applesauce-core": "^6.2.0",
+    "applesauce-signers": "^6.2.2",
     "node-fetch": "^3.3.2",
-    "@anthropic-ai/sdk": "^0.27.0"
+    "nostr-tools": "^2.7.0"
   },
   "devDependencies": {
-    "typescript": "^5.5.0",
+    "@types/node": "^20.19.43",
+    "@types/node-fetch": "^2.6.13",
     "ts-node": "^10.9.2",
-    "@types/node": "^20.0.0"
+    "tsx": "^4.23.1",
+    "typescript": "^5.5.0"
   }
 }

@@ -13,7 +13,7 @@
 
 import { SimplePool } from 'nostr-tools/pool'
 import { finalizeEvent } from 'nostr-tools'
-import { readFileSync, writeFileSync, statSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, statSync, existsSync, mkdirSync } from 'node:fs'
 import { join, basename, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -23,8 +23,11 @@ import {
   AUDIO_DIR,
   RSS_PATH,
   STATIC_DIR,
+  BASE_URL,
   loadPrivateKey,
 } from './config.ts'
+import { uploadToBlossom } from './blossom.ts'
+import { verifyNostrEvent } from './segment-security.ts'
 
 // ── npubs.yml loading ─────────────────────────────────────────────────────────
 
@@ -36,7 +39,7 @@ interface ContributorEntry {
 
 function loadRoster(): ContributorEntry[] {
   const __dir = dirname(fileURLToPath(import.meta.url))
-  const rosterPath = join(__dir, '../data/npubs.yml')
+  const rosterPath = join(__dir, '../logbook-pwa/public/data/npubs.yml')
   if (!existsSync(rosterPath)) return []
   const raw = readFileSync(rosterPath, 'utf-8')
   // Minimal YAML parser for the simple list format we use
@@ -124,8 +127,6 @@ interface FeedMeta {
 
 // ── config ────────────────────────────────────────────────────────────────────
 
-const BASE_URL = process.env.LOGBOOK_BASE_URL ?? 'https://logbook.nostrcompass.com'
-
 const FEED_META: FeedMeta = {
   title: 'Logbook by Nostr Compass',
   description: 'Async voice podcast where Nostr Compass contributors leave voice notes on the newsletter.',
@@ -173,8 +174,8 @@ async function fetchManifest(issueId: string, pool: SimplePool): Promise<Manifes
   if (!events.length) throw new Error(`No manifest found for ${issueId}`)
 
   const event = events[0]
-  if (event.pubkey !== COMPASS_PUBKEY) {
-    throw new Error(`Manifest pubkey mismatch for ${issueId}`)
+  if (event.pubkey !== COMPASS_PUBKEY || !verifyNostrEvent(event)) {
+    throw new Error(`Manifest failed Compass author or signature verification for ${issueId}`)
   }
 
   return JSON.parse(event.content) as ManifestContent
@@ -200,6 +201,7 @@ interface EpisodeData {
   issueTitle: string
   mp3Url: string
   chaptersUrl: string
+  transcriptUrl: string | null
   mp3Size: number
   durationSeconds: number
   pubDate: Date
@@ -228,7 +230,7 @@ function buildEpisodeXml(ep: EpisodeData, meta: FeedMeta): string {
       <podcast:chapters url="${escapeXml(ep.chaptersUrl)}" type="application/json+chapters" />
       <podcast:chapters>
 ${chaptersContent}
-      </podcast:chapters>
+      </podcast:chapters>${ep.transcriptUrl ? `\n      <podcast:transcript url="${escapeXml(ep.transcriptUrl)}" type="application/json" />` : ''}
     </item>`
 }
 
@@ -296,6 +298,106 @@ async function publishAnnouncement(
   console.log(`[publish-rss] Published kind 1 announcement: ${event.id}`)
 }
 
+// ── manifest status write-back ────────────────────────────────────────────────
+
+/**
+ * Re-publish the manifest with episodeStatus='published' + publishedRss so the
+ * Admin UI (and any future stitch run) sees the episode is done. Addressable
+ * event — same d-tag, newer created_at wins.
+ */
+async function publishManifestStatus(
+  issueId: string,
+  manifest: ManifestContent,
+  ep: EpisodeData,
+  privateKey: Uint8Array,
+  pool: SimplePool,
+): Promise<void> {
+  const updated = {
+    ...manifest,
+    episodeStatus: 'published',
+    publishedRss: {
+      feedUrl: `${BASE_URL}/feed.xml`,
+      mp3Url: ep.mp3Url,
+      publishedAt: Math.floor(Date.now() / 1000),
+    },
+  }
+  const event = finalizeEvent(
+    {
+      kind: KINDS.MANIFEST,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [
+        ['d', issueId],
+        ['title', ep.issueTitle],
+        ['issue', issueId],
+      ],
+      content: JSON.stringify(updated),
+    },
+    privateKey,
+  )
+  await Promise.any(pool.publish(DEFAULT_RELAYS, event))
+  console.log(`[publish-rss] Manifest ${issueId} marked published`)
+}
+
+// ── podstr episode event (kind 30054) ─────────────────────────────────────────
+
+/**
+ * Addressable podcast episode event in the shape podstr/Nostr podcast clients
+ * consume (podstr usePublishEpisode.ts): title, published, summary, image,
+ * audio (url + mime), duration, explicit, episode, t tags. Content = HTML
+ * description. This is what surfaces the episode on podcast.nostrcompass.org
+ * and in its generated feed.
+ */
+async function publishPodstrEpisode(
+  ep: EpisodeData,
+  privateKey: Uint8Array,
+  pool: SimplePool,
+): Promise<void> {
+  const tags: string[][] = [
+    ['d', `logbook-${ep.issueId}`],
+    ['title', ep.issueTitle],
+    ['published', String(Math.floor(ep.pubDate.getTime() / 1000))],
+    ['summary', ep.description],
+    ['image', FEED_META.imageUrl],
+    ['audio', ep.mp3Url, 'audio/mpeg'],
+    ['duration', String(Math.round(ep.durationSeconds))],
+    ['explicit', 'no'],
+    ['episode', String(ep.issueNumber)],
+    ['t', 'nostr'],
+    ['t', 'compass'],
+    ['alt', `Podcast episode: ${ep.issueTitle} — Logbook by Nostr Compass`],
+  ]
+  if (ep.chaptersUrl) tags.push(['podcast:chapters', ep.chaptersUrl, 'application/json+chapters'])
+  if (ep.transcriptUrl) tags.push(['podcast:transcript', ep.transcriptUrl, 'application/json'])
+  for (const pk of ep.participantPubkeys ?? []) tags.push(['p', pk])
+
+  const event = finalizeEvent(
+    {
+      kind: 30054,
+      created_at: Math.floor(Date.now() / 1000),
+      tags,
+      content: `<p>${ep.description}</p>`,
+    },
+    privateKey,
+  )
+  await Promise.any(pool.publish(DEFAULT_RELAYS, event))
+  console.log(`[publish-rss] Published podstr episode event: ${event.id}`)
+}
+
+// ── run metadata (written by stitch.ts) ───────────────────────────────────────
+
+interface RunMeta {
+  issueId: string
+  mp3Url: string
+  mp3Urls: string[]
+  mp3Sha256: string
+  mp3Size: number
+  durationSeconds: number
+  chaptersUrl: string | null
+  segmentIds: string[]
+  contributorPubkeys: string[]
+  stitchedAt: number
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -314,36 +416,63 @@ async function main(): Promise<void> {
   console.log(`[publish-rss] Fetching manifest for ${issueId}…`)
   const manifest = await fetchManifest(issueId, pool)
 
-  // Verify mp3 exists
-  const mp3Path = join(AUDIO_DIR, `${issueId}.mp3`)
-  if (!existsSync(mp3Path)) {
-    throw new Error(`mp3 not found: ${mp3Path}. Run stitch.ts first.`)
+  // Run metadata from stitch.ts carries the canonical Blossom mp3 URL.
+  const metaPath = join(AUDIO_DIR, `${issueId}-run.json`)
+  if (!existsSync(metaPath)) {
+    throw new Error(`Run metadata not found: ${metaPath}. Run stitch.ts first.`)
   }
+  const run = JSON.parse(readFileSync(metaPath, 'utf-8')) as RunMeta
 
+  // Upload chapters JSON to Blossom so podcatchers can fetch it from anywhere.
   const chaptersPath = join(AUDIO_DIR, `${issueId}-chapters.json`)
   let chapters: Chapter[] = []
+  let chaptersUrl = run.chaptersUrl
   if (existsSync(chaptersPath)) {
     const cf = JSON.parse(readFileSync(chaptersPath, 'utf-8')) as ChaptersFile
     chapters = cf.chapters
+    if (!chaptersUrl) {
+      const blob = await uploadToBlossom(
+        Buffer.from(JSON.stringify(cf, null, 2)),
+        'application/json',
+        privateKey,
+      )
+      chaptersUrl = blob.url
+      run.chaptersUrl = chaptersUrl
+      writeFileSync(metaPath, JSON.stringify(run, null, 2))
+    }
   }
 
-  const mp3Size = statSync(mp3Path).size
-  const durationSeconds = getMp3Duration(mp3Path)
-  const mp3Url = `${BASE_URL}/audio/${basename(mp3Path)}`
-  const chaptersUrl = `${BASE_URL}/audio/${basename(chaptersPath)}`
-
-  // Collect segment pubkeys from all included sections
-  const allSegmentIds = manifest.sections
-    .filter((s) => s.introEventId !== 'excluded')
-    .flatMap((s) => s.order.filter((id) => !s.excluded.includes(id)))
+  // Collect contributor pubkeys + transcripts from relay
   const segmentEvents =
-    allSegmentIds.length > 0
-      ? await pool.querySync(DEFAULT_RELAYS, {
-          kinds: [KINDS.SEGMENT],
-          ids: allSegmentIds,
-        })
+    run.segmentIds.length > 0
+      ? await pool.querySync(DEFAULT_RELAYS, { kinds: [KINDS.SEGMENT], ids: run.segmentIds })
       : []
   const participantPubkeys = [...new Set(segmentEvents.map((e) => e.pubkey))]
+
+  // Companion transcripts (kind 1111 with e-tag → segment) for podcast:transcript
+  const transcriptEvents =
+    run.segmentIds.length > 0
+      ? await pool.querySync(DEFAULT_RELAYS, { kinds: [KINDS.TRANSCRIPT], '#e': run.segmentIds, limit: 200 })
+      : []
+  const transcriptBySegment = new Map<string, string>()
+  for (const t of transcriptEvents) {
+    const segRef = t.tags.find((tag) => tag[0] === 'e')?.[1]
+    if (segRef && !transcriptBySegment.has(segRef)) transcriptBySegment.set(segRef, t.content)
+  }
+  // Stitch a full-episode transcript in segment order (used as transcript JSON)
+  const fullTranscript = run.segmentIds
+    .map((id) => transcriptBySegment.get(id))
+    .filter(Boolean)
+    .join('\n\n')
+  let transcriptUrl: string | null = null
+  if (fullTranscript) {
+    const blob = await uploadToBlossom(
+      Buffer.from(JSON.stringify({ version: '1.0.0', transcript: fullTranscript }, null, 2)),
+      'application/json',
+      privateKey,
+    )
+    transcriptUrl = blob.url
+  }
 
   const issueNumber = manifest.issueNumber ?? parseInt(issueId.replace(/^\D+/, ''), 10) ?? 0
   const issueTitle = manifest.title ?? `Logbook Episode ${issueNumber}`
@@ -351,37 +480,42 @@ async function main(): Promise<void> {
     issueId,
     issueNumber,
     issueTitle,
-    mp3Url,
-    chaptersUrl,
-    mp3Size,
-    durationSeconds,
-    pubDate: new Date(),
+    mp3Url: run.mp3Url,
+    chaptersUrl: chaptersUrl ?? '',
+    transcriptUrl,
+    mp3Size: run.mp3Size,
+    durationSeconds: run.durationSeconds,
+    pubDate: new Date(run.stitchedAt * 1000),
     chapters,
     description: `Async voice notes from Nostr Compass contributors on issue #${issueNumber}.`,
     participantPubkeys,
   }
 
-  // Load existing feed to prepend new episode
-  let existingEpisodes: EpisodeData[] = []
-  if (existsSync(RSS_PATH)) {
-    // Simple approach: don't parse existing XML — just regenerate from scratch
-    // In production you'd maintain a episodes.json state file
-    const episodeStatePath = join(STATIC_DIR, 'episodes.json')
-    if (existsSync(episodeStatePath)) {
-      existingEpisodes = JSON.parse(readFileSync(episodeStatePath, 'utf-8')) as EpisodeData[]
-    }
-  }
-
-  // Upsert this episode (replace if same issueId, otherwise prepend)
+  // Episode state file → regenerate feed from scratch (idempotent). Ensure the
+  // configured static root exists before the first episode writes its state.
+  mkdirSync(STATIC_DIR, { recursive: true })
   const episodeStatePath = join(STATIC_DIR, 'episodes.json')
+  let existingEpisodes: EpisodeData[] = []
+  if (existsSync(episodeStatePath)) {
+    existingEpisodes = JSON.parse(readFileSync(episodeStatePath, 'utf-8')) as EpisodeData[]
+  }
   const filtered = existingEpisodes.filter((e) => e.issueId !== issueId)
-  const allEpisodes = [ep, ...filtered].slice(0, 50) // cap at 50 episodes
+  const allEpisodes = [ep, ...filtered].slice(0, 50)
   writeFileSync(episodeStatePath, JSON.stringify(allEpisodes, null, 2))
 
   const xml = buildFeedXml(FEED_META, allEpisodes, ep.participantPubkeys ?? [])
   writeFileSync(RSS_PATH, xml, 'utf-8')
   console.log(`[publish-rss] RSS written: ${RSS_PATH}`)
   console.log(`[publish-rss] Episodes in feed: ${allEpisodes.length}`)
+  console.log(`[publish-rss] NOTE: feed.xml must be reachable at ${BASE_URL}/feed.xml —`)
+  console.log(`[publish-rss] sync ${STATIC_DIR} to the podcast.nostrcompass.org host (or set LOGBOOK_BASE_URL).`)
+
+  // Mark the manifest published so the Admin UI shows the final state
+  await publishManifestStatus(issueId, manifest, ep, privateKey, pool)
+
+  // Podstr-compatible episode event (kind 30054) so the podcast appears on
+  // podcast.nostrcompass.org and in Nostr podcast clients.
+  await publishPodstrEpisode(ep, privateKey, pool)
 
   if (!noAnnounce) {
     await publishAnnouncement(ep, privateKey, pool)

@@ -15,7 +15,7 @@
 import { SimplePool } from 'nostr-tools/pool'
 import { finalizeEvent } from 'nostr-tools'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { tmpdir } from 'node:os'
 import fetch from 'node-fetch'
@@ -24,8 +24,11 @@ import {
   DEFAULT_RELAYS,
   KINDS,
   AUDIO_DIR,
+  BLOSSOM_SERVERS,
   loadPrivateKey,
 } from './config.ts'
+import { uploadToBlossom } from './blossom.ts'
+import { getTrustedBlobCandidates, parseVerifiedSegment, verifyNostrEvent } from './segment-security.ts'
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -181,11 +184,52 @@ function encodeMp3(inputPath: string, outPath: string): void {
 
 // ── download helpers ──────────────────────────────────────────────────────────
 
-async function downloadBlob(url: string, destPath: string): Promise<void> {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`Failed to download ${url}: HTTP ${res.status}`)
-  const buffer = await res.arrayBuffer()
-  writeFileSync(destPath, Buffer.from(buffer))
+import { createHash } from 'node:crypto'
+
+/**
+ * Download a Blossom blob and verify its sha256 against the segment event's
+ * declared hash. On any failure (network, hash mismatch), rewrite the URL
+ * path onto the next known Blossom server and retry. A segment whose blob
+ * cannot be verified from ANY mirror is a hard error — silently skipping it
+ * would ship an incomplete episode.
+ */
+async function downloadBlob(url: string, destPath: string, expectedSha256: string): Promise<void> {
+  // Never request the relay-provided host directly. Rebuild the canonical hash
+  // path under the configured HTTPS Blossom origins to prevent VPS SSRF.
+  const candidates = getTrustedBlobCandidates(url, expectedSha256, BLOSSOM_SERVERS)
+
+  const errors: string[] = []
+  for (const candidate of candidates) {
+    try {
+      const res = await fetch(candidate, { signal: AbortSignal.timeout(60_000) })
+      if (!res.ok) {
+        errors.push(`${candidate}: HTTP ${res.status}`)
+        continue
+      }
+      const contentLength = Number(res.headers.get('content-length') ?? '0')
+      if (contentLength > 256 * 1024 * 1024) {
+        errors.push(`${candidate}: blob exceeds 256 MiB limit`)
+        continue
+      }
+      const buffer = Buffer.from(await res.arrayBuffer())
+      if (buffer.length > 256 * 1024 * 1024) {
+        errors.push(`${candidate}: blob exceeds 256 MiB limit`)
+        continue
+      }
+      if (expectedSha256) {
+        const actual = createHash('sha256').update(buffer).digest('hex')
+        if (actual !== expectedSha256) {
+          errors.push(`${candidate}: sha256 mismatch (got ${actual.slice(0, 12)}…)`)
+          continue
+        }
+      }
+      writeFileSync(destPath, buffer)
+      return
+    } catch (err) {
+      errors.push(`${candidate}: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  throw new Error(`Failed to download blob from all mirrors:\n  ${errors.join('\n  ')}`)
 }
 
 // ── relay helpers ─────────────────────────────────────────────────────────────
@@ -201,8 +245,8 @@ async function fetchManifest(issueId: string, pool: SimplePool): Promise<Manifes
   if (!events.length) throw new Error(`No manifest found for issue ${issueId}`)
 
   const event = events[0]
-  if (event.pubkey !== COMPASS_PUBKEY) {
-    throw new Error(`Manifest pubkey mismatch: expected ${COMPASS_PUBKEY}, got ${event.pubkey}`)
+  if (event.pubkey !== COMPASS_PUBKEY || !verifyNostrEvent(event)) {
+    throw new Error('Manifest failed Compass author or signature verification')
   }
 
   return JSON.parse(event.content) as ManifestContent
@@ -222,10 +266,11 @@ async function fetchSegments(
   const map = new Map<string, Segment>()
   for (const e of events) {
     try {
+      parseVerifiedSegment(e, BLOSSOM_SERVERS)
       const content = JSON.parse(e.content) as SegmentContent
       map.set(e.id, { id: e.id, pubkey: e.pubkey, content, createdAt: e.created_at })
-    } catch {
-      console.warn(`[stitch] Could not parse segment content for ${e.id}`)
+    } catch (err) {
+      console.warn(`[stitch] Rejected untrusted segment ${e.id}: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
   return map
@@ -316,15 +361,19 @@ async function main(): Promise<void> {
       if (section.excluded.includes(segId)) continue
       const seg = segments.get(segId)
       if (!seg) {
-        console.warn(`[stitch] Segment ${segId} not found, skipping`)
-        continue
+        throw new Error(
+          `[stitch] Segment ${segId} is in the locked manifest but not on any relay. ` +
+          `Fix the manifest (exclude it) and re-lock, or restore the segment event.`,
+        )
       }
 
       const ext = seg.content.audio.mime.includes('webm') ? 'webm' : 'ogg'
       const rawPath = join(workDir, `${segId}.${ext}`)
 
       console.log(`  ↓ ${seg.content.audio.url}`)
-      await downloadBlob(seg.content.audio.url, rawPath)
+      // Hard-fail the run if the blob can't be fetched AND hash-verified from
+      // any mirror — silently dropping a locked segment ships a broken episode.
+      await downloadBlob(seg.content.audio.url, rawPath, seg.content.audio.sha256)
 
       const normPath = loudnorm(rawPath, workDir)
       const trimPath = trimSilence(normPath, workDir)
@@ -379,6 +428,20 @@ async function main(): Promise<void> {
   console.log(`[stitch] Encoding mp3 → ${mp3Path}`)
   encodeMp3(stitchedWav, mp3Path)
 
+  // Upload the final mp3 to Blossom — the canonical public URL for the episode
+  console.log(`[stitch] Uploading mp3 to Blossom…`)
+  const mp3Buffer = readFileSync(mp3Path)
+  const blob = await uploadToBlossom(mp3Buffer, 'audio/mpeg', privkey)
+  console.log(`[stitch] Episode URL: ${blob.url} (+${blob.urls.length - 1} mirrors)`)
+
+  // Measure duration for RSS
+  const mp3Probe = spawnSync(
+    'ffprobe',
+    ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', mp3Path],
+    { encoding: 'utf-8' },
+  )
+  const mp3Duration = parseFloat(mp3Probe.stdout.trim()) || 0
+
   // Write chapters JSON
   const chaptersPath = join(AUDIO_DIR, `${issueId}-chapters.json`)
   const chaptersJson = {
@@ -390,6 +453,33 @@ async function main(): Promise<void> {
   }
   writeFileSync(chaptersPath, JSON.stringify(chaptersJson, null, 2))
   console.log(`[stitch] Chapters → ${chaptersPath}`)
+
+  // Run metadata consumed by publish-rss.ts (episode URL, hashes, contributors)
+  const includedIds = activeSections
+    .flatMap((s) => s.order.filter((id) => !s.excluded.includes(id)))
+    .filter((id) => segments.has(id))
+  const contributorPubkeys = [...new Set(includedIds.map((id) => segments.get(id)!.pubkey))]
+  const metaPath = join(AUDIO_DIR, `${issueId}-run.json`)
+  writeFileSync(
+    metaPath,
+    JSON.stringify(
+      {
+        issueId,
+        mp3Url: blob.url,
+        mp3Urls: blob.urls,
+        mp3Sha256: blob.sha256,
+        mp3Size: blob.size,
+        durationSeconds: mp3Duration,
+        chaptersUrl: null as string | null, // filled in by publish-rss after chapter upload
+        segmentIds: includedIds,
+        contributorPubkeys,
+        stitchedAt: Math.floor(Date.now() / 1000),
+      },
+      null,
+      2,
+    ),
+  )
+  console.log(`[stitch] Run metadata → ${metaPath}`)
 
   // Cleanup working directory
   rmSync(workDir, { recursive: true, force: true })
@@ -405,9 +495,6 @@ async function main(): Promise<void> {
   }
 
   // CUR-01: publish kind 7 reaction (🎙️) from Compass npub on each included segment
-  const includedIds = activeSections
-    .flatMap(s => s.order.filter(id => !s.excluded.includes(id)))
-    .filter(id => segments.has(id))
   if (includedIds.length > 0) {
     console.log(`[stitch] Publishing ${includedIds.length} kind 7 reactions...`)
     const reactPool = new SimplePool()

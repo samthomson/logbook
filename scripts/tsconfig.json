@@ -10,7 +10,8 @@
     "noEmit": true,
     "outDir": "dist",
     "rootDir": ".",
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "lib": ["ES2022", "DOM"]
   },
   "include": ["*.ts"],
   "exclude": ["node_modules", "dist"]
