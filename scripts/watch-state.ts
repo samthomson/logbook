@@ -4,6 +4,57 @@ export interface TaggedEvent {
   tags: string[][]
 }
 
+export interface ManifestEvent extends TaggedEvent {
+  id: string
+  pubkey: string
+  content: string
+}
+
+export interface ManifestSelectionOptions {
+  expectedPubkey: string
+  verify: (event: ManifestEvent) => boolean
+}
+
+function manifestDTag(event: TaggedEvent): string | null {
+  const dTag = event.tags.find((tag) => tag[0] === 'd')?.[1]
+  return typeof dTag === 'string' && dTag.length > 0 ? dTag : null
+}
+
+/**
+ * Select only the latest verified manifest for each addressable d-tag. A newer
+ * draft or published manifest must suppress an older cutting revision: Nostr
+ * addressable events are replacement records, not an append-only job queue.
+ */
+export function latestCuttingManifests(
+  events: ManifestEvent[],
+  { expectedPubkey, verify }: ManifestSelectionOptions,
+): ManifestEvent[] {
+  const latest = new Map<string, ManifestEvent>()
+
+  for (const event of events) {
+    const issueId = manifestDTag(event)
+    if (!issueId || event.pubkey !== expectedPubkey || !verify(event)) continue
+    try {
+      const content = JSON.parse(event.content) as { episodeStatus?: unknown }
+      if (typeof content.episodeStatus !== 'string') continue
+    } catch {
+      continue
+    }
+
+    const prior = latest.get(issueId)
+    const eventTime = event.created_at ?? 0
+    const priorTime = prior?.created_at ?? 0
+    const isNewer = !prior ||
+      eventTime > priorTime ||
+      (eventTime === priorTime && event.id > prior.id)
+    if (isNewer) latest.set(issueId, event)
+  }
+
+  return [...latest.values()]
+    .filter((event) => (JSON.parse(event.content) as { episodeStatus: string }).episodeStatus === 'cutting')
+    .sort((a, b) => a.tags.find((tag) => tag[0] === 'd')![1].localeCompare(b.tags.find((tag) => tag[0] === 'd')![1]))
+}
+
 function issueNumber(event: TaggedEvent): number | null {
   const dTag = event.tags.find((tag) => tag[0] === 'd')?.[1] ?? ''
   const match = dTag.match(/(\d+)$/)

@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { COMPASS_PUBKEY, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX, loadPrivateKey } from './config.ts'
-import { missingManifestIssueIds } from './watch-state.ts'
+import { latestCuttingManifests, missingManifestIssueIds } from './watch-state.ts'
 import { verifyNostrEvent } from './segment-security.ts'
 
 // ── types ────────────────────────────────────────────────────────────────────
@@ -109,14 +109,6 @@ async function createManifest(event: NostrEvent, privkey: Uint8Array): Promise<v
 
 // ── AUTO-01: stitch trigger ──────────────────────────────────────────────────
 
-interface ManifestContent {
-  issueRef: string
-  issueNumber?: number
-  title?: string
-  episodeStatus: string
-  sections: { id: string; order: string[]; excluded: string[] }[]
-}
-
 async function pollCuttingManifests(stitched: Set<string>): Promise<void> {
   const pool = new SimplePool()
   const events = await pool.querySync(DEFAULT_RELAYS, {
@@ -126,18 +118,14 @@ async function pollCuttingManifests(stitched: Set<string>): Promise<void> {
   })
   pool.close(DEFAULT_RELAYS)
 
-  for (const event of events) {
-    if (event.pubkey !== COMPASS_PUBKEY) continue
-    let content: ManifestContent
-    try {
-      content = JSON.parse(event.content) as ManifestContent
-    } catch {
-      continue
-    }
-    if (content.episodeStatus !== 'cutting') continue
+  const actionable = latestCuttingManifests(events, {
+    expectedPubkey: COMPASS_PUBKEY,
+    verify: (event) => verifyNostrEvent(event as NostrEvent),
+  })
+
+  for (const event of actionable) {
     const issueId = event.tags.find(t => t[0] === 'd')?.[1]
-    if (!issueId) continue
-    if (stitched.has(issueId)) continue
+    if (!issueId || stitched.has(issueId)) continue
     stitched.add(issueId)
 
     console.log(`[watch-compass] Manifest ${issueId} is cutting — triggering stitch`)
