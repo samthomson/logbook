@@ -28,7 +28,8 @@ import {
   loadPrivateKey,
 } from './config.ts'
 import { uploadToBlossom } from './blossom.ts'
-import { getTrustedBlobCandidates, parseVerifiedSegment, verifyNostrEvent } from './segment-security.ts'
+import { parseVerifiedSegment, verifyNostrEvent } from './segment-security.ts'
+import { downloadVerifiedBlob } from './stitch-download.ts'
 import { assertLockedSegmentsPresent, assertStitchableManifest, collectLockedSegmentIds, selectActiveSections } from './stitch-state.ts'
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -185,8 +186,6 @@ function encodeMp3(inputPath: string, outPath: string): void {
 
 // ── download helpers ──────────────────────────────────────────────────────────
 
-import { createHash } from 'node:crypto'
-
 /**
  * Download a Blossom blob and verify its sha256 against the segment event's
  * declared hash. On any failure (network, hash mismatch), rewrite the URL
@@ -195,42 +194,13 @@ import { createHash } from 'node:crypto'
  * would ship an incomplete episode.
  */
 async function downloadBlob(url: string, destPath: string, expectedSha256: string): Promise<void> {
-  // Never request the relay-provided host directly. Rebuild the canonical hash
-  // path under the configured HTTPS Blossom origins to prevent VPS SSRF.
-  const candidates = getTrustedBlobCandidates(url, expectedSha256, BLOSSOM_SERVERS)
-
-  const errors: string[] = []
-  for (const candidate of candidates) {
-    try {
-      const res = await fetch(candidate, { signal: AbortSignal.timeout(60_000) })
-      if (!res.ok) {
-        errors.push(`${candidate}: HTTP ${res.status}`)
-        continue
-      }
-      const contentLength = Number(res.headers.get('content-length') ?? '0')
-      if (contentLength > 256 * 1024 * 1024) {
-        errors.push(`${candidate}: blob exceeds 256 MiB limit`)
-        continue
-      }
-      const buffer = Buffer.from(await res.arrayBuffer())
-      if (buffer.length > 256 * 1024 * 1024) {
-        errors.push(`${candidate}: blob exceeds 256 MiB limit`)
-        continue
-      }
-      if (expectedSha256) {
-        const actual = createHash('sha256').update(buffer).digest('hex')
-        if (actual !== expectedSha256) {
-          errors.push(`${candidate}: sha256 mismatch (got ${actual.slice(0, 12)}…)`)
-          continue
-        }
-      }
-      writeFileSync(destPath, buffer)
-      return
-    } catch (err) {
-      errors.push(`${candidate}: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  }
-  throw new Error(`Failed to download blob from all mirrors:\n  ${errors.join('\n  ')}`)
+  await downloadVerifiedBlob({
+    url,
+    destPath,
+    expectedSha256,
+    servers: BLOSSOM_SERVERS,
+    fetchImpl: async (candidate, init) => fetch(candidate, init),
+  })
 }
 
 // ── relay helpers ─────────────────────────────────────────────────────────────
