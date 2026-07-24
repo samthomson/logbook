@@ -21,4 +21,18 @@ describe('restoreSession', () => {
     expect(result.method).toBe('amber')
     expect(result.session).toBe(session)
   })
+
+  it('restores the account identity separately from the NIP-46 routing identity', async () => {
+    const routingIdentity = '11'.repeat(32)
+    const accountIdentity = '77'.repeat(32)
+    const session = NostrConnectSigner.createNbunksec({
+      remote: routingIdentity,
+      clientKey: '22'.repeat(32),
+      relays: ['wss://127.0.0.1:1'],
+    })
+
+    const result = await restoreSession(session, 'amber', accountIdentity)
+
+    expect(result.pubkey).toBe(accountIdentity)
+  })
 })

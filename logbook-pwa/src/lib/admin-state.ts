@@ -19,9 +19,39 @@ export function canEditManifest(content: ManifestContent, pubkey: string): boole
 }
 
 export function canLockEpisode(content: ManifestContent): boolean {
-  return content.episodeStatus === 'draft' && content.sections.some((section) =>
-    section.sectionExcluded !== true && section.order.some((id) => !section.excluded.includes(id)),
+  return content.episodeStatus === 'draft' && content.sections.length > 0 && content.sections.every((section) =>
+    section.sectionExcluded !== true &&
+    section.introEventId !== 'excluded' &&
+    section.order.some((id) => !section.excluded.includes(id)),
   )
+}
+
+export function includeAllChapters(
+  content: ManifestContent,
+  requiredChapters: ReadonlyArray<{ id: string; title: string }> = [],
+): ManifestContent {
+  const normalized = content.sections.map((section) => ({
+    ...section,
+    introEventId: section.introEventId === 'excluded' ? null : section.introEventId,
+    sectionExcluded: false,
+  }))
+  const byId = new Map(normalized.map((section) => [section.id, section]))
+  const requiredIds = new Set(requiredChapters.map((chapter) => chapter.id))
+  const required = requiredChapters.map((chapter) => byId.get(chapter.id) ?? ({
+    id: chapter.id,
+    title: chapter.title,
+    introEventId: null,
+    sectionExcluded: false,
+    order: [],
+    excluded: [],
+    reviewed: [],
+  }))
+  const legacy = normalized.filter((section) => !requiredIds.has(section.id))
+
+  return {
+    ...content,
+    sections: requiredChapters.length > 0 ? [...required, ...legacy] : normalized,
+  }
 }
 
 export function toggleSectionExcluded(
@@ -49,6 +79,21 @@ export function reorderSection(
     if (activeId === section.introEventId || overId === section.introEventId) return section
     return { ...section, order: arrayMove(section.order, oldIndex, newIndex) }
   })
+}
+
+export function moveSectionRecording(
+  content: ManifestContent,
+  sectionIndex: number,
+  segmentId: string,
+  direction: -1 | 1,
+): ManifestContent {
+  const section = content.sections[sectionIndex]
+  if (!section || segmentId === section.introEventId) return content
+  const currentIndex = section.order.indexOf(segmentId)
+  const targetIndex = currentIndex + direction
+  const firstMovableIndex = section.introEventId ? 1 : 0
+  if (currentIndex < 0 || targetIndex < firstMovableIndex || targetIndex >= section.order.length) return content
+  return reorderSection(content, sectionIndex, segmentId, section.order[targetIndex])
 }
 
 export function addSegmentSection(

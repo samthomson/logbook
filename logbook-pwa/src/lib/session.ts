@@ -6,6 +6,8 @@ export type RestorableAuthMethod = 'extension' | 'amber' | 'bunker'
 export interface RestorableAuthSession {
   method: RestorableAuthMethod
   session?: string
+  /** Public account identity; distinct from a NIP-46 routing identity. */
+  pubkey?: string
 }
 
 interface StorageLike {
@@ -32,7 +34,7 @@ export function readRestorableAuthSession(storage: StorageLike): RestorableAuthS
       return null
     }
 
-    const { method, input, passphrase, session } = value as Record<string, unknown>
+    const { method, input, passphrase, session, pubkey } = value as Record<string, unknown>
     if (typeof input === 'string' || typeof passphrase === 'string') {
       storage.removeItem(AUTH_SESSION_KEY)
       return null
@@ -40,7 +42,11 @@ export function readRestorableAuthSession(storage: StorageLike): RestorableAuthS
 
     if (method === 'extension') return { method }
     if ((method === 'amber' || method === 'bunker') && typeof session === 'string' && session.length > 0) {
-      return { method, session }
+      return {
+        method,
+        session,
+        ...(typeof pubkey === 'string' && /^[0-9a-f]{64}$/i.test(pubkey) ? { pubkey: pubkey.toLowerCase() } : {}),
+      }
     }
   } catch {
     storage.removeItem(AUTH_SESSION_KEY)

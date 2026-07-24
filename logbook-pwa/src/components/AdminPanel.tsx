@@ -1,4 +1,4 @@
-/** Dense chapter-oriented episode curation workspace. */
+/** Mobile-first chapter-oriented episode workspace. */
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   DndContext,
@@ -23,10 +23,11 @@ import type { CompassIssue, IssueManifest, ManifestContent, NostrSigner, Segment
 import { createAdminSaveController } from '../lib/admin-save'
 import {
   canEditManifest,
+  canLockEpisode,
+  includeAllChapters,
+  moveSectionRecording,
   reorderSection,
-  toggleSectionExcluded,
   toggleSegmentExcluded,
-  toggleSegmentReviewed,
 } from '../lib/admin-state'
 import { collectWhitelistedTimeline } from '../lib/admin-timeline'
 import {
@@ -42,6 +43,7 @@ import { buildInitialManifest, fetchManifest, updateManifest } from '../lib/mani
 import { fetchProfiles, type Profile } from '../lib/profiles'
 import { fetchSegmentsForIssue, fetchTranscripts, parseSegment } from '../lib/segment'
 import WhitelistPanel from './WhitelistPanel'
+import './AdminWorkspace.css'
 
 interface Props {
   issue: CompassIssue
@@ -56,9 +58,12 @@ interface NoteRowProps {
   transcript?: string
   editable: boolean
   sortable: boolean
+  canMoveUp: boolean
+  canMoveDown: boolean
   onInclude: () => void
   onExclude: () => void
-  onReviewed: () => void
+  onMoveUp: () => void
+  onMoveDown: () => void
 }
 
 function NoteRow({
@@ -67,9 +72,12 @@ function NoteRow({
   transcript,
   editable,
   sortable,
+  canMoveUp,
+  canMoveDown,
   onInclude,
   onExclude,
-  onReviewed,
+  onMoveUp,
+  onMoveDown,
 }: NoteRowProps) {
   const [open, setOpen] = useState(false)
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -83,6 +91,8 @@ function NoteRow({
   }
   const author = row.segment?.event.pubkey
   const authorName = profile?.name ?? (author ? `${author.slice(0, 10)}…` : 'Unavailable recording')
+
+  const authorInitial = authorName.trim().charAt(0).toUpperCase() || '?'
 
   return (
     <article
@@ -100,47 +110,67 @@ function NoteRow({
           {...attributes}
           {...listeners}
         >
-          ⠿
+          <span aria-hidden="true">⠿</span>
         </button>
         <button
           type="button"
           className="episode-note__summary"
           onClick={() => setOpen((value) => !value)}
           aria-expanded={open}
+          aria-label={`${open ? 'Hide' : 'Listen to'} recording by ${authorName} and ${open ? 'hide' : 'view'} transcript`}
         >
-          <span className="episode-note__author">{authorName}</span>
-          {row.segment && <span>{row.segment.audio.duration.toFixed(1)}s</span>}
-          {row.isIntro && <span className="episode-badge">intro</span>}
-          {row.isNew && <span className="episode-badge episode-badge--new">new</span>}
-          {row.reviewed && <span className="episode-badge">reviewed</span>}
-          {row.problem && <span className="episode-badge episode-badge--warning">{row.problem}</span>}
-          <span className="episode-note__chevron">{open ? '−' : '+'}</span>
+          <span className="episode-note__avatar" aria-hidden="true">
+            {profile?.picture ? <img src={profile.picture} alt="" /> : authorInitial}
+          </span>
+          <span className="episode-note__identity">
+            <span className="episode-note__author">{authorName}</span>
+            <span className="episode-note__meta">
+              {row.segment ? `${row.segment.audio.duration.toFixed(1)} sec` : 'Recording unavailable'}
+              {' · '}{open ? 'Hide audio & transcript' : 'Listen & view transcript'}
+            </span>
+          </span>
+          <span className="episode-note__badges">
+            {row.isIntro && <span className="episode-badge">intro</span>}
+            {row.isNew && <span className="episode-badge episode-badge--new">new</span>}
+            {row.problem && <span className="episode-badge episode-badge--warning">issue</span>}
+          </span>
+          <span className="episode-note__chevron" aria-hidden="true">{open ? '⌃' : '⌄'}</span>
         </button>
-        {editable && row.state === 'inventory' && (
-          <button type="button" className="btn btn--xs" onClick={onInclude}>Include</button>
-        )}
-        {editable && row.state !== 'inventory' && (
-          <>
-            <label className="episode-note__reviewed">
-              <input type="checkbox" checked={row.reviewed} onChange={onReviewed} />
-              Reviewed
-            </label>
-            <button type="button" className="btn btn--ghost btn--xs" onClick={onExclude}>
-              {row.state === 'excluded' ? 'Restore' : 'Exclude'}
-            </button>
-          </>
-        )}
       </div>
       {open && (
         <div className="episode-note__details">
-          {row.segment ? (
-            <audio controls preload="metadata" src={row.segment.audio.url} />
-          ) : (
-            <p className="episode-note__empty">Event {row.segmentId.slice(0, 12)}… is referenced but unavailable.</p>
-          )}
-          <div className="episode-note__transcript" aria-label="Transcript">
-            {transcript ?? 'No trusted transcript published for this recording.'}
+          <div className="episode-note__player">
+            <span>Voice message from {authorName}</span>
+            {row.segment ? (
+              <audio controls preload="metadata" src={row.segment.audio.url} />
+            ) : (
+              <p className="episode-note__empty">Event {row.segmentId.slice(0, 12)}… is referenced but unavailable.</p>
+            )}
           </div>
+          <div>
+            <span className="episode-note__detail-label">Transcript</span>
+            <div className="episode-note__transcript">
+              {transcript ?? 'No trusted transcript published for this recording.'}
+            </div>
+          </div>
+          {editable && (
+            <div className="episode-note__controls">
+              {sortable && (
+                <div className="episode-note__move" aria-label="Recording position">
+                  <span>Position</span>
+                  <button type="button" className="btn btn--ghost btn--small" disabled={!canMoveUp} onClick={onMoveUp}>Move up</button>
+                  <button type="button" className="btn btn--ghost btn--small" disabled={!canMoveDown} onClick={onMoveDown}>Move down</button>
+                </div>
+              )}
+              {row.state === 'inventory' ? (
+                <button type="button" className="btn btn--small" onClick={onInclude}>Add recording</button>
+              ) : (
+                <button type="button" className="btn btn--ghost btn--small" onClick={onExclude}>
+                  {row.state === 'excluded' ? 'Restore recording' : 'Remove recording'}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </article>
@@ -207,7 +237,7 @@ export default function AdminPanel({ issue, signer, pubkey, contributorPubkeys }
       const inventoryMap = new Map(trustedInventory.map((segment) => [segment.event.id, segment]))
       if (generation !== loadGeneration.current) return
       setBaseManifest(manifest)
-      setDraft(manifest?.content ?? initialDraft())
+      setDraft(includeAllChapters(manifest?.content ?? initialDraft(), buildRecordingTargets(issue)))
       setInventory(inventoryMap)
 
       const [trustedTranscripts, loadedProfiles] = await Promise.all([
@@ -223,7 +253,7 @@ export default function AdminPanel({ issue, signer, pubkey, contributorPubkeys }
     } finally {
       if (generation === loadGeneration.current) setLoading(false)
     }
-  }, [contributorPubkeys, initialDraft, issue.issueNumber])
+  }, [contributorPubkeys, initialDraft, issue])
 
   useEffect(() => { void load() }, [load])
 
@@ -237,6 +267,12 @@ export default function AdminPanel({ issue, signer, pubkey, contributorPubkeys }
   const validation = useMemo(() => draft
     ? validateManifestReferences(draft, inventory)
     : { canLock: false, issues: [] }, [draft, inventory])
+  const missingChapterTitles = useMemo(() => draft
+    ? draft.sections
+      .filter((section) => !section.order.some((id) => !section.excluded.includes(id)))
+      .map((section) => section.title)
+    : [], [draft])
+  const everyChapterReady = Boolean(draft && canLockEpisode(draft))
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -265,7 +301,7 @@ export default function AdminPanel({ issue, signer, pubkey, contributorPubkeys }
   }
 
   const handleLock = () => {
-    if (!draft || !editable || dirty || !validation.canLock) return
+    if (!draft || !editable || dirty || !validation.canLock || !everyChapterReady) return
     void save({ ...draft, episodeStatus: 'cutting' }, 'Episode locked for the trusted stitcher.')
   }
 
@@ -304,9 +340,15 @@ export default function AdminPanel({ issue, signer, pubkey, contributorPubkeys }
               <button
                 type="button"
                 className="btn btn--ghost"
-                disabled={dirty || saving || !validation.canLock}
+                disabled={dirty || saving || !validation.canLock || !everyChapterReady}
                 onClick={handleLock}
-                title={dirty ? 'Save changes before locking' : validation.canLock ? 'Lock the verified cut' : 'Resolve active recording issues first'}
+                title={dirty
+                  ? 'Save changes before locking'
+                  : !everyChapterReady
+                    ? 'Record every newsletter chapter before locking'
+                    : validation.canLock
+                      ? 'Lock the verified cut'
+                      : 'Resolve active recording issues first'}
               >
                 Lock for release
               </button>
@@ -321,6 +363,11 @@ export default function AdminPanel({ issue, signer, pubkey, contributorPubkeys }
         </p>
       )}
       {notice && <p className="admin-workspace__notice">{notice}</p>}
+      {missingChapterTitles.length > 0 && (
+        <p className="admin-workspace__banner" role="status">
+          {missingChapterTitles.length} {missingChapterTitles.length === 1 ? 'chapter needs' : 'chapters need'} a recording before release.
+        </p>
+      )}
       {(error || validation.issues.length > 0) && (
         <div className="admin-workspace__error" role="alert">
           {error && <p>{error}</p>}
@@ -349,41 +396,34 @@ export default function AdminPanel({ issue, signer, pubkey, contributorPubkeys }
           const included = chapter.rows.filter((row) => row.state === 'included')
           const notIncluded = chapter.rows.filter((row) => row.state !== 'included')
           return (
-            <section
-              className={`episode-chapter${chapter.sectionExcluded ? ' episode-chapter--excluded' : ''}`}
-              key={`${chapter.id}:${chapter.sectionIndex ?? 'inventory'}`}
-            >
+            <section className="episode-chapter" key={`${chapter.id}:${chapter.sectionIndex ?? 'inventory'}`}>
               <header className="episode-chapter__header">
                 <div>
                   <h3>{chapter.title}</h3>
-                  <span>{included.length} in episode · {notIncluded.length} not in episode</span>
+                  <span>
+                    {included.length === 1 ? '1 recording' : `${included.length} recordings`}
+                    {notIncluded.length > 0 && ` · ${notIncluded.length} available`}
+                  </span>
                 </div>
-                {editable && chapter.sectionIndex !== null && (
-                  <label className="episode-chapter__toggle">
-                    <input
-                      type="checkbox"
-                      checked={!chapter.sectionExcluded}
-                      onChange={() => setDraft(toggleSectionExcluded(draft, chapter.sectionIndex!))}
-                    />
-                    Chapter in episode
-                  </label>
-                )}
               </header>
 
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(event) => handleDragEnd(chapterIndex, event)}>
                 <SortableContext items={included.map((row) => row.segmentId)} strategy={verticalListSortingStrategy}>
                   <div className="episode-chapter__notes">
-                    {included.map((row) => (
+                    {included.map((row, rowIndex) => (
                       <NoteRow
                         key={row.rowKey}
                         row={row}
                         profile={row.segment ? profiles.get(row.segment.event.pubkey) : null}
                         transcript={transcripts.get(row.segmentId)}
                         editable={editable}
-                        sortable={editable && !row.isIntro && !chapter.sectionExcluded}
+                        sortable={editable && !row.isIntro}
+                        canMoveUp={editable && !row.isIntro && rowIndex > (included[0]?.isIntro ? 1 : 0)}
+                        canMoveDown={editable && !row.isIntro && rowIndex < included.length - 1}
                         onInclude={() => {}}
                         onExclude={() => setDraft(toggleSegmentExcluded(draft, chapter.sectionIndex!, row.segmentId))}
-                        onReviewed={() => setDraft(toggleSegmentReviewed(draft, chapter.sectionIndex!, row.segmentId))}
+                        onMoveUp={() => setDraft(moveSectionRecording(draft, chapter.sectionIndex!, row.segmentId, -1))}
+                        onMoveDown={() => setDraft(moveSectionRecording(draft, chapter.sectionIndex!, row.segmentId, 1))}
                       />
                     ))}
                   </div>
@@ -392,7 +432,7 @@ export default function AdminPanel({ issue, signer, pubkey, contributorPubkeys }
 
               {notIncluded.length > 0 && (
                 <div className="episode-chapter__not-in">
-                  <div className="episode-chapter__divider"><span>Not in episode</span></div>
+                  <div className="episode-chapter__divider"><span>Available recordings</span></div>
                   {notIncluded.map((row) => (
                     <NoteRow
                       key={row.rowKey}
@@ -401,6 +441,8 @@ export default function AdminPanel({ issue, signer, pubkey, contributorPubkeys }
                       transcript={transcripts.get(row.segmentId)}
                       editable={editable}
                       sortable={false}
+                      canMoveUp={false}
+                      canMoveDown={false}
                       onInclude={() => {
                         if (row.segment) setDraft(includeInventorySegment(draft, targets, row.segment))
                       }}
@@ -409,11 +451,8 @@ export default function AdminPanel({ issue, signer, pubkey, contributorPubkeys }
                           setDraft(toggleSegmentExcluded(draft, chapter.sectionIndex, row.segmentId))
                         }
                       }}
-                      onReviewed={() => {
-                        if (chapter.sectionIndex !== null) {
-                          setDraft(toggleSegmentReviewed(draft, chapter.sectionIndex, row.segmentId))
-                        }
-                      }}
+                      onMoveUp={() => {}}
+                      onMoveDown={() => {}}
                     />
                   ))}
                 </div>

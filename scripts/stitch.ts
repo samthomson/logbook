@@ -13,6 +13,7 @@
  */
 
 import { SimplePool } from 'nostr-tools/pool'
+import { nip19, type NostrEvent } from 'nostr-tools'
 
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
@@ -31,6 +32,7 @@ import { parseVerifiedSegment, verifyNostrEvent } from './segment-security.ts'
 import { downloadVerifiedBlob } from './stitch-download.ts'
 import { assertLockedSegmentsPresent, assertStitchableManifest, collectLockedSegmentIds, selectActiveSections } from './stitch-state.ts'
 import { latestVerifiedManifest, type ManifestEvent } from './watch-state.ts'
+import { requiredChapterTargets } from './issue-targets.ts'
 import {
   acrossfade,
   assertHasAudioStream,
@@ -121,6 +123,46 @@ async function fetchManifest(issueId: string, pool: SimplePool): Promise<Manifes
   return JSON.parse(event.content) as ManifestContent
 }
 
+async function fetchRequiredChapterIds(
+  issueId: string,
+  manifest: ManifestContent,
+  pool: SimplePool,
+): Promise<string[]> {
+  const issueNumber = manifest.issueNumber ?? Number(issueId.match(/(\d+)$/)?.[1])
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+    throw new Error(`[stitch] Cannot determine newsletter number for ${issueId}`)
+  }
+
+  let identifier = String(issueNumber)
+  try {
+    const decoded = nip19.decode(manifest.issueRef)
+    if (decoded.type === 'naddr') {
+      const address = decoded.data
+      if (address.kind === KINDS.COMPASS_ISSUE && address.pubkey === COMPASS_PUBKEY) {
+        identifier = address.identifier
+      }
+    }
+  } catch {
+    // Older manifests may not have a valid naddr. The issue-number fallback is
+    // deterministic; the fetched newsletter is still signature checked.
+  }
+
+  const candidates = await pool.querySync(DEFAULT_RELAYS, {
+    kinds: [KINDS.COMPASS_ISSUE],
+    authors: [COMPASS_PUBKEY],
+    '#d': [...new Set([identifier, String(issueNumber), issueId])],
+    limit: 20,
+  })
+  const issue = (candidates as NostrEvent[])
+    .filter((event) => event.pubkey === COMPASS_PUBKEY && verifyNostrEvent(event as never))
+    .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))[0]
+  if (!issue) throw new Error(`[stitch] No verified Compass newsletter found for ${issueId}`)
+
+  const targets = requiredChapterTargets(issue.content, issueNumber)
+  if (!targets.length) throw new Error(`[stitch] Newsletter ${issueId} has no recording chapters`)
+  return targets.map((target) => target.id)
+}
+
 async function fetchSegments(
   segmentIds: string[],
   pool: SimplePool,
@@ -173,8 +215,15 @@ async function main(): Promise<void> {
 
   console.log(`[stitch] Fetching manifest for ${issueId}…`)
   const manifest = await fetchManifest(issueId, pool)
+  const force = args.includes('--force')
+  const requiredChapterIds = manifest.episodeStatus === 'cutting' || force
+    ? await fetchRequiredChapterIds(issueId, manifest, pool)
+    : []
 
-  const stitchState = assertStitchableManifest(manifest, { force: args.includes('--force') })
+  const stitchState = assertStitchableManifest(manifest, {
+    force,
+    requiredChapterIds,
+  })
   if (stitchState === 'already-published') {
     console.log('[stitch] Episode already published. Use --force to re-stitch.')
     pool.close(DEFAULT_RELAYS)

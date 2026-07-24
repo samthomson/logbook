@@ -14,29 +14,49 @@ const included: StitchManifestSection = {
 }
 
 test('stitch state requires a cutting manifest and preserves published skip semantics', () => {
-  assert.equal(assertStitchableManifest({ episodeStatus: 'cutting', sections: [] }), 'run')
+  assert.equal(assertStitchableManifest({ episodeStatus: 'cutting', sections: [included] }), 'run')
   assert.equal(assertStitchableManifest({ episodeStatus: 'published', sections: [] }), 'already-published')
-  assert.equal(assertStitchableManifest({ episodeStatus: 'published', sections: [] }, { force: true }), 'run')
+  assert.equal(assertStitchableManifest({ episodeStatus: 'published', sections: [included] }, { force: true }), 'run')
   assert.throws(
     () => assertStitchableManifest({ episodeStatus: 'draft', sections: [] }),
     /not locked\/cutting/,
   )
 })
 
-test('locked segment selection excludes omitted sections and excluded IDs', () => {
-  const sections = [included, { ...included, id: 'hidden', introEventId: 'excluded', order: ['hidden-segment'] }]
+test('release rejects any excluded or empty newsletter chapter', () => {
+  const excludedChapter = { ...included, id: 'hidden', sectionExcluded: true }
+  const legacyExcludedChapter = { ...included, id: 'legacy-hidden', introEventId: 'excluded' }
+  const emptyChapter = { ...included, id: 'empty', order: [], excluded: [] }
+
+  for (const section of [excludedChapter, legacyExcludedChapter, emptyChapter]) {
+    assert.throws(
+      () => assertStitchableManifest({ episodeStatus: 'cutting', sections: [section] }),
+      /Every newsletter chapter must have an active recording/,
+    )
+  }
+})
+
+test('release rejects a required newsletter chapter omitted from the manifest', () => {
+  assert.throws(
+    () => assertStitchableManifest(
+      { episodeStatus: 'cutting', sections: [included] },
+      { requiredChapterIds: ['news', 'missing-chapter'] },
+    ),
+    /missing required chapter: missing-chapter/,
+  )
+})
+
+test('locked segment selection excludes individual omitted recordings', () => {
+  const sections = [included]
   const active = selectActiveSections(sections)
   assert.deepEqual(active.map((section) => section.id), ['news'])
   assert.deepEqual(collectLockedSegmentIds(active), ['segment-a'])
 })
 
-test('active section selection honors explicit exclusion without overloading introEventId', () => {
-  const sections = [
-    included,
-    { ...included, id: 'hidden', introEventId: 'real-intro', sectionExcluded: true },
-  ]
-  assert.deepEqual(selectActiveSections(sections).map((section) => section.id), ['news'])
-  assert.equal(sections[1].introEventId, 'real-intro')
+test('active section selection does not silently honor legacy chapter exclusion', () => {
+  const legacy = { ...included, id: 'hidden', introEventId: 'real-intro', sectionExcluded: true }
+  assert.deepEqual(selectActiveSections([included, legacy]).map((section) => section.id), ['news', 'hidden'])
+  assert.equal(legacy.introEventId, 'real-intro')
 })
 
 test('missing or rejected segments fail a locked cut before any media work', () => {

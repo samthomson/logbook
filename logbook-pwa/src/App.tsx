@@ -84,7 +84,7 @@ export default function App() {
         .catch(() => setRestoreError('Your browser signer could not restore this session.'))
         .finally(() => setRestoringAuth(false))
     } else if ((saved.method === 'amber' || saved.method === 'bunker') && saved.session) {
-      withSignerTimeout(restoreSession(saved.session, saved.method), 'Amber session restoration')
+      withSignerTimeout(restoreSession(saved.session, saved.method, saved.pubkey), 'Amber session restoration')
         .then((state) => { setAuth(state); setView('timeline') })
         .catch(() => setRestoreError('Amber could not restore this session. Reopen Amber, then sign in again.'))
         .finally(() => setRestoringAuth(false))
@@ -160,7 +160,9 @@ export default function App() {
           localStorage.removeItem(AUTH_SESSION_KEY)
           saveRestorableAuthSession(
             sessionStorage,
-            ((method === 'amber' || method === 'bunker') && state.session ? { method, session: state.session } : null),
+            ((method === 'amber' || method === 'bunker') && state.session
+              ? { method, session: state.session, pubkey: state.pubkey }
+              : null),
           )
         }
         setAuth(state)

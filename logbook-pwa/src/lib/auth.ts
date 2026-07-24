@@ -121,7 +121,11 @@ export function startAmberConnect(): AmberConnectHandle {
  * answered.  The signer reconnects lazily on the first operation that needs a
  * signature.
  */
-export async function restoreSession(nbunksec: string, method: 'amber' | 'bunker'): Promise<AuthState> {
+export async function restoreSession(
+  nbunksec: string,
+  method: 'amber' | 'bunker',
+  accountPubkey?: string,
+): Promise<AuthState> {
   wireNip46Transport()
   const { remote, clientKey, relays, bunkerSecret } = NostrConnectSigner.parseNbunksec(nbunksec)
   const signer = new NostrConnectSigner({
@@ -131,7 +135,10 @@ export async function restoreSession(nbunksec: string, method: 'amber' | 'bunker
     signer: new PrivateKeySigner(hexToBytes(clientKey)),
     bunkerSecret,
   })
-  return { pubkey: remote, method, signer: signer as unknown as NostrSigner, session: nbunksec }
+  const pubkey = accountPubkey && /^[0-9a-f]{64}$/i.test(accountPubkey)
+    ? accountPubkey.toLowerCase()
+    : remote
+  return { pubkey, method, signer: signer as unknown as NostrSigner, session: nbunksec }
 }
 
 // ─── NIP-46 Bunker ────────────────────────────────────────────────────────────

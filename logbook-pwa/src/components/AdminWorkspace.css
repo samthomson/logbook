@@ -1,0 +1,270 @@
+/* Mobile-first admin episode workspace. Loaded with AdminPanel after App.css. */
+.admin-workspace {
+  width: 100%;
+  max-width: 860px;
+  min-width: 0;
+  margin: 0 auto;
+  padding: 16px 16px 88px;
+  overflow-x: clip;
+  color: #f5f5f5;
+  background: #000;
+}
+.admin-workspace__toolbar {
+  position: static;
+  display: flex;
+  min-width: 0;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin: 0 0 18px;
+  padding: 0 0 14px;
+  border-bottom: 1px solid #242424;
+  background: #000;
+  backdrop-filter: none;
+}
+.admin-workspace__toolbar > div:first-child { min-width: 0; }
+.admin-workspace__toolbar h2 {
+  overflow: hidden;
+  margin: 3px 0 5px;
+  font-size: clamp(19px, 4vw, 25px);
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  color: #f5f5f5;
+}
+.admin-workspace__summary { color: #929292; }
+.admin-workspace__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+.admin-workspace__banner,
+.admin-workspace__notice,
+.admin-workspace__error { max-width: 100%; overflow-wrap: anywhere; }
+.admin-workspace__issue { min-width: 0; }
+.admin-workspace__issue span { min-width: 0; overflow-wrap: anywhere; }
+.episode-chapters { min-width: 0; gap: 12px; }
+.episode-chapter {
+  min-width: 0;
+  overflow: hidden;
+  border-color: #2a2a2a;
+  border-radius: 12px;
+  background: #050505;
+}
+.episode-chapter__header {
+  display: block;
+  min-width: 0;
+  min-height: 0;
+  padding: 13px 14px 11px;
+  background: #050505;
+}
+.episode-chapter__header h3 {
+  margin: 0 0 3px;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.3;
+}
+.episode-chapter__header span { font-size: 11px; }
+.episode-chapter__notes,
+.episode-chapter__not-in { min-width: 0; }
+.episode-chapter__divider { padding: 11px 14px 7px; }
+.episode-note {
+  min-width: 0;
+  overflow: hidden;
+}
+.episode-note__line {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 58px;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+}
+.episode-note__drag {
+  display: grid;
+  width: 48px;
+  min-width: 48px;
+  height: auto;
+  min-height: 58px;
+  place-items: center;
+  border-right: 1px solid #202020;
+  color: #777;
+  touch-action: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.episode-note__drag span { font-size: 20px; line-height: 1; }
+.episode-note__drag:not(:disabled):active {
+  color: #fff;
+  cursor: grabbing;
+  background: #111;
+}
+.episode-note__summary {
+  display: flex;
+  width: calc(100% - 48px);
+  min-width: 0;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 8px 10px;
+}
+.episode-note__summary:active { background: #111; }
+.episode-note__avatar {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #373737;
+  border-radius: 50%;
+  color: #ddd;
+  background: #151515;
+  font-size: 12px;
+  font-weight: 700;
+}
+.episode-note__avatar img { width: 100%; height: 100%; object-fit: cover; }
+.episode-note__identity {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 3px;
+}
+.episode-note__author {
+  overflow: hidden;
+  color: #eee;
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.episode-note__meta {
+  overflow: hidden;
+  color: #858585;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.episode-note__badges { display: flex; flex: 0 0 auto; gap: 4px; }
+.episode-note__chevron { flex: 0 0 auto; margin-left: 0; color: #777; font-size: 16px; }
+.episode-note__details {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr);
+  gap: 14px;
+  padding: 12px 14px 14px 62px;
+  border-top: 1px solid #242424;
+  background: #050505;
+}
+.episode-note__player { display: grid; min-width: 0; align-content: start; gap: 7px; }
+.episode-note__player > span,
+.episode-note__detail-label {
+  display: block;
+  margin-bottom: 6px;
+  color: #8b8b8b;
+  font: 700 9px/1.2 monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.episode-note__details audio {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: 38px;
+}
+.episode-note__transcript {
+  width: 100%;
+  max-height: 180px;
+  padding: 10px 11px;
+  border-radius: 6px;
+  color: #c5c5c5;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.episode-note__empty { overflow-wrap: anywhere; }
+.episode-note__controls {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 2px;
+}
+.episode-note__move { display: flex; min-width: 0; align-items: center; gap: 7px; }
+.episode-note__move > span {
+  color: #777;
+  font: 700 9px/1 monospace;
+  text-transform: uppercase;
+}
+.admin-workspace__access {
+  overflow: hidden;
+  border-color: #292929;
+  border-radius: 10px;
+}
+
+@media (max-width: 680px) {
+  .app-header { min-width: 0; gap: 5px; padding-inline: 8px; }
+  .app-title { display: none; }
+  .app-nav {
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .app-nav::-webkit-scrollbar { display: none; }
+  .app-nav .btn,
+  .app-logout { flex: 0 0 auto; padding-inline: 8px; }
+  .admin-workspace {
+    max-width: 100vw;
+    padding: 14px 10px calc(108px + env(safe-area-inset-bottom));
+  }
+  .admin-workspace__toolbar { display: block; margin: 0 0 14px; padding: 0 0 13px; }
+  .admin-workspace__toolbar h2 { white-space: normal; }
+  .admin-workspace__actions {
+    position: fixed;
+    right: 0;
+    bottom: var(--keyboard-offset, 0px);
+    left: 0;
+    z-index: 90;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+    max-width: none;
+    padding: 10px max(10px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+    border-top: 1px solid #292929;
+    background: rgb(0 0 0 / .97);
+    backdrop-filter: blur(10px);
+  }
+  .admin-workspace__actions .btn {
+    min-width: 0;
+    min-height: 44px;
+    padding-inline: 8px;
+    white-space: normal;
+  }
+  .episode-chapters { gap: 10px; }
+  .episode-chapter { border-radius: 10px; }
+  .episode-note__line { flex-wrap: nowrap; }
+  .episode-note__summary { min-width: 0; gap: 8px; padding-right: 10px; }
+  .episode-note__badges .episode-badge:not(.episode-badge--new):not(.episode-badge--warning) { display: none; }
+  .episode-note__details {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 13px;
+    padding: 13px 12px 14px;
+  }
+  .episode-note__controls { display: grid; grid-template-columns: 1fr; }
+  .episode-note__move { display: grid; grid-template-columns: auto 1fr 1fr; }
+  .episode-note__move .btn,
+  .episode-note__controls > .btn { min-width: 0; min-height: 42px; padding-inline: 7px; }
+  .episode-note__controls > .btn { width: 100%; }
+  .admin-workspace__issue { align-items: flex-start; flex-direction: column; }
+}
+
+@media (max-width: 380px) {
+  .episode-note__avatar { display: none; }
+  .episode-note__meta { white-space: normal; }
+  .episode-note__badges { display: none; }
+  .episode-status { padding-inline: 6px; }
+}

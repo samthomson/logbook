@@ -54,6 +54,15 @@ describe('readRestorableAuthSession', () => {
     expect(storage.getItem()).toBeNull()
   })
 
+  it('writes the public account identity with a tab-scoped Amber session', () => {
+    const storage = storageWith(null)
+    const saved = { method: 'amber' as const, session: 'nbunksec1safe-session', pubkey: '77'.repeat(32) }
+
+    saveRestorableAuthSession(storage, saved)
+
+    expect(readRestorableAuthSession(storage)).toEqual(saved)
+  })
+
   it('persists only a valid selected issue number independently of identity', () => {
     const storage = storageWith(null)
     saveSelectedIssueNumber(storage, 31)

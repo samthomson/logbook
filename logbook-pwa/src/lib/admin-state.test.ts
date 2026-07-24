@@ -6,6 +6,8 @@ import {
   includeSegmentInSection,
   addSegmentSection,
   canLockEpisode,
+  includeAllChapters,
+  moveSectionRecording,
   toggleSectionExcluded,
   toggleSegmentExcluded,
   toggleSegmentReviewed,
@@ -48,12 +50,50 @@ describe('admin manifest invariants', () => {
     expect(migrated.sections[0].sectionExcluded).toBe(false)
   })
 
+  it('restores every newsletter chapter without mutating the saved revision', () => {
+    const saved = manifest()
+    saved.sections = [
+      { ...saved.sections[0], sectionExcluded: true },
+      { ...saved.sections[0], id: 'sec-legacy-1', title: 'Legacy', introEventId: 'excluded', sectionExcluded: undefined },
+    ]
+
+    const draft = includeAllChapters(saved, [
+      { id: saved.sections[0].id, title: saved.sections[0].title },
+      { id: 'sec-required-1', title: 'Required chapter' },
+    ])
+
+    expect(draft.sections.map((section) => section.sectionExcluded)).toEqual([false, false, false])
+    expect(draft.sections[1]).toEqual({
+      id: 'sec-required-1',
+      title: 'Required chapter',
+      introEventId: null,
+      sectionExcluded: false,
+      order: [],
+      excluded: [],
+      reviewed: [],
+    })
+    expect(draft.sections[2].introEventId).toBeNull()
+    expect(saved.sections[0].sectionExcluded).toBe(true)
+    expect(saved.sections[1].introEventId).toBe('excluded')
+  })
+
   it('keeps the intro pinned at position zero during reordering', () => {
     const next = reorderSection(manifest(), 0, 'intro-event', 'segment-b')
     expect(next.sections[0].order).toEqual(['intro-event', 'segment-a', 'segment-b'])
 
     const moved = reorderSection(manifest(), 0, 'segment-b', 'segment-a')
     expect(moved.sections[0].order).toEqual(['intro-event', 'segment-b', 'segment-a'])
+  })
+
+  it('moves recordings with mobile-friendly step controls while keeping the intro pinned', () => {
+    expect(moveSectionRecording(manifest(), 0, 'segment-b', -1).sections[0].order)
+      .toEqual(['intro-event', 'segment-b', 'segment-a'])
+    expect(moveSectionRecording(manifest(), 0, 'segment-a', 1).sections[0].order)
+      .toEqual(['intro-event', 'segment-b', 'segment-a'])
+    expect(moveSectionRecording(manifest(), 0, 'intro-event', 1).sections[0].order)
+      .toEqual(['intro-event', 'segment-a', 'segment-b'])
+    expect(moveSectionRecording(manifest(), 0, 'segment-b', 1).sections[0].order)
+      .toEqual(['intro-event', 'segment-a', 'segment-b'])
   })
 
   it('permits moving to index zero when the section has no pinned intro', () => {
@@ -83,6 +123,27 @@ describe('admin manifest invariants', () => {
   it('refuses to lock an empty episode for export', () => {
     expect(canLockEpisode(manifest())).toBe(true)
     expect(canLockEpisode({ ...manifest(), sections: [{ ...manifest().sections[0], order: [] }] })).toBe(false)
+  })
+
+  it('refuses to lock until every newsletter chapter has an active recording', () => {
+    const withEmptyChapter = manifest()
+    withEmptyChapter.sections.push({
+      ...withEmptyChapter.sections[0],
+      id: 'sec-empty-1',
+      title: 'Empty chapter',
+      introEventId: null,
+      order: [],
+    })
+    expect(canLockEpisode(withEmptyChapter)).toBe(false)
+
+    const withExcludedChapter = manifest()
+    withExcludedChapter.sections.push({
+      ...withExcludedChapter.sections[0],
+      id: 'sec-excluded-1',
+      title: 'Excluded chapter',
+      sectionExcluded: true,
+    })
+    expect(canLockEpisode(withExcludedChapter)).toBe(false)
   })
 
   it('round-trips excluded segments and reviewed markers immutably', () => {
