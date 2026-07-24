@@ -14,7 +14,7 @@
  * notice instead of an editor that would silently no-op.
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import type { NostrSigner } from '../types/nostr'
 import {
   D_STANDING, D_ADMINS, D_ISSUE_WL, COMPASS_PUBKEY,
@@ -27,6 +27,7 @@ import {
   type WhitelistEntry,
 } from '../lib/whitelist'
 import { nip19 } from 'nostr-tools'
+import { fetchProfiles, type Profile } from '../lib/profiles'
 
 interface Props {
   issueNumber: number
@@ -44,10 +45,11 @@ const D_TAG: Record<ListKind, (n: number) => string> = {
 }
 
 export default function WhitelistPanel({ issueNumber, issueMarkdown, signer, pubkey }: Props) {
-  const isCompass = pubkey === COMPASS_PUBKEY
+  const isCompass = pubkey.toLowerCase() === COMPASS_PUBKEY.toLowerCase()
   const [lists, setLists] = useState<Record<ListKind, WhitelistEntry[]>>({
     issue: [], standing: [], admins: [],
   })
+  const [profiles, setProfiles] = useState<Map<string, Profile>>(new Map())
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<ListKind | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -104,11 +106,31 @@ export default function WhitelistPanel({ issueNumber, issueMarkdown, signer, pub
   }, [lists, save])
 
   // Suggested: mentioned in the newsletter, not on any list yet.
-  const whitelisted = new Set([
+  const whitelisted = useMemo(() => new Set([
     ...lists.issue.map((e) => e.pubkey),
     ...lists.standing.map((e) => e.pubkey),
-  ])
-  const suggested = extractMentionedPubkeys(issueMarkdown).filter((pk) => !whitelisted.has(pk))
+  ]), [lists.issue, lists.standing])
+  const suggested = useMemo(
+    () => extractMentionedPubkeys(issueMarkdown).filter((pk) => !whitelisted.has(pk)),
+    [issueMarkdown, whitelisted],
+  )
+
+  // Resolve every displayed identity from kind-0 metadata in one batch. Names
+  // stored in a whitelist are advisory; profiles are the live display identity.
+  useEffect(() => {
+    const pubkeys = [...new Set([
+      ...lists.issue.map((entry) => entry.pubkey),
+      ...lists.standing.map((entry) => entry.pubkey),
+      ...lists.admins.map((entry) => entry.pubkey),
+      ...suggested,
+    ])]
+    if (!pubkeys.length) return
+    let cancelled = false
+    void fetchProfiles(pubkeys).then((fetched) => {
+      if (!cancelled) setProfiles((previous) => new Map([...previous, ...fetched]))
+    })
+    return () => { cancelled = true }
+  }, [lists, suggested])
 
   if (loading) {
     return <div className="wl-panel"><div className="spinner" aria-label="Loading whitelist" /></div>
@@ -134,7 +156,7 @@ export default function WhitelistPanel({ issueNumber, issueMarkdown, signer, pub
           <ul className="wl-list">
             {suggested.map((pk) => (
               <li key={pk} className="wl-row">
-                <span className="wl-row__npub" title={pk}>{nip19.npubEncode(pk).slice(0, 20)}…</span>
+                <WhitelistIdentity pubkey={pk} profile={profiles.get(pk)} />
                 <button
                   className="btn btn--xs btn--primary"
                   disabled={!isCompass || saving !== null}
@@ -161,6 +183,7 @@ export default function WhitelistPanel({ issueNumber, issueMarkdown, signer, pub
         title={`This issue (#${issueNumber})`}
         kind="issue"
         entries={lists.issue}
+        profiles={profiles}
         input={newInput.issue}
         saving={saving === 'issue'}
         editable={isCompass}
@@ -173,6 +196,7 @@ export default function WhitelistPanel({ issueNumber, issueMarkdown, signer, pub
         title="Standing roster (all issues)"
         kind="standing"
         entries={lists.standing}
+        profiles={profiles}
         input={newInput.standing}
         saving={saving === 'standing'}
         editable={isCompass}
@@ -185,6 +209,7 @@ export default function WhitelistPanel({ issueNumber, issueMarkdown, signer, pub
         title="Admins"
         kind="admins"
         entries={lists.admins}
+        profiles={profiles}
         input={newInput.admins}
         saving={saving === 'admins'}
         editable={isCompass}
@@ -203,6 +228,7 @@ interface SectionProps {
   title: string
   kind: ListKind
   entries: WhitelistEntry[]
+  profiles: ReadonlyMap<string, Profile>
   input: string
   saving: boolean
   editable: boolean
@@ -213,7 +239,7 @@ interface SectionProps {
 }
 
 function WhitelistSection({
-  title, entries, input, saving, editable, note, onInput, onAdd, onRemove,
+  title, entries, profiles, input, saving, editable, note, onInput, onAdd, onRemove,
 }: SectionProps) {
   return (
     <section className="wl-section">
@@ -225,9 +251,7 @@ function WhitelistSection({
         <ul className="wl-list">
           {entries.map((e) => (
             <li key={e.pubkey} className="wl-row">
-              <span className="wl-row__npub" title={e.pubkey}>
-                {e.name ? `${e.name} — ` : ''}{nip19.npubEncode(e.pubkey).slice(0, 20)}…
-              </span>
+              <WhitelistIdentity pubkey={e.pubkey} profile={profiles.get(e.pubkey)} fallbackName={e.name} />
               <button
                 className="btn btn--xs btn--ghost"
                 disabled={!editable || saving}
@@ -260,5 +284,30 @@ function WhitelistSection({
         </div>
       )}
     </section>
+  )
+}
+
+function WhitelistIdentity({
+  pubkey,
+  profile,
+  fallbackName,
+}: {
+  pubkey: string
+  profile?: Profile
+  fallbackName?: string
+}) {
+  const name = profile?.name ?? fallbackName ?? null
+  const npub = `${nip19.npubEncode(pubkey).slice(0, 16)}…`
+  const initials = (name ?? pubkey.slice(0, 2)).slice(0, 2).toUpperCase()
+  return (
+    <span className="wl-identity" title={pubkey}>
+      <span className="wl-identity__avatar" aria-hidden="true">
+        {profile?.picture ? <img src={profile.picture} alt="" loading="lazy" /> : initials}
+      </span>
+      <span className="wl-identity__text">
+        {name && <strong>{name}</strong>}
+        <code>{npub}</code>
+      </span>
+    </span>
   )
 }

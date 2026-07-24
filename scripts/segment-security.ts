@@ -44,15 +44,20 @@ export function getTrustedBlobCandidates(
     throw new Error('Blob URL is invalid')
   }
   if (source.protocol !== 'https:') throw new Error('Blob URL must use HTTPS')
-  if (source.pathname !== `/${sha256}`) {
-    throw new Error('Blob URL path must be the declared SHA-256 hash')
+  // Blossom servers commonly retain a media extension (for example `.webm`)
+  // after the content-addressed hash. Preserve only a narrow safe suffix when
+  // rebuilding the URL; never retain an arbitrary relay-provided path.
+  const pathMatch = source.pathname.match(new RegExp(`^/${sha256}(\\.[a-z0-9]{1,10})?$`))
+  if (!pathMatch) {
+    throw new Error('Blob URL path must be the declared SHA-256 hash with an optional safe extension')
   }
+  const extension = pathMatch[1] ?? ''
 
   const candidates = new Set<string>()
   for (const server of servers) {
     const base = new URL(server)
     if (base.protocol !== 'https:') throw new Error(`Configured Blossom server must use HTTPS: ${server}`)
-    candidates.add(new URL(`/${sha256}`, base).toString())
+    candidates.add(new URL(`/${sha256}${extension}`, base).toString())
   }
   if (!candidates.size) throw new Error('No configured Blossom servers')
   return [...candidates]
@@ -100,7 +105,7 @@ export function parseVerifiedSegment(
     !Number.isFinite(candidate.duration) ||
     candidate.duration <= 0 ||
     candidate.duration > MAX_SEGMENT_SECONDS ||
-    !candidate.mime.startsWith('audio/')
+    !(candidate.mime.startsWith('audio/') || candidate.mime === 'video/webm')
   ) {
     throw new Error('Segment audio metadata is invalid')
   }

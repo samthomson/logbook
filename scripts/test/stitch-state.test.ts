@@ -30,6 +30,15 @@ test('locked segment selection excludes omitted sections and excluded IDs', () =
   assert.deepEqual(collectLockedSegmentIds(active), ['segment-a'])
 })
 
+test('active section selection honors explicit exclusion without overloading introEventId', () => {
+  const sections = [
+    included,
+    { ...included, id: 'hidden', introEventId: 'real-intro', sectionExcluded: true },
+  ]
+  assert.deepEqual(selectActiveSections(sections).map((section) => section.id), ['news'])
+  assert.equal(sections[1].introEventId, 'real-intro')
+})
+
 test('missing or rejected segments fail a locked cut before any media work', () => {
   const locked = { ...included, excluded: [] }
   assert.throws(

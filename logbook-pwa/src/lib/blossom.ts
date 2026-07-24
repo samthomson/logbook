@@ -26,6 +26,8 @@ import { BLOSSOM_SERVERS, KINDS } from '../config'
 import type { BlobDescriptor, NostrSigner, NostrEvent } from '../types/nostr'
 import { sha256Blob, now } from './utils'
 import { fetchRaw, HttpError } from './http'
+import { SignerTimeoutError, withSignerTimeout } from './signer-timeout'
+import { validateTrustedBlobUrl } from './blob-trust'
 
 const AUTH_EXPIRY_SECONDS = 60 * 5 // 5 minutes
 const MIN_BLOB_BYTES = 100 // servers content-sniff; sub-100B blobs always reject
@@ -76,10 +78,11 @@ export async function uploadBlob(
   for (const server of primaries) {
     onProgress?.(`uploading to ${new URL(server).host}`)
     try {
-      descriptor = await uploadToPrimary(blob, sha256, server, signer)
+      descriptor = await uploadToPrimary(blob, sha256, server, signer, onProgress)
       primaryUsed = server
       break
     } catch (err) {
+      if (err instanceof SignerTimeoutError) throw err
       const msg = err instanceof Error ? err.message : String(err)
       errors.push(`${new URL(server).host}: ${msg}`)
       console.warn(`Blossom upload to ${server} failed, trying next:`, msg)
@@ -120,6 +123,7 @@ async function uploadToPrimary(
   sha256: string,
   serverUrl: string,
   signer: NostrSigner,
+  onProgress?: (stage: string) => void,
 ): Promise<BlobDescriptor> {
   const base = serverUrl.replace(/\/$/, '')
 
@@ -128,6 +132,7 @@ async function uploadToPrimary(
   let lastErr: unknown
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
+      onProgress?.(`Awaiting Amber signature for ${new URL(serverUrl).host}`)
       const authEvent = await makeBlossomAuth(sha256, 'upload', signer)
       const res = await fetchRaw(`${base}/upload`, {
         method: 'PUT',
@@ -147,22 +152,13 @@ async function uploadToPrimary(
       }
 
       const data = (await res.json()) as Record<string, unknown>
-      const descriptor = normalizeDescriptor(data, blob)
-
-      // Integrity: the server must report the same sha256 we uploaded. A
-      // mismatch means the stored bytes differ — reject rather than publish a
-      // segment pointing at corrupt audio.
-      if (descriptor.sha256 && descriptor.sha256 !== sha256) {
-        throw new HttpError(
-          `integrity mismatch: server reported sha256 ${descriptor.sha256.slice(0, 12)}… ` +
-          `expected ${sha256.slice(0, 12)}…`,
-        )
-      }
-      // Trust our locally-computed hash regardless of what the server echoed.
-      descriptor.sha256 = sha256
+      const descriptor = validateUploadDescriptor(data, blob, sha256, [serverUrl])
       return descriptor
     } catch (err) {
       lastErr = err
+      // A disconnected NIP-46 signer cannot be repaired by retrying the same
+      // server. Return the saved draft promptly so the user can reopen Amber.
+      if (err instanceof SignerTimeoutError) break
       // Don't retry client errors (4xx) — they won't succeed on a retry.
       if (err instanceof HttpError && err.status !== undefined && err.status < 500) break
       if (attempt < 3) await new Promise((r) => setTimeout(r, 400 * 2 ** (attempt - 1)))
@@ -171,15 +167,28 @@ async function uploadToPrimary(
   throw lastErr instanceof Error ? lastErr : new HttpError(String(lastErr))
 }
 
-/** Coerce a raw server JSON response into a BlobDescriptor. */
-function normalizeDescriptor(data: Record<string, unknown>, blob: Blob): BlobDescriptor {
+/** Validate an untrusted Blossom upload response against local bytes/config. */
+export function validateUploadDescriptor(
+  data: Record<string, unknown>,
+  blob: Blob,
+  expectedSha256: string,
+  trustedServers: readonly string[],
+): BlobDescriptor {
   const url = data.url as string | undefined
   if (!url || typeof url !== 'string') {
     throw new HttpError('malformed descriptor: missing url')
   }
+  const reportedHash = typeof data.sha256 === 'string' ? data.sha256 : ''
+  if (reportedHash && reportedHash !== expectedSha256) {
+    throw new HttpError(
+      `integrity mismatch: server reported sha256 ${reportedHash.slice(0, 12)}… ` +
+      `expected ${expectedSha256.slice(0, 12)}…`,
+    )
+  }
+  validateTrustedBlobUrl(url, expectedSha256, trustedServers)
   return {
     url,
-    sha256: (data.sha256 as string) ?? '',
+    sha256: expectedSha256,
     size: (data.size as number) ?? blob.size,
     mime: (data.type ?? data.mime ?? blob.type) as string,
     uploaded: (data.uploaded as number | undefined) ?? now(),
@@ -237,7 +246,7 @@ async function makeBlossomAuth(
   signer: NostrSigner,
 ): Promise<NostrEvent> {
   const expiration = now() + AUTH_EXPIRY_SECONDS
-  const pubkey = await signer.getPublicKey()
+  const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Amber identity request')
   const unsigned = {
     kind: KINDS.BLOSSOM_AUTH,
     created_at: now(),
@@ -249,7 +258,7 @@ async function makeBlossomAuth(
     content: `${t} ${sha256}`,
     pubkey,
   }
-  return signer.signEvent(unsigned)
+  return withSignerTimeout(signer.signEvent(unsigned), 'Amber Blossom authorization')
 }
 
 /** Delete a blob from a server (best-effort). */

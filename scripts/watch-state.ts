@@ -55,6 +55,16 @@ export function latestCuttingManifests(
     .sort((a, b) => a.tags.find((tag) => tag[0] === 'd')![1].localeCompare(b.tags.find((tag) => tag[0] === 'd')![1]))
 }
 
+export function latestVerifiedManifest(
+  events: ManifestEvent[],
+  issueId: string,
+  { expectedPubkey, verify }: ManifestSelectionOptions,
+): ManifestEvent | null {
+  return events
+    .filter((event) => manifestDTag(event) === issueId && event.pubkey === expectedPubkey && verify(event))
+    .sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0) || b.id.localeCompare(a.id))[0] ?? null
+}
+
 function issueNumber(event: TaggedEvent): number | null {
   const dTag = event.tags.find((tag) => tag[0] === 'd')?.[1] ?? ''
   const match = dTag.match(/(\d+)$/)

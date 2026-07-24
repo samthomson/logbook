@@ -17,6 +17,8 @@ import type {
 import { parseManifestContent } from '../types/nostr'
 import { now } from './utils'
 import { publishToRelays, filterVerified } from './relay'
+import { selectNewestAddressableRevision } from './manifest-revision'
+import { withSignerTimeout } from './signer-timeout'
 
 
 /** Fetch the manifest for a given issue number. Returns null if not found. */
@@ -31,23 +33,14 @@ export async function fetchManifest(
     kinds: [KINDS.MANIFEST],
     authors: [COMPASS_PUBKEY],  // REQUIRED — never omit
     '#d': [issueId],
-    limit: 1,
+    limit: 50,
   })
 
-  if (!events.length) return null
-
-  const event = events[0]
-
-  // Re-verify pubkey — the relay filter protects us, but client must check too
-  if (event.pubkey !== COMPASS_PUBKEY) {
-    console.error('Manifest pubkey mismatch — discarding spoofed manifest', event)
-    return null
-  }
-  // Cryptographic verification — a malicious relay can spoof the pubkey field
-  if (!filterVerified([event]).length) {
-    console.error('Manifest failed signature verification — discarding', event.id)
-    return null
-  }
+  const event = selectNewestAddressableRevision(
+    filterVerified(events).filter((candidate) => candidate.pubkey === COMPASS_PUBKEY),
+    issueId,
+  )
+  if (!event) return null
 
   return parseManifestEvent(event)
 }
@@ -82,7 +75,7 @@ export async function updateManifest(
   relays: string[] = DEFAULT_RELAYS,
 ): Promise<NostrEvent> {
   const issueId = `${ISSUE_PREFIX}-${issueNumber}`
-  const pubkey = await signer.getPublicKey()
+  const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Amber identity request')
 
   // Only Compass pubkey should publish manifests
   if (pubkey !== COMPASS_PUBKEY) {
@@ -101,7 +94,7 @@ export async function updateManifest(
   }
 
   if (relays.length === 0) throw new Error('No relays configured')
-  const event = await signer.signEvent(unsigned)
+  const event = await withSignerTimeout(signer.signEvent(unsigned), 'Amber manifest signing')
   await publishToRelays(event, relays)
   return event
 }
@@ -138,6 +131,7 @@ export function buildInitialManifest(
         id: s.id,
         title: s.title,
         introEventId: null,
+        sectionExcluded: false,
         order: [],
         excluded: [],
         reviewed: [],

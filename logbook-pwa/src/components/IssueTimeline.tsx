@@ -9,6 +9,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import VoiceBubble from './VoiceBubble'
+import UploadBubble from './UploadBubble'
 import InlineRecorder, { type InlineRecordingResult } from './InlineRecorder'
 import SectionExcerpt from './SectionExcerpt'
 import type {
@@ -19,17 +20,18 @@ import type {
   NostrSigner,
   NostrEvent,
 } from '../types/nostr'
-import { fetchSegmentsForIssue, parseSegment, publishSegment, fetchTranscripts } from '../lib/segment'
+import { fetchSegmentsForIssue, parseSegment, publishSegment, fetchTranscripts, selectTrustedSegmentEvents } from '../lib/segment'
 import { extractMentionedNpubs } from './SectionExcerpt'
 import { uploadBlob } from '../lib/blossom'
 import { isLocalTranscriptionEnabled, transcribeAndPublish } from '../lib/transcription'
+import { collectCommunityNotes } from '../lib/community-notes'
 import { computeSeedOrder } from '../lib/ordering'
 import { PlaybackProvider } from '../lib/playback'
 import { fetchProfiles, type Profile } from '../lib/profiles'
 import { getPool } from '../lib/pool'
 import { deleteDraft, listDrafts, saveDraft, type RecordingDraft } from '../lib/drafts'
 import type { Filter } from 'nostr-tools'
-import { DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from '../config'
+import { BLOSSOM_SERVERS, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from '../config'
 
 interface Props {
   issue: CompassIssue
@@ -193,9 +195,10 @@ export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }
       { kinds: [KINDS.SEGMENT], '#t': [issueId], since: mountedAtRef.current } as Filter,
       {
         onevent(event: NostrEvent) {
-          if (knownIdsRef.current.has(event.id)) return
-          knownIdsRef.current.add(event.id)
-          const seg = parseSegment(event)
+          const trustedEvent = selectTrustedSegmentEvents([event], issueId, BLOSSOM_SERVERS)[0]
+          if (!trustedEvent || knownIdsRef.current.has(trustedEvent.id)) return
+          knownIdsRef.current.add(trustedEvent.id)
+          const seg = parseSegment(trustedEvent)
           if (!seg) return
           const destId = targetIds.has(seg.sectionId) ? seg.sectionId : allTargets[0]?.id
           if (!destId) return
@@ -263,18 +266,21 @@ export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }
           descriptor,
           updatedAt: Date.now(),
         }
+        // Render the in-place upload bubble before IndexedDB finishes so stop
+        // never leaves a visual gap on slower devices.
+        setPendingDraft(draft)
         try {
           await saveDraft(draft)
-          setPendingDraft(draft)
         } catch (error) {
           // Storage can be unavailable in private browsing; publishing remains
           // available, but the user gets an explicit warning if it later fails.
           console.warn('Unable to persist recording draft:', error)
         }
       }
-      await persistDraft(pendingRef.current?.descriptor ?? null)
       setPublishing(true)
       setPublishError(null)
+      setUploadStage('Preparing upload')
+      await persistDraft(pendingRef.current?.descriptor ?? null)
       try {
         // Reuse a prior attempt's descriptor if the upload already succeeded —
         // otherwise the blob gets re-uploaded and the old one is orphaned.
@@ -290,6 +296,7 @@ export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }
           }
         }
         pendingRef.current = { target, result, descriptor, draftId }
+        setUploadStage('Publishing to relays')
 
         const event = await publishSegment({
           signer,
@@ -384,6 +391,11 @@ export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }
     if (id) void deleteDraft(id).catch((error) => console.warn('Unable to discard recording draft:', error))
   }, [])
 
+  const communityNotes = useMemo(
+    () => collectCommunityNotes([...sections.values()].map((state) => state.segments), myPubkey),
+    [myPubkey, sections],
+  )
+
   const queue = useMemo(() => {
     const out: Segment[] = []
     for (const target of allTargets) {
@@ -421,20 +433,29 @@ export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }
           </h1>
           {leadProse && <SectionExcerpt section={{ id: '__lead', title: '', items: [{ title: '', body: leadProse }] }} />}
         </header>
-        {publishing && (
-          <div className="timeline__publish-status">
-            {uploadStage ? `Uploading… ${uploadStage}` : 'Publishing recording…'}
-          </div>
-        )}
         {publishError && (
           <div className="timeline__publish-error" role="alert">{publishError}</div>
         )}
-        {pendingDraft && !publishing && (
-          <div className="timeline__publish-status" role="status">
-            A recording from {new Date(pendingDraft.updatedAt).toLocaleString()} is saved on this device.
-            <button type="button" onClick={retryPendingDraft}>Resume publish</button>
-            <button type="button" onClick={discardPendingDraft}>Discard</button>
-          </div>
+        {communityNotes.length > 0 && (
+          <section className="timeline__group timeline__community" aria-label="Voice notes from other contributors">
+            <h2 className="timeline__group-title">Other contributors · {communityNotes.length} notes</h2>
+            <div className="timeline__notes">
+              {communityNotes.map((seg) => (
+                <div key={seg.event.id} className="timeline__note">
+                  <VoiceBubble
+                    segment={seg}
+                    profile={profiles.get(seg.event.pubkey)}
+                    transcript={transcripts.get(seg.event.id)}
+                    onReply={isWhitelisted ? handleReply : undefined}
+                    isWhitelisted={isWhitelisted}
+                    isNew={newSegmentIds.has(seg.event.id)}
+                    isOwn={false}
+                    justPublished={justPublished.has(seg.event.id)}
+                  />
+                </div>
+              ))}
+            </div>
+          </section>
         )}
         {groups.map(({ group, targets }) => (
           <div key={group.id} className="timeline__group">
@@ -442,7 +463,8 @@ export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }
 
             {targets.map((target) => {
               const state = sections.get(target.id)
-              const isRecordingHere = recordTarget?.sectionId === target.id && !recordTarget?.respondingTo
+              const isRecordingHere = recordTarget?.sectionId === target.id
+              const isPlainRecordingHere = isRecordingHere && !recordTarget?.respondingTo
 
               return (
                 <section key={target.id} className="timeline__section">
@@ -482,6 +504,16 @@ export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }
                     </div>
                   )}
 
+                  {pendingDraft?.target.sectionId === target.id && (
+                    <UploadBubble
+                      draft={pendingDraft}
+                      stage={uploadStage}
+                      publishing={publishing}
+                      onResume={retryPendingDraft}
+                      onDiscard={discardPendingDraft}
+                    />
+                  )}
+
                   {isWhitelisted && !pendingDraft && !isRecordingHere && !publishing && (
                     <div className="timeline__recrow">
                       <InlineRecorder
@@ -490,7 +522,7 @@ export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }
                       />
                     </div>
                   )}
-                  {isRecordingHere && !pendingDraft && (
+                  {isPlainRecordingHere && !pendingDraft && (
                     <div className="timeline__recrow">
                       <InlineRecorder
                         onRecorded={handleRecorded}

@@ -46,6 +46,7 @@ export interface ManifestSection {
   id: string
   title: string
   introEventId: string | null
+  sectionExcluded?: boolean // explicit admin override; never overload introEventId
   order: string[]        // segment event IDs in EDL order
   excluded: string[]     // segment event IDs excluded from cut
   reviewed: string[]     // segment event IDs marked reviewed by admin

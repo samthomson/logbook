@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { latestCuttingManifests, missingManifestIssueIds, type ManifestEvent } from '../watch-state.ts'
+import { latestCuttingManifests, latestVerifiedManifest, missingManifestIssueIds, type ManifestEvent } from '../watch-state.ts'
 
 test('missingManifestIssueIds selects only issues without a matching manifest d-tag', () => {
   const issues = [
@@ -50,11 +50,13 @@ test('latestCuttingManifests respects terminal and replacement manifest states',
   ]), [])
 })
 
-test('latestCuttingManifests ignores forged or wrong-author events and breaks timestamp ties deterministically', () => {
-  assert.deepEqual(cutting([
-    manifest('forged', 20, 'logbook-34', 'cutting'),
-    manifest('wrong-author', 21, 'logbook-35', 'cutting', 'attacker'),
-    manifest('a', 30, 'logbook-36', 'draft'),
-    manifest('b', 30, 'logbook-36', 'cutting'),
-  ]), ['b'])
+test('latestVerifiedManifest selects the newest verified addressable revision deterministically', () => {
+  const selected = latestVerifiedManifest([
+    manifest('old', 10, 'logbook-32', 'cutting'),
+    manifest('forged', 20, 'logbook-32', 'draft'),
+    manifest('newer', 11, 'logbook-32', 'published'),
+    manifest('same-time-a', 30, 'logbook-32', 'draft'),
+    manifest('same-time-b', 30, 'logbook-32', 'cutting'),
+  ], 'logbook-32', { expectedPubkey: COMPASS, verify: (event) => event.id !== 'forged' })
+  assert.equal(selected?.id, 'same-time-b')
 })

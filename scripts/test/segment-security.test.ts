@@ -28,8 +28,16 @@ test('getTrustedBlobCandidates rewrites a valid blob path only to configured HTT
   )
 })
 
+test('getTrustedBlobCandidates accepts a safe filename extension and rebuilds it only under configured origins', () => {
+  assert.deepEqual(
+    getTrustedBlobCandidates(`https://untrusted.example/${HASH}.webm?tracking=1`, HASH, SERVERS),
+    [`https://blossom.example/${HASH}.webm`, `https://mirror.example/${HASH}.webm`],
+  )
+})
+
 test('getTrustedBlobCandidates rejects non-canonical hashes and paths', () => {
   assert.throws(() => getTrustedBlobCandidates('https://untrusted.example/not-a-hash', HASH, SERVERS))
+  assert.throws(() => getTrustedBlobCandidates(`https://untrusted.example/${HASH}.webm/escape`, HASH, SERVERS))
   assert.throws(() => getTrustedBlobCandidates(`http://untrusted.example/${HASH}`, HASH, SERVERS))
   assert.throws(() => getTrustedBlobCandidates(`https://untrusted.example/${HASH}`, 'bad', SERVERS))
 })
@@ -38,6 +46,20 @@ test('parseVerifiedSegment accepts a signed, correctly-tagged segment', () => {
   const segment = parseVerifiedSegment(signedSegment(), SERVERS)
   assert.equal(segment.audio.sha256, HASH)
   assert.equal(segment.issueId, 'logbook-1')
+})
+
+test('parseVerifiedSegment preserves legacy video/webm for mandatory stream inspection', () => {
+  const legacy = finalizeEvent({
+    kind: 4200,
+    created_at: 1,
+    tags: [['x', HASH], ['section', 'sec-example-1'], ['issue', 'logbook-1']],
+    content: JSON.stringify({
+      audio: { url: `https://blossom.example/${HASH}.webm`, sha256: HASH, mime: 'video/webm', duration: 1 },
+      isIntro: false,
+    }),
+  }, generateSecretKey())
+  const segment = parseVerifiedSegment(legacy, SERVERS)
+  assert.equal(segment.audio.mime, 'video/webm')
 })
 
 test('parseVerifiedSegment rejects a forged signature, missing hash tag, and invalid blob URL', () => {

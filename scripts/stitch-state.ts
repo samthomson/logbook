@@ -2,6 +2,7 @@ export interface StitchManifestSection {
   id: string
   title: string
   introEventId: string | null
+  sectionExcluded?: boolean
   order: string[]
   excluded: string[]
 }
@@ -26,6 +27,7 @@ export function assertStitchableManifest(
 
 export function selectActiveSections(sections: StitchManifestSection[]): StitchManifestSection[] {
   return sections.filter((section) =>
+    section.sectionExcluded !== true &&
     section.introEventId !== 'excluded' &&
     section.order.some((id) => !section.excluded.includes(id)),
   )

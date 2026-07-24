@@ -12,6 +12,7 @@
  * and no per-event prompts (web NIP-55 has no batch API — NIP-46 is the batch path).
  */
 
+import { hexToBytes } from 'applesauce-core/helpers/event'
 import { NostrConnectSigner } from 'applesauce-signers/signers/nostr-connect-signer'
 import { ExtensionSigner } from 'applesauce-signers/signers/extension-signer'
 import { PrivateKeySigner } from 'applesauce-signers/signers/private-key-signer'
@@ -72,12 +73,10 @@ function toAuthState(
   pubkey: string,
   method: 'amber' | 'bunker',
 ): AuthState {
-  let session: string | undefined
-  try {
-    session = signer.getNbunksec()
-  } catch {
-    /* remote not set yet — no session to persist */
-  }
+  // A completed NIP-46 connection always has a remote signer. Persisting its
+  // nbunksec is mandatory: silently returning an in-memory-only Amber login
+  // creates a misleading successful login that is guaranteed to vanish on refresh.
+  const session = signer.getNbunksec()
   return { pubkey, method, signer: signer as unknown as NostrSigner, session }
 }
 
@@ -115,14 +114,24 @@ export function startAmberConnect(): AmberConnectHandle {
   }
 }
 
-/** Restore a previous Amber/bunker session from its nbunksec token */
+/**
+ * Rehydrate the local NIP-46 client session without issuing a new `connect`
+ * request.  Amber can be asleep after a browser/PWA reload; read-only access
+ * must not be treated as a logout just because the remote signer has not yet
+ * answered.  The signer reconnects lazily on the first operation that needs a
+ * signature.
+ */
 export async function restoreSession(nbunksec: string, method: 'amber' | 'bunker'): Promise<AuthState> {
   wireNip46Transport()
-  const signer = await NostrConnectSigner.fromNbunksec(nbunksec, {
-    permissions: NostrConnectSigner.buildSigningPermissions(SIGNING_KINDS),
+  const { remote, clientKey, relays, bunkerSecret } = NostrConnectSigner.parseNbunksec(nbunksec)
+  const signer = new NostrConnectSigner({
+    relays,
+    remote,
+    pubkey: remote,
+    signer: new PrivateKeySigner(hexToBytes(clientKey)),
+    bunkerSecret,
   })
-  const pubkey = await signer.getPublicKey()
-  return toAuthState(signer, pubkey, method)
+  return { pubkey: remote, method, signer: signer as unknown as NostrSigner, session: nbunksec }
 }
 
 // ─── NIP-46 Bunker ────────────────────────────────────────────────────────────

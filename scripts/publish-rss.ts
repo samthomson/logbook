@@ -12,7 +12,6 @@
  */
 
 import { SimplePool } from 'nostr-tools/pool'
-import { finalizeEvent } from 'nostr-tools'
 import { readFileSync, writeFileSync, statSync, existsSync, mkdirSync } from 'node:fs'
 import { join, basename, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -24,10 +23,13 @@ import {
   RSS_PATH,
   STATIC_DIR,
   BASE_URL,
-  loadPrivateKey,
+  BLOSSOM_SERVERS,
 } from './config.ts'
 import { uploadToBlossom } from './blossom.ts'
 import { verifyNostrEvent } from './segment-security.ts'
+import { createCompassAmberSigner, type CompassSigner } from './amber-signer.ts'
+import { latestVerifiedManifest, type ManifestEvent } from './watch-state.ts'
+import { assertPublishableManifest, selectTrustedReleaseMetadata } from './rss-state.ts'
 
 // ── npubs.yml loading ─────────────────────────────────────────────────────────
 
@@ -90,6 +92,7 @@ interface ManifestSection {
   id: string
   title: string
   introEventId: string | null
+  sectionExcluded?: boolean
   order: string[]
   excluded: string[]     // SPEC §2: array of excluded segment ids
   reviewed: string[]
@@ -168,15 +171,14 @@ async function fetchManifest(issueId: string, pool: SimplePool): Promise<Manifes
     kinds: [KINDS.MANIFEST],
     authors: [COMPASS_PUBKEY],
     '#d': [issueId],
-    limit: 1,
+    limit: 50,
   })
 
-  if (!events.length) throw new Error(`No manifest found for ${issueId}`)
-
-  const event = events[0]
-  if (event.pubkey !== COMPASS_PUBKEY || !verifyNostrEvent(event)) {
-    throw new Error(`Manifest failed Compass author or signature verification for ${issueId}`)
-  }
+  const event = latestVerifiedManifest(events as ManifestEvent[], issueId, {
+    expectedPubkey: COMPASS_PUBKEY,
+    verify: (candidate) => verifyNostrEvent(candidate as never),
+  })
+  if (!event) throw new Error(`No verified manifest found for ${issueId}`)
 
   return JSON.parse(event.content) as ManifestContent
 }
@@ -276,23 +278,20 @@ ${itemsXml}
 
 async function publishAnnouncement(
   ep: EpisodeData,
-  privateKey: Uint8Array,
+  signer: CompassSigner,
   pool: SimplePool,
 ): Promise<void> {
   const content = `🎙️ ${ep.issueTitle} is live on Logbook!\n\n${ep.description}\n\nListen: ${ep.mp3Url}\nRSS: ${BASE_URL}/feed.xml`
 
-  const event = finalizeEvent(
-    {
-      kind: 1,
-      created_at: Math.floor(Date.now() / 1000),
-      tags: [
-        ['r', ep.mp3Url],
-        ['r', `${BASE_URL}/feed.xml`],
-      ],
-      content,
-    },
-    privateKey,
-  )
+  const event = await signer.signEvent({
+    kind: 1,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ['r', ep.mp3Url],
+      ['r', `${BASE_URL}/feed.xml`],
+    ],
+    content,
+  })
 
   await Promise.allSettled(DEFAULT_RELAYS.map((r) => pool.publish([r], event)))
   console.log(`[publish-rss] Published kind 1 announcement: ${event.id}`)
@@ -309,7 +308,7 @@ async function publishManifestStatus(
   issueId: string,
   manifest: ManifestContent,
   ep: EpisodeData,
-  privateKey: Uint8Array,
+  signer: CompassSigner,
   pool: SimplePool,
 ): Promise<void> {
   const updated = {
@@ -321,19 +320,16 @@ async function publishManifestStatus(
       publishedAt: Math.floor(Date.now() / 1000),
     },
   }
-  const event = finalizeEvent(
-    {
-      kind: KINDS.MANIFEST,
-      created_at: Math.floor(Date.now() / 1000),
-      tags: [
-        ['d', issueId],
-        ['title', ep.issueTitle],
-        ['issue', issueId],
-      ],
-      content: JSON.stringify(updated),
-    },
-    privateKey,
-  )
+  const event = await signer.signEvent({
+    kind: KINDS.MANIFEST,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ['d', issueId],
+      ['title', ep.issueTitle],
+      ['issue', issueId],
+    ],
+    content: JSON.stringify(updated),
+  })
   await Promise.any(pool.publish(DEFAULT_RELAYS, event))
   console.log(`[publish-rss] Manifest ${issueId} marked published`)
 }
@@ -349,7 +345,7 @@ async function publishManifestStatus(
  */
 async function publishPodstrEpisode(
   ep: EpisodeData,
-  privateKey: Uint8Array,
+  signer: CompassSigner,
   pool: SimplePool,
 ): Promise<void> {
   const tags: string[][] = [
@@ -370,15 +366,12 @@ async function publishPodstrEpisode(
   if (ep.transcriptUrl) tags.push(['podcast:transcript', ep.transcriptUrl, 'application/json'])
   for (const pk of ep.participantPubkeys ?? []) tags.push(['p', pk])
 
-  const event = finalizeEvent(
-    {
-      kind: 30054,
-      created_at: Math.floor(Date.now() / 1000),
-      tags,
-      content: `<p>${ep.description}</p>`,
-    },
-    privateKey,
-  )
+  const event = await signer.signEvent({
+    kind: 30054,
+    created_at: Math.floor(Date.now() / 1000),
+    tags,
+    content: `<p>${ep.description}</p>`,
+  })
   await Promise.any(pool.publish(DEFAULT_RELAYS, event))
   console.log(`[publish-rss] Published podstr episode event: ${event.id}`)
 }
@@ -410,11 +403,12 @@ async function main(): Promise<void> {
   const issueId = args[issueFlag + 1]
   const noAnnounce = args.includes('--no-announce')
 
-  const privateKey = await loadPrivateKey()
+  const signer = createCompassAmberSigner()
   const pool = new SimplePool()
 
   console.log(`[publish-rss] Fetching manifest for ${issueId}…`)
   const manifest = await fetchManifest(issueId, pool)
+  assertPublishableManifest(manifest)
 
   // Run metadata from stitch.ts carries the canonical Blossom mp3 URL.
   const metaPath = join(AUDIO_DIR, `${issueId}-run.json`)
@@ -434,7 +428,7 @@ async function main(): Promise<void> {
       const blob = await uploadToBlossom(
         Buffer.from(JSON.stringify(cf, null, 2)),
         'application/json',
-        privateKey,
+        signer,
       )
       chaptersUrl = blob.url
       run.chaptersUrl = chaptersUrl
@@ -447,18 +441,17 @@ async function main(): Promise<void> {
     run.segmentIds.length > 0
       ? await pool.querySync(DEFAULT_RELAYS, { kinds: [KINDS.SEGMENT], ids: run.segmentIds })
       : []
-  const participantPubkeys = [...new Set(segmentEvents.map((e) => e.pubkey))]
-
   // Companion transcripts (kind 1111 with e-tag → segment) for podcast:transcript
   const transcriptEvents =
     run.segmentIds.length > 0
       ? await pool.querySync(DEFAULT_RELAYS, { kinds: [KINDS.TRANSCRIPT], '#e': run.segmentIds, limit: 200 })
       : []
-  const transcriptBySegment = new Map<string, string>()
-  for (const t of transcriptEvents) {
-    const segRef = t.tags.find((tag) => tag[0] === 'e')?.[1]
-    if (segRef && !transcriptBySegment.has(segRef)) transcriptBySegment.set(segRef, t.content)
-  }
+  const { participantPubkeys, transcriptBySegment } = selectTrustedReleaseMetadata(
+    run.segmentIds,
+    segmentEvents,
+    transcriptEvents,
+    BLOSSOM_SERVERS,
+  )
   // Stitch a full-episode transcript in segment order (used as transcript JSON)
   const fullTranscript = run.segmentIds
     .map((id) => transcriptBySegment.get(id))
@@ -469,7 +462,7 @@ async function main(): Promise<void> {
     const blob = await uploadToBlossom(
       Buffer.from(JSON.stringify({ version: '1.0.0', transcript: fullTranscript }, null, 2)),
       'application/json',
-      privateKey,
+      signer,
     )
     transcriptUrl = blob.url
   }
@@ -511,14 +504,14 @@ async function main(): Promise<void> {
   console.log(`[publish-rss] sync ${STATIC_DIR} to the podcast.nostrcompass.org host (or set LOGBOOK_BASE_URL).`)
 
   // Mark the manifest published so the Admin UI shows the final state
-  await publishManifestStatus(issueId, manifest, ep, privateKey, pool)
+  await publishManifestStatus(issueId, manifest, ep, signer, pool)
 
   // Podstr-compatible episode event (kind 30054) so the podcast appears on
   // podcast.nostrcompass.org and in Nostr podcast clients.
-  await publishPodstrEpisode(ep, privateKey, pool)
+  await publishPodstrEpisode(ep, signer, pool)
 
   if (!noAnnounce) {
-    await publishAnnouncement(ep, privateKey, pool)
+    await publishAnnouncement(ep, signer, pool)
   }
 
   pool.close(DEFAULT_RELAYS)

@@ -1,16 +1,17 @@
 import { lazy, Suspense, useState, useEffect, useRef, useCallback } from 'react'
 import type { AuthState } from './lib/auth'
 import { connectBunker, connectNsec, connectWindowNostr, restoreSession, startAmberConnect } from './lib/auth'
-import { AUTH_SESSION_KEY, readRestorableAuthSession } from './lib/session'
+import { AUTH_SESSION_KEY, readSelectedIssueNumber, restorePersistedAuthSession, saveRestorableAuthSession, saveSelectedIssueNumber } from './lib/session'
+import { withSignerTimeout } from './lib/signer-timeout'
 import { useKeyboardOffset } from './lib/useKeyboardOffset'
 
 import IssueTimeline from './components/IssueTimeline'
 import IssuePicker from './components/IssuePicker'
 import InstallPrompt from './components/InstallPrompt'
 const AdminPanel = lazy(() => import('./components/AdminPanel'))
-import { fetchLatestIssue, parseIssue } from './lib/compass'
+import { fetchIssueByDTag, fetchLatestIssue, fetchLatestIssueWithSegments, parseIssue } from './lib/compass'
 import { checkRecordingSupport } from './lib/utils'
-import { IOS_RECORDING_MIN_VERSION } from './config'
+import { ADMIN_PUBKEYS, COMPASS_PUBKEY, IOS_RECORDING_MIN_VERSION } from './config'
 import { fetchAccessLists } from './lib/whitelist'
 import type { CompassIssue, NostrEvent } from './types/nostr'
 import './App.css'
@@ -19,11 +20,14 @@ type AppView = 'auth' | 'timeline' | 'issue-picker' | 'admin'
 
 export default function App() {
   const [auth, setAuth] = useState<AuthState | null>(null)
+  const [restoringAuth, setRestoringAuth] = useState(false)
+  const [restoreError, setRestoreError] = useState<string | null>(null)
   const [view, setView] = useState<AppView>('auth')
   const [recordingNotice, setRecordingNotice] = useState<string | null>(null)
   const [issue, setIssue] = useState<CompassIssue | null>(null)
   const [isWhitelisted, setIsWhitelisted] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
+  const [contributorPubkeys, setContributorPubkeys] = useState<Set<string>>(new Set())
   const [accessDegraded, setAccessDegraded] = useState(false)
   const [issueLoading, setIssueLoading] = useState(false)
   const [issueError, setIssueError] = useState<string | null>(null)
@@ -32,16 +36,28 @@ export default function App() {
   /** Single access-control fetch — canRecord + isAdmin derive from the same
    *  call, so the two gates can never race or disagree. */
   const loadAccess = useCallback(async (issueNumber: number, pubkey: string) => {
+    const isCompass = pubkey.toLowerCase() === COMPASS_PUBKEY.toLowerCase()
+    const isBootstrapAdmin = isCompass || ADMIN_PUBKEYS.some((admin) => admin.toLowerCase() === pubkey.toLowerCase())
     try {
       const access = await fetchAccessLists(issueNumber)
-      setIsWhitelisted(access.contributors.has(pubkey) || access.admins.has(pubkey))
-      setIsAdmin(access.admins.has(pubkey))
+      // Admin review must use the same merged set that grants recording,
+      // including admins who are allowed to contribute without a separate
+      // contributor-list entry.
+      const allowed = new Set([...access.contributors, ...access.admins])
+      allowed.add(COMPASS_PUBKEY)
+      setContributorPubkeys(allowed)
+      setIsWhitelisted(isBootstrapAdmin || allowed.has(pubkey.toLowerCase()))
+      setIsAdmin(isBootstrapAdmin || access.admins.has(pubkey.toLowerCase()))
       setAccessDegraded(access.degraded)
     } catch {
       // Total failure — fail closed on record, but never lock out bootstrap
       // admins (they need the UI that fixes the list). fetchAccessLists
       // already encodes this; a throw here means something truly unexpected.
-      setIsWhitelisted(false)
+      // The Compass identity must retain the repair path even when every
+      // whitelist relay is down; otherwise it cannot restore access.
+      setIsWhitelisted(isBootstrapAdmin)
+      setIsAdmin(isBootstrapAdmin)
+      setContributorPubkeys(isBootstrapAdmin ? new Set([COMPASS_PUBKEY, ...ADMIN_PUBKEYS]) : new Set())
       setAccessDegraded(true)
     }
   }, [])
@@ -58,15 +74,22 @@ export default function App() {
 
   // Restore only a revocable NIP-46 session or extension identity on mount.
   useEffect(() => {
-    const saved = readRestorableAuthSession(sessionStorage)
+    const saved = restorePersistedAuthSession(localStorage, sessionStorage)
     if (!saved) return
 
+    setRestoringAuth(true)
     if (saved.method === 'extension' && typeof window !== 'undefined' && 'nostr' in window) {
-      connectWindowNostr().then((state) => { setAuth(state); setView('timeline') }).catch(() => {})
-    } else if ((saved.method === 'amber' || saved.method === 'bunker') && saved.session) {
-      restoreSession(saved.session, saved.method)
+      connectWindowNostr()
         .then((state) => { setAuth(state); setView('timeline') })
-        .catch(() => {}) // Session expired or invalid — keep the auth screen.
+        .catch(() => setRestoreError('Your browser signer could not restore this session.'))
+        .finally(() => setRestoringAuth(false))
+    } else if ((saved.method === 'amber' || saved.method === 'bunker') && saved.session) {
+      withSignerTimeout(restoreSession(saved.session, saved.method), 'Amber session restoration')
+        .then((state) => { setAuth(state); setView('timeline') })
+        .catch(() => setRestoreError('Amber could not restore this session. Reopen Amber, then sign in again.'))
+        .finally(() => setRestoringAuth(false))
+    } else {
+      setRestoringAuth(false)
     }
   }, [])
 
@@ -76,7 +99,12 @@ export default function App() {
     setIssueLoading(true)
     setIssueError(null)
 
-    fetchLatestIssue()
+    const savedIssueNumber = readSelectedIssueNumber(localStorage)
+    const issueRequest = savedIssueNumber
+      ? fetchIssueByDTag(`newsletter-${savedIssueNumber}`).then((saved) => saved ?? fetchLatestIssueWithSegments().then((populated) => populated ?? fetchLatestIssue()))
+      : fetchLatestIssueWithSegments().then((populated) => populated ?? fetchLatestIssue())
+
+    issueRequest
       .then(async (event) => {
         if (!event) return
         const parsed = parseIssue(event)
@@ -95,6 +123,7 @@ export default function App() {
     setIssueError(null)
     try {
       const parsed = parseIssue(event)
+      saveSelectedIssueNumber(localStorage, parsed.issueNumber)
       setIssue(parsed)
       await loadAccess(parsed.issueNumber, auth.pubkey)
       setView('timeline')
@@ -113,10 +142,27 @@ export default function App() {
             {recordingNotice}
           </div>
         )}
+        {restoringAuth && (
+          <div className="notice notice--warning" role="status">Restoring your Amber session…</div>
+        )}
+        {restoreError && (
+          <div className="notice notice--error" role="alert">{restoreError}</div>
+        )}
         <AuthScreen onAuth={(state, method) => {
-        // nsec and bunker URIs can grant direct key access. Keep them in
-        // memory only; NIP-46 sessions supply a revocable nbunksec instead.
-        sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ method, session: state.session }))
+        setRestoreError(null)
+        // Persist only the non-secret extension marker across browser sessions.
+        // NIP-46 nbunksec values are signing capabilities, so keep them scoped
+        // to this tab while still allowing ordinary page reload restoration.
+        if (method === 'extension') {
+          saveRestorableAuthSession(localStorage, { method: 'extension' })
+          sessionStorage.removeItem(AUTH_SESSION_KEY)
+        } else {
+          localStorage.removeItem(AUTH_SESSION_KEY)
+          saveRestorableAuthSession(
+            sessionStorage,
+            ((method === 'amber' || method === 'bunker') && state.session ? { method, session: state.session } : null),
+          )
+        }
         setAuth(state)
         setView('timeline')
       }} />
@@ -161,6 +207,7 @@ export default function App() {
         <button
           className="btn btn--ghost btn--small app-logout"
           onClick={() => {
+            localStorage.removeItem(AUTH_SESSION_KEY)
             sessionStorage.removeItem(AUTH_SESSION_KEY)
             setAuth(null)
             setIssue(null)
@@ -225,6 +272,7 @@ export default function App() {
               issue={issue}
               signer={auth.signer}
               pubkey={auth.pubkey}
+              contributorPubkeys={contributorPubkeys}
             />
           </Suspense>
         )}

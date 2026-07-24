@@ -1,4 +1,4 @@
-import { COMPASS_PUBKEY, DEFAULT_RELAYS, KINDS } from '../config'
+import { COMPASS_PUBKEY, DEFAULT_RELAYS, ISSUE_PREFIX, KINDS } from '../config'
 import type { NostrEvent, CompassIssue, IssueSection, IssueSectionItem } from '../types/nostr'
 import { slugify } from './utils'
 import { filterVerified } from './relay'
@@ -49,6 +49,33 @@ export async function fetchAllIssues(
     limit: 50,
   })
   return filterVerified(events).sort((a, b) => b.created_at - a.created_at)
+}
+
+/**
+ * Choose the newest verified Compass issue that actually has voice notes.
+ * A freshly published newsletter can legitimately be empty; defaulting to it
+ * made existing cross-identity notes look as if authentication hid them.
+ */
+export async function fetchLatestIssueWithSegments(
+  relays: string[] = DEFAULT_RELAYS,
+): Promise<NostrEvent | null> {
+  const issues = await fetchAllIssues(relays)
+  if (!issues.length) return null
+
+  const issueIds = issues
+    .map((event) => extractIssueNumber(event))
+    .filter((number) => number > 0)
+    .map((number) => `${ISSUE_PREFIX}-${number}`)
+  if (!issueIds.length) return null
+
+  const pool = getPool()
+  const segments = await pool.querySync(relays, {
+    kinds: [KINDS.SEGMENT],
+    '#t': issueIds,
+    limit: 2000,
+  })
+  const populated = new Set(segments.map((event) => event.tags.find((tag) => tag[0] === 't')?.[1]))
+  return issues.find((event) => populated.has(`${ISSUE_PREFIX}-${extractIssueNumber(event)}`)) ?? null
 }
 
 /**

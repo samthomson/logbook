@@ -13,10 +13,10 @@
  */
 
 import { SimplePool } from 'nostr-tools/pool'
-import { finalizeEvent } from 'nostr-tools'
+
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
-import { join, basename } from 'node:path'
+import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import fetch from 'node-fetch'
 import {
@@ -25,12 +25,22 @@ import {
   KINDS,
   AUDIO_DIR,
   BLOSSOM_SERVERS,
-  loadPrivateKey,
 } from './config.ts'
 import { uploadToBlossom } from './blossom.ts'
 import { parseVerifiedSegment, verifyNostrEvent } from './segment-security.ts'
 import { downloadVerifiedBlob } from './stitch-download.ts'
 import { assertLockedSegmentsPresent, assertStitchableManifest, collectLockedSegmentIds, selectActiveSections } from './stitch-state.ts'
+import { latestVerifiedManifest, type ManifestEvent } from './watch-state.ts'
+import {
+  acrossfade,
+  assertHasAudioStream,
+  concatSection,
+  encodeMp3,
+  loudnorm,
+  requireFfmpeg,
+  trimSilence,
+} from './stitch-media.ts'
+import { createCompassAmberSigner } from './amber-signer.ts'
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -51,6 +61,7 @@ interface ManifestSection {
   id: string
   title: string
   introEventId: string | null
+  sectionExcluded?: boolean
   order: string[]        // ordered segment event ids
   excluded: string[]     // excluded segment event ids (SPEC §2)
   reviewed: string[]
@@ -70,118 +81,6 @@ interface Segment {
   pubkey: string
   content: SegmentContent
   createdAt: number
-}
-
-// ── ffmpeg helpers ────────────────────────────────────────────────────────────
-
-function requireFfmpeg(): void {
-  const result = spawnSync('ffmpeg', ['-version'], { encoding: 'utf-8' })
-  if (result.error) {
-    throw new Error('ffmpeg not found in PATH. Install it: apt install ffmpeg')
-  }
-}
-
-function ff(args: string[]): void {
-  const result = spawnSync('ffmpeg', ['-y', ...args], { encoding: 'utf-8' })
-  if (result.status !== 0) {
-    throw new Error(`ffmpeg failed:\n${result.stderr}`)
-  }
-}
-
-/**
- * Two-pass EBU R128 loudness normalisation.
- * Returns path to normalised WAV.
- */
-function loudnorm(inputPath: string, outDir: string): string {
-  const outPath = join(outDir, `${basename(inputPath, '.webm')}_norm.wav`)
-
-  // Pass 1: measure
-  const pass1 = spawnSync(
-    'ffmpeg',
-    ['-i', inputPath, '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json', '-f', 'null', '-'],
-    { encoding: 'utf-8' },
-  )
-  const stderr = pass1.stderr ?? ''
-  const jsonMatch = stderr.match(/\{[\s\S]*?\}/)
-  if (!jsonMatch) {
-    // Fallback: single-pass (less accurate but functional)
-    ff(['-i', inputPath, '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11', '-ar', '48000', '-ac', '2', outPath])
-    return outPath
-  }
-
-  const measured = JSON.parse(jsonMatch[0]) as {
-    input_i: string
-    input_tp: string
-    input_lra: string
-    input_thresh: string
-    target_offset: string
-  }
-
-  // Pass 2: apply with measured values
-  const af = [
-    'loudnorm=I=-16:TP=-1.5:LRA=11',
-    `measured_I=${measured.input_i}`,
-    `measured_TP=${measured.input_tp}`,
-    `measured_LRA=${measured.input_lra}`,
-    `measured_thresh=${measured.input_thresh}`,
-    `offset=${measured.target_offset}`,
-    'linear=true',
-  ].join(':')
-
-  ff(['-i', inputPath, '-af', af, '-ar', '48000', '-ac', '2', outPath])
-  return outPath
-}
-
-/**
- * Trim leading/trailing silence.
- */
-function trimSilence(inputPath: string, outDir: string): string {
-  const outPath = join(outDir, `${basename(inputPath, '.wav')}_trim.wav`)
-  ff([
-    '-i', inputPath,
-    '-af', 'silenceremove=start_periods=1:start_silence=0.5:stop_periods=1:stop_silence=0.5',
-    outPath,
-  ])
-  return outPath
-}
-
-/**
- * Concatenate WAV files in a section using ffmpeg concat filter.
- */
-function concatSection(clips: string[], outPath: string): void {
-  if (clips.length === 1) {
-    // Nothing to concat — just copy
-    ff(['-i', clips[0], '-c', 'copy', outPath])
-    return
-  }
-
-  const inputs = clips.flatMap((c) => ['-i', c])
-  const filterInputs = clips.map((_, i) => `[${i}:a]`).join('')
-  ff([
-    ...inputs,
-    '-filter_complex', `${filterInputs}concat=n=${clips.length}:v=0:a=1[out]`,
-    '-map', '[out]',
-    outPath,
-  ])
-}
-
-/**
- * Acrossfade two WAV files together. Returns path to faded output.
- */
-function acrossfade(a: string, b: string, outPath: string, duration = 0.3): void {
-  ff([
-    '-i', a,
-    '-i', b,
-    '-filter_complex', `acrossfade=d=${duration}:c1=tri:c2=tri`,
-    outPath,
-  ])
-}
-
-/**
- * Encode final WAV to mp3 128kbps stereo.
- */
-function encodeMp3(inputPath: string, outPath: string): void {
-  ff(['-i', inputPath, '-codec:a', 'libmp3lame', '-b:a', '128k', '-ar', '44100', outPath])
 }
 
 // ── download helpers ──────────────────────────────────────────────────────────
@@ -210,15 +109,14 @@ async function fetchManifest(issueId: string, pool: SimplePool): Promise<Manifes
     kinds: [KINDS.MANIFEST],
     authors: [COMPASS_PUBKEY],
     '#d': [issueId],
-    limit: 1,
+    limit: 50,
   })
 
-  if (!events.length) throw new Error(`No manifest found for issue ${issueId}`)
-
-  const event = events[0]
-  if (event.pubkey !== COMPASS_PUBKEY || !verifyNostrEvent(event)) {
-    throw new Error('Manifest failed Compass author or signature verification')
-  }
+  const event = latestVerifiedManifest(events as ManifestEvent[], issueId, {
+    expectedPubkey: COMPASS_PUBKEY,
+    verify: (candidate) => verifyNostrEvent(candidate as never),
+  })
+  if (!event) throw new Error(`No verified manifest found for issue ${issueId}`)
 
   return JSON.parse(event.content) as ManifestContent
 }
@@ -269,7 +167,7 @@ async function main(): Promise<void> {
   const issueId = args[issueFlag + 1]
   const dryRun = args.includes('--dry-run')
 
-  const privkey = await loadPrivateKey()
+  const signer = createCompassAmberSigner()
 
   const pool = new SimplePool()
 
@@ -335,6 +233,7 @@ async function main(): Promise<void> {
       // Hard-fail the run if the blob can't be fetched AND hash-verified from
       // any mirror — silently dropping a locked segment ships a broken episode.
       await downloadBlob(seg.content.audio.url, rawPath, seg.content.audio.sha256)
+      assertHasAudioStream(rawPath)
 
       const normPath = loudnorm(rawPath, workDir)
       const trimPath = trimSilence(normPath, workDir)
@@ -392,7 +291,7 @@ async function main(): Promise<void> {
   // Upload the final mp3 to Blossom — the canonical public URL for the episode
   console.log(`[stitch] Uploading mp3 to Blossom…`)
   const mp3Buffer = readFileSync(mp3Path)
-  const blob = await uploadToBlossom(mp3Buffer, 'audio/mpeg', privkey)
+  const blob = await uploadToBlossom(mp3Buffer, 'audio/mpeg', signer)
   console.log(`[stitch] Episode URL: ${blob.url} (+${blob.urls.length - 1} mirrors)`)
 
   // Measure duration for RSS
@@ -461,12 +360,12 @@ async function main(): Promise<void> {
     const reactPool = new SimplePool()
     for (const segId of includedIds) {
       try {
-        const reaction = finalizeEvent({
+        const reaction = await signer.signEvent({
           kind: KINDS.REACTION,
           created_at: Math.floor(Date.now() / 1000),
           tags: [['e', segId], ['k', String(KINDS.SEGMENT)]],
           content: '🎙️',
-        }, privkey)
+        })
         await Promise.any(reactPool.publish(DEFAULT_RELAYS, reaction))
       } catch {
         // fire-and-forget, don't block on reaction failures

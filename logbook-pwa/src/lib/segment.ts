@@ -6,7 +6,7 @@ import { getPool } from './pool'
  * Also handles companion transcript events (kind 1111).
  */
 
-import { DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from '../config'
+import { BLOSSOM_SERVERS, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from '../config'
 import type {
   NostrEvent,
   NostrSigner,
@@ -16,7 +16,9 @@ import type {
 } from '../types/nostr'
 import { getTag, parseSegmentContent } from '../types/nostr'
 import { now } from './utils'
-import { publishToRelays } from './relay'
+import { filterVerified, publishToRelays } from './relay'
+import { withSignerTimeout } from './signer-timeout'
+import { validateTrustedBlobUrl } from './blob-trust'
 
 
 export interface PublishSegmentParams {
@@ -49,7 +51,7 @@ export async function publishSegment(params: PublishSegmentParams): Promise<Nost
   } = params
 
   const issueId = `${ISSUE_PREFIX}-${issueNumber}`
-  const pubkey = await signer.getPublicKey()
+  const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Amber identity request')
 
   const content = JSON.stringify({
     audio: {
@@ -84,7 +86,7 @@ export async function publishSegment(params: PublishSegmentParams): Promise<Nost
   }
 
   if (relays.length === 0) throw new Error('No relays configured')
-  const event = await signer.signEvent(unsigned)
+  const event = await withSignerTimeout(signer.signEvent(unsigned), 'Amber segment signing')
   await publishToRelays(event, relays)
   return event
 }
@@ -99,7 +101,7 @@ export async function publishTranscript(
   signer: NostrSigner,
   relays: string[] = DEFAULT_RELAYS,
 ): Promise<NostrEvent> {
-  const pubkey = await signer.getPublicKey()
+  const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Amber identity request')
 
   const tags: string[][] = [
     ['e', segmentEvent.id, '', 'root'],
@@ -116,7 +118,7 @@ export async function publishTranscript(
   }
 
   if (relays.length === 0) throw new Error('No relays configured')
-  const event = await signer.signEvent(unsigned)
+  const event = await withSignerTimeout(signer.signEvent(unsigned), 'Amber segment signing')
   await publishToRelays(event, relays)
   return event
 }
@@ -137,7 +139,7 @@ export async function fetchSegmentsForIssue(
     limit: 2000,
   })
   const grouped = new Map<string, NostrEvent[]>()
-  for (const e of events) {
+  for (const e of selectTrustedSegmentEvents(events, issueId, BLOSSOM_SERVERS)) {
     const sectionId = e.tags.find((t) => t[0] === 'section')?.[1]
     if (!sectionId) continue
     const arr = grouped.get(sectionId) ?? []
@@ -145,7 +147,7 @@ export async function fetchSegmentsForIssue(
     grouped.set(sectionId, arr)
   }
   for (const arr of grouped.values()) {
-    arr.sort((a, b) => a.created_at - b.created_at)
+    arr.sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
   }
   return grouped
 }
@@ -169,9 +171,9 @@ export async function fetchSegmentsForSection(
     limit: 500,
   })
   // Filter client-side by section tag
-  return events
+  return selectTrustedSegmentEvents(events, issueId, BLOSSOM_SERVERS)
     .filter((e) => e.tags.some((t) => t[0] === 'section' && t[1] === sectionId))
-    .sort((a, b) => a.created_at - b.created_at)
+    .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
 }
 
 /**
@@ -240,6 +242,45 @@ export function parseSegment(event: NostrEvent): Segment | null {
 }
 
 /**
+ * Fail closed at the relay boundary before segment metadata reaches the UI.
+ * Event signatures, issue tags, hash metadata, and Blossom URL policy must all
+ * agree. Invalid events cannot enter curation or a locked cut.
+ */
+export function selectTrustedSegmentEvents(
+  events: NostrEvent[],
+  expectedIssueId: string | null,
+  trustedServers: readonly string[],
+): NostrEvent[] {
+  return filterVerified(events).filter((event) => {
+    if (event.kind !== KINDS.SEGMENT) return false
+    if (expectedIssueId && (
+      getTag(event, 'issue') !== expectedIssueId || getTag(event, 't') !== expectedIssueId
+    )) return false
+
+    const sectionId = getTag(event, 'section')
+    const tagHash = getTag(event, 'x')
+    const content = parseSegmentContent(event.content)
+    if (!sectionId || !tagHash || !content) return false
+    const { audio } = content
+    if (
+      typeof audio.url !== 'string' ||
+      typeof audio.sha256 !== 'string' ||
+      audio.sha256 !== tagHash ||
+      typeof audio.duration !== 'number' ||
+      !Number.isFinite(audio.duration) ||
+      audio.duration <= 0 ||
+      typeof audio.mime !== 'string'
+    ) return false
+    try {
+      validateTrustedBlobUrl(audio.url, audio.sha256, trustedServers)
+      return true
+    } catch {
+      return false
+    }
+  })
+}
+
+/**
  * Fetch specific segment events by their event IDs.
  * Used by AdminPanel to load ordered segments from a manifest.
  */
@@ -253,5 +294,6 @@ export async function fetchSegmentsByIds(
     kinds: [KINDS.SEGMENT],
     ids,
   })
-  return events
+  return selectTrustedSegmentEvents(events, null, BLOSSOM_SERVERS)
+    .filter((event) => ids.includes(event.id))
 }
