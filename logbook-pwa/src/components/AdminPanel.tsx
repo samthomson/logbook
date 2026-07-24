@@ -52,7 +52,7 @@ interface Props {
   contributorPubkeys: ReadonlySet<string>
 }
 
-interface NoteRowProps {
+export interface NoteRowProps {
   row: WorkspaceRow
   profile?: Profile | null
   transcript?: string
@@ -66,7 +66,7 @@ interface NoteRowProps {
   onMoveDown: () => void
 }
 
-function NoteRow({
+export function NoteRow({
   row,
   profile,
   transcript,
@@ -126,7 +126,6 @@ function NoteRow({
             <span className="episode-note__author">{authorName}</span>
             <span className="episode-note__meta">
               {row.segment ? `${row.segment.audio.duration.toFixed(1)} sec` : 'Recording unavailable'}
-              {' · '}{open ? 'Hide audio & transcript' : 'Listen & view transcript'}
             </span>
           </span>
           <span className="episode-note__badges">
