@@ -173,7 +173,7 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className={`app${view === 'admin' ? ' app--admin' : ''}`}>
       {recordingNotice && (
         <div className="notice notice--warning" role="alert">
           {recordingNotice}

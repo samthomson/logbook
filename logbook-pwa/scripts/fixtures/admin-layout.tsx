@@ -2,6 +2,8 @@ import {
   DndContext,
   KeyboardSensor,
   PointerSensor,
+  TouchSensor,
+  closestCenter,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -14,12 +16,13 @@ import {
 } from '@dnd-kit/sortable'
 import { StrictMode, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { NoteRow } from '../../src/components/AdminPanel'
+import { AdminNoteRow } from '../../src/components/AdminNoteRow'
 import type { Profile } from '../../src/lib/profiles'
 import type { WorkspaceRow } from '../../src/lib/admin-workspace'
 import type { Segment } from '../../src/types/nostr'
 
 function fixtureRow(index: number): WorkspaceRow {
+  const isIntro = index === 1
   const segmentId = index.toString(16).padStart(64, '0')
   const pubkey = (index + 10).toString(16).padStart(64, '0')
   const segment: Segment = {
@@ -39,7 +42,7 @@ function fixtureRow(index: number): WorkspaceRow {
       duration: 123.4,
       waveform: [],
     },
-    isIntro: false,
+    isIntro,
     sectionId: 'chapter-1',
     issueId: 'logbook-32',
     respondingTo: null,
@@ -51,7 +54,7 @@ function fixtureRow(index: number): WorkspaceRow {
     segment,
     state: 'included',
     isNew: index === 1,
-    isIntro: false,
+    isIntro,
     reviewed: false,
     unavailable: false,
   }
@@ -64,10 +67,18 @@ const profiles = new Map<string, Profile>(initialRows.map((row, index) => [
 ]))
 const noop = () => {}
 
+function moveRowAt(rows: WorkspaceRow[], from: number, to: number): WorkspaceRow[] {
+  const firstMovable = rows[0]?.isIntro ? 1 : 0
+  return from >= firstMovable && to >= firstMovable && to < rows.length
+    ? arrayMove(rows, from, to)
+    : rows
+}
+
 export function LayoutHarness() {
   const [rows, setRows] = useState(initialRows)
   const sensors = useSensors(
-    useSensor(PointerSensor),
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 120, tolerance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
@@ -75,12 +86,18 @@ export function LayoutHarness() {
     setRows((current) => {
       const from = current.findIndex((row) => row.segmentId === active.id)
       const to = current.findIndex((row) => row.segmentId === over.id)
-      return from >= 0 && to >= 0 ? arrayMove(current, from, to) : current
+      return moveRowAt(current, from, to)
+    })
+  }
+  const moveRow = (segmentId: string, offset: -1 | 1) => {
+    setRows((current) => {
+      const from = current.findIndex((row) => row.segmentId === segmentId)
+      return moveRowAt(current, from, from + offset)
     })
   }
 
   return (
-    <div className="app">
+    <div className="app app--admin">
       <header className="app-header">
         <span className="app-title">Logbook</span>
         <nav className="app-nav">
@@ -112,23 +129,23 @@ export function LayoutHarness() {
                   <span>3 recordings</span>
                 </div>
               </header>
-              <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                 <SortableContext items={rows.map((row) => row.segmentId)} strategy={verticalListSortingStrategy}>
                   <div className="episode-chapter__notes">
                     {rows.map((row, index) => (
-                      <NoteRow
+                      <AdminNoteRow
                         key={row.rowKey}
                         row={row}
                         profile={profiles.get(row.segment!.event.pubkey)}
                         transcript={`A trusted transcript ${'unbroken'.repeat(20)}`}
                         editable
-                        sortable
-                        canMoveUp={index > 0}
-                        canMoveDown={index < rows.length - 1}
+                        sortable={!row.isIntro}
+                        canMoveUp={!row.isIntro && index > (rows[0]?.isIntro ? 1 : 0)}
+                        canMoveDown={!row.isIntro && index < rows.length - 1}
                         onInclude={noop}
                         onExclude={noop}
-                        onMoveUp={noop}
-                        onMoveDown={noop}
+                        onMoveUp={() => moveRow(row.segmentId, -1)}
+                        onMoveDown={() => moveRow(row.segmentId, 1)}
                       />
                     ))}
                   </div>

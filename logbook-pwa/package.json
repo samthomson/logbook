@@ -7,9 +7,14 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "vitest run && npm run test:admin-layout",
+    "test": "npm run test:unit && npm run test:browser",
+    "test:unit": "vitest run",
+    "test:browser": "npm run test:admin-layout",
     "test:admin-layout": "node scripts/admin-layout-qa.mjs",
     "preview": "vite preview"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
