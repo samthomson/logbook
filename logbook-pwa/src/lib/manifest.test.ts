@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildInitialManifest } from './manifest'
+import { buildInitialManifest, buildManifestTags, manifestCreatedAt } from './manifest'
 
 describe('buildInitialManifest', () => {
   it('creates an editable draft with stable section ids and no implicit recordings', () => {
@@ -14,5 +14,20 @@ describe('buildInitialManifest', () => {
       }],
       publishedRss: null,
     })
+  })
+})
+
+describe('buildManifestTags', () => {
+  it('records the exact base revision used for an optimistic update', () => {
+    expect(buildManifestTags(31, 'a'.repeat(64))).toContainEqual(['previous', 'a'.repeat(64)])
+    expect(buildManifestTags(31, null).some((tag) => tag[0] === 'previous')).toBe(false)
+  })
+})
+
+describe('manifestCreatedAt', () => {
+  it('advances beyond its exact base revision even during the same second', () => {
+    expect(manifestCreatedAt(100, 100)).toBe(101)
+    expect(manifestCreatedAt(100, 90)).toBe(100)
+    expect(manifestCreatedAt(100, null)).toBe(100)
   })
 })

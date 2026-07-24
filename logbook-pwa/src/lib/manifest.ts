@@ -73,8 +73,9 @@ export async function updateManifest(
   content: ManifestContent,
   signer: NostrSigner,
   relays: string[] = DEFAULT_RELAYS,
+  previousEventId: string | null = null,
+  previousCreatedAt: number | null = null,
 ): Promise<NostrEvent> {
-  const issueId = `${ISSUE_PREFIX}-${issueNumber}`
   const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Amber identity request')
 
   // Only Compass pubkey should publish manifests
@@ -84,11 +85,8 @@ export async function updateManifest(
 
   const unsigned = {
     kind: KINDS.MANIFEST,
-    created_at: now(),
-    tags: [
-      ['d', issueId],
-      ['title', `Logbook Episode ${issueNumber}`],
-    ],
+    created_at: manifestCreatedAt(now(), previousCreatedAt),
+    tags: buildManifestTags(issueNumber, previousEventId),
     content: JSON.stringify(content),
     pubkey,
   }
@@ -97,6 +95,19 @@ export async function updateManifest(
   const event = await withSignerTimeout(signer.signEvent(unsigned), 'Amber manifest signing')
   await publishToRelays(event, relays)
   return event
+}
+
+export function manifestCreatedAt(currentTime: number, previousCreatedAt: number | null): number {
+  return previousCreatedAt === null ? currentTime : Math.max(currentTime, previousCreatedAt + 1)
+}
+
+export function buildManifestTags(issueNumber: number, previousEventId: string | null): string[][] {
+  const tags = [
+    ['d', `${ISSUE_PREFIX}-${issueNumber}`],
+    ['title', `Logbook Episode ${issueNumber}`],
+  ]
+  if (previousEventId) tags.push(['previous', previousEventId])
+  return tags
 }
 
 /** Parse a raw kind 34200 event into a typed IssueManifest. */

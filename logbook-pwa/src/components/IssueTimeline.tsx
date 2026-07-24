@@ -153,19 +153,12 @@ export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }
             if (!mounted) return
             setProfiles((prev) => new Map([...prev, ...map]))
           })
-          // Fetch transcripts for all segments (kind 1111 companions)
-          fetchTranscripts(allParsed.map((s) => s.event.id)).then((map) => {
+          // Fetch cryptographically bound transcript companions for verified segments.
+          fetchTranscripts(allParsed).then((map) => {
             if (!mounted) return
             setTranscripts((prev) => {
               const next = new Map(prev)
-              for (const [id, t] of map) {
-                try {
-                  const parsed = JSON.parse(t.text) as { text?: string }
-                  next.set(id, parsed.text ?? t.text)
-                } catch {
-                  next.set(id, t.text)
-                }
-              }
+              for (const [id, transcript] of map) next.set(id, transcript.text)
               return next
             })
           })

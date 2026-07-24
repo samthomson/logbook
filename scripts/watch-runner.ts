@@ -1,0 +1,81 @@
+import { latestCuttingManifests, latestVerifiedManifest, type ManifestEvent } from './watch-state.ts'
+
+export interface WatcherCycleDependencies {
+  fetchManifests: () => Promise<ManifestEvent[]>
+  expectedPubkey: string
+  verify: (event: ManifestEvent) => boolean
+  runStitch: (issueId: string) => number
+  runPublish: (issueId: string) => number
+}
+
+export type WatcherCycleOutcome = 'stale' | 'stitch-failed' | 'publish-failed' | 'published'
+export interface WatcherCycleResult {
+  issueId: string
+  outcome: WatcherCycleOutcome
+}
+
+function dTag(event: ManifestEvent): string | null {
+  return event.tags.find((tag) => tag[0] === 'd')?.[1] ?? null
+}
+
+function isCutting(event: ManifestEvent): boolean {
+  try {
+    return (JSON.parse(event.content) as { episodeStatus?: unknown }).episodeStatus === 'cutting'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Run one bounded watcher cycle with every relay read and process side effect
+ * injected. The exact selected revision is revalidated immediately before any
+ * stitch/publish process is started.
+ */
+export async function runWatcherCycle(
+  completed: Set<string>,
+  dependencies: WatcherCycleDependencies,
+): Promise<WatcherCycleResult[]> {
+  const initial = await dependencies.fetchManifests()
+  const candidates = latestCuttingManifests(initial, {
+    expectedPubkey: dependencies.expectedPubkey,
+    verify: dependencies.verify,
+  })
+  const results: WatcherCycleResult[] = []
+
+  for (const candidate of candidates) {
+    const issueId = dTag(candidate)
+    if (!issueId || completed.has(candidate.id)) continue
+
+    const candidateIsCurrent = async (): Promise<boolean> => {
+      const fresh = await dependencies.fetchManifests()
+      const latest = latestVerifiedManifest(fresh, issueId, {
+        expectedPubkey: dependencies.expectedPubkey,
+        verify: dependencies.verify,
+      })
+      return Boolean(latest && latest.id === candidate.id && isCutting(latest))
+    }
+    if (!(await candidateIsCurrent())) {
+      results.push({ issueId, outcome: 'stale' })
+      continue
+    }
+
+    completed.add(candidate.id)
+    if (dependencies.runStitch(issueId) !== 0) {
+      completed.delete(candidate.id)
+      results.push({ issueId, outcome: 'stitch-failed' })
+      continue
+    }
+    if (!(await candidateIsCurrent())) {
+      completed.delete(candidate.id)
+      results.push({ issueId, outcome: 'stale' })
+      continue
+    }
+    if (dependencies.runPublish(issueId) !== 0) {
+      completed.delete(candidate.id)
+      results.push({ issueId, outcome: 'publish-failed' })
+      continue
+    }
+    results.push({ issueId, outcome: 'published' })
+  }
+  return results
+}

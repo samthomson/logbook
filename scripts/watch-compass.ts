@@ -5,7 +5,8 @@ import { spawnSync } from 'node:child_process'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { COMPASS_PUBKEY, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX, loadPrivateKey } from './config.ts'
-import { latestCuttingManifests, missingManifestIssueIds } from './watch-state.ts'
+import { missingManifestIssueIds } from './watch-state.ts'
+import { runWatcherCycle } from './watch-runner.ts'
 import { verifyNostrEvent } from './segment-security.ts'
 
 // ── types ────────────────────────────────────────────────────────────────────
@@ -109,48 +110,48 @@ async function createManifest(event: NostrEvent, privkey: Uint8Array): Promise<v
 
 // ── AUTO-01: stitch trigger ──────────────────────────────────────────────────
 
-async function pollCuttingManifests(stitched: Set<string>): Promise<void> {
-  const pool = new SimplePool()
-  const events = await pool.querySync(DEFAULT_RELAYS, {
-    kinds: [KINDS.MANIFEST],
-    authors: [COMPASS_PUBKEY],
-    limit: 20,
-  })
-  pool.close(DEFAULT_RELAYS)
-
-  const actionable = latestCuttingManifests(events, {
+async function pollCuttingManifests(completedRevisionIds: Set<string>): Promise<void> {
+  const fetchManifests = async (): Promise<NostrEvent[]> => {
+    const pool = new SimplePool()
+    try {
+      return await pool.querySync(DEFAULT_RELAYS, {
+        kinds: [KINDS.MANIFEST],
+        authors: [COMPASS_PUBKEY],
+        limit: 20,
+      })
+    } finally {
+      pool.close(DEFAULT_RELAYS)
+    }
+  }
+  const __dir = dirname(fileURLToPath(import.meta.url))
+  const results = await runWatcherCycle(completedRevisionIds, {
+    fetchManifests,
     expectedPubkey: COMPASS_PUBKEY,
     verify: (event) => verifyNostrEvent(event as NostrEvent),
-  })
-
-  for (const event of actionable) {
-    const issueId = event.tags.find(t => t[0] === 'd')?.[1]
-    if (!issueId || stitched.has(issueId)) continue
-    stitched.add(issueId)
-
-    console.log(`[watch-compass] Manifest ${issueId} is cutting — triggering stitch`)
-    const __dir = dirname(fileURLToPath(import.meta.url))
-
-    const stitchResult = spawnSync(
-      'npx',
-      ['tsx', 'stitch.ts', '--issue', issueId],
-      { cwd: __dir, stdio: 'inherit', env: process.env },
-    )
-    if (stitchResult.status !== 0) {
-      console.error(`[watch-compass] stitch.ts failed for ${issueId}`)
-      stitched.delete(issueId) // allow retry next cycle
-      continue
-    }
-
-    const rssResult = spawnSync(
+    runStitch: (issueId) => {
+      console.log(`[watch-compass] Manifest ${issueId} is cutting — triggering stitch`)
+      return spawnSync(
+        'npx',
+        ['tsx', 'stitch.ts', '--issue', issueId],
+        { cwd: __dir, stdio: 'inherit', env: process.env },
+      ).status ?? 1
+    },
+    runPublish: (issueId) => spawnSync(
       'npx',
       ['tsx', 'publish-rss.ts', '--issue', issueId],
       { cwd: __dir, stdio: 'inherit', env: process.env },
-    )
-    if (rssResult.status !== 0) {
-      console.error(`[watch-compass] publish-rss.ts failed for ${issueId}`)
+    ).status ?? 1,
+  })
+
+  for (const result of results) {
+    if (result.outcome === 'stale') {
+      console.warn(`[watch-compass] Skipped stale cutting revision for ${result.issueId}`)
+    } else if (result.outcome === 'stitch-failed') {
+      console.error(`[watch-compass] stitch.ts failed for ${result.issueId}`)
+    } else if (result.outcome === 'publish-failed') {
+      console.error(`[watch-compass] publish-rss.ts failed for ${result.issueId}`)
     } else {
-      console.log(`[watch-compass] Episode ${issueId} published successfully`)
+      console.log(`[watch-compass] Episode ${result.issueId} published successfully`)
     }
   }
 }
@@ -207,11 +208,11 @@ async function main(): Promise<void> {
   for (const event of validIssues) seen.add(event.id)
   console.log(`[watch-compass] Bootstrapped with ${seen.size} verified issues; backfilled ${missingIds.length} manifest(s)`)
 
-  const stitched = new Set<string>()
+  const completedRevisionIds = new Set<string>()
 
   const INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
   setInterval(() => poll(privkey, seen).catch(console.error), INTERVAL_MS)
-  setInterval(() => pollCuttingManifests(stitched).catch(console.error), INTERVAL_MS)
+  setInterval(() => pollCuttingManifests(completedRevisionIds).catch(console.error), INTERVAL_MS)
   console.log('[watch-compass] Polling every 10 minutes…')
 }
 

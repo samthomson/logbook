@@ -177,31 +177,70 @@ export async function fetchSegmentsForSection(
 }
 
 /**
- * Fetch transcript events for a list of segment IDs.
+ * Fetch trusted transcript events for concrete verified segments.
  */
 export async function fetchTranscripts(
-  segmentIds: string[],
+  segments: Segment[],
   relays: string[] = DEFAULT_RELAYS,
 ): Promise<Map<string, TranscriptEvent>> {
-  if (!segmentIds.length) return new Map()
+  if (!segments.length) return new Map()
+  const segmentIds = segments.map((segment) => segment.event.id)
   const pool = getPool()
   const events = await pool.querySync(relays, {
     kinds: [KINDS.TRANSCRIPT],
     '#e': segmentIds,
   })
 
-  const result = new Map<string, TranscriptEvent>()
-  for (const event of events) {
-    const segmentId = getTag(event, 'e')
-    if (segmentId) {
-      result.set(segmentId, {
-        event,
-        segmentEventId: segmentId,
-        text: event.content,
-      })
+  return selectTrustedTranscripts(segments, events)
+}
+
+const MAX_TRANSCRIPT_CHARS = 200_000
+
+function parseTranscriptText(content: string): string | null {
+  if (content.length > MAX_TRANSCRIPT_CHARS) return null
+  try {
+    const parsed = JSON.parse(content) as unknown
+    if (parsed && typeof parsed === 'object' && 'text' in parsed) {
+      const text = (parsed as { text: unknown }).text
+      return typeof text === 'string' && text.length <= MAX_TRANSCRIPT_CHARS ? text : null
     }
+  } catch {
+    // Current transcript events use plain text.
   }
-  return result
+  return content
+}
+
+/** Select transcripts independent of relay ordering and reject forged linkage. */
+export function selectTrustedTranscripts(
+  segments: Segment[],
+  candidates: NostrEvent[],
+): Map<string, TranscriptEvent> {
+  const verifiedSegmentIds = new Set(filterVerified(segments.map((segment) => segment.event)).map((event) => event.id))
+  const byId = new Map(segments
+    .filter((segment) => verifiedSegmentIds.has(segment.event.id))
+    .map((segment) => [segment.event.id, segment]))
+  const selected = new Map<string, NostrEvent>()
+
+  for (const event of filterVerified(candidates)) {
+    if (event.kind !== KINDS.TRANSCRIPT) continue
+    const eTags = event.tags.filter((tag) => tag[0] === 'e' && tag[1])
+    const kTags = event.tags.filter((tag) => tag[0] === 'k' && tag[1])
+    if (eTags.length !== 1 || kTags.length !== 1 || kTags[0][1] !== String(KINDS.SEGMENT)) continue
+    const segmentId = eTags[0][1]
+    const segment = byId.get(segmentId)
+    const text = parseTranscriptText(event.content)
+    if (!segment || event.pubkey !== segment.event.pubkey || text === null) continue
+    const previous = selected.get(segmentId)
+    if (!previous || event.created_at > previous.created_at || (
+      event.created_at === previous.created_at && event.id.localeCompare(previous.id) > 0
+    )) selected.set(segmentId, event)
+  }
+
+  return new Map([...selected].map(([segmentId, event]) => [segmentId, {
+    event,
+    segmentEventId: segmentId,
+    text: parseTranscriptText(event.content)!,
+  }]))
 }
 
 /**
