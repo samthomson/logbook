@@ -14,8 +14,9 @@
  * notice instead of an editor that would silently no-op.
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import type { NostrSigner } from '../types/nostr'
+import { areRequestScopesCurrent, type LatestRequestGuard } from '../lib/latest-request'
 import {
   D_STANDING, D_ADMINS, D_ISSUE_WL, COMPASS_PUBKEY,
 } from '../config'
@@ -34,6 +35,9 @@ interface Props {
   issueMarkdown: string
   signer: NostrSigner
   pubkey: string
+  writeRequests: LatestRequestGuard
+  capabilityRequests: LatestRequestGuard
+  capabilityRequest: number | null
 }
 
 type ListKind = 'issue' | 'standing' | 'admins'
@@ -44,7 +48,17 @@ const D_TAG: Record<ListKind, (n: number) => string> = {
   admins: () => D_ADMINS,
 }
 
-export default function WhitelistPanel({ issueNumber, issueMarkdown, signer, pubkey }: Props) {
+export default function WhitelistPanel({
+  issueNumber,
+  issueMarkdown,
+  signer,
+  pubkey,
+  writeRequests,
+  capabilityRequests,
+  capabilityRequest,
+}: Props) {
+  const capabilityRef = useRef({ issueNumber, pubkey, signer })
+  capabilityRef.current = { issueNumber, pubkey, signer }
   const isCompass = pubkey.toLowerCase() === COMPASS_PUBKEY.toLowerCase()
   const [lists, setLists] = useState<Record<ListKind, WhitelistEntry[]>>({
     issue: [], standing: [], admins: [],
@@ -77,19 +91,41 @@ export default function WhitelistPanel({ issueNumber, issueMarkdown, signer, pub
   useEffect(() => { void load() }, [load])
 
   const save = useCallback(async (kind: ListKind, entries: WhitelistEntry[]) => {
+    const request = writeRequests.begin()
+    const capability = { issueNumber, pubkey, signer }
+    const isActive = () => {
+      const current = capabilityRef.current
+      return areRequestScopesCurrent(
+        capabilityRequests,
+        capabilityRequest,
+        writeRequests,
+        request,
+      )
+        && current.issueNumber === capability.issueNumber
+        && current.pubkey === capability.pubkey
+        && current.signer === capability.signer
+    }
+    const assertActive = () => {
+      if (!isActive()) throw new Error('Admin capability was revoked')
+    }
+
+    if (!isActive()) return
     setSaving(kind)
     setError(null)
     try {
-      await publishWhitelist(D_TAG[kind](issueNumber), entries, signer)
+      await publishWhitelist(D_TAG[kind](issueNumber), entries, signer, undefined, assertActive)
+      if (!isActive()) return
       setLists((prev) => ({ ...prev, [kind]: entries }))
     } catch (err) {
+      if (!isActive()) return
       setError(err instanceof Error ? err.message : String(err))
     } finally {
-      setSaving(null)
+      if (isActive()) setSaving(null)
     }
-  }, [issueNumber, signer])
+  }, [capabilityRequest, capabilityRequests, issueNumber, pubkey, signer, writeRequests])
 
   const addEntry = useCallback((kind: ListKind, raw: string) => {
+    if (capabilityRequest === null || !capabilityRequests.isCurrent(capabilityRequest)) return
     const hex = normalizeToHex(raw.trim())
     if (!hex) {
       setError(`Not a valid npub or hex pubkey: ${raw.trim().slice(0, 24)}…`)
@@ -99,11 +135,12 @@ export default function WhitelistPanel({ issueNumber, issueMarkdown, signer, pub
     if (current.some((e) => e.pubkey === hex)) return // dedupe
     void save(kind, [...current, { pubkey: hex }])
     setNewInput((prev) => ({ ...prev, [kind]: '' }))
-  }, [lists, save])
+  }, [capabilityRequest, capabilityRequests, lists, save])
 
   const removeEntry = useCallback((kind: ListKind, pk: string) => {
+    if (capabilityRequest === null || !capabilityRequests.isCurrent(capabilityRequest)) return
     void save(kind, lists[kind].filter((e) => e.pubkey !== pk))
-  }, [lists, save])
+  }, [capabilityRequest, capabilityRequests, lists, save])
 
   // Suggested: mentioned in the newsletter, not on any list yet.
   const whitelisted = useMemo(() => new Set([

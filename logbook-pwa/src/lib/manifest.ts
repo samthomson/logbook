@@ -19,6 +19,7 @@ import { now } from './utils'
 import { publishToRelays, filterVerified } from './relay'
 import { selectNewestAddressableRevision } from './manifest-revision'
 import { withSignerTimeout } from './signer-timeout'
+import { assertEventSignedByExpected, assertSignerStillExpected } from './signer-identity'
 
 
 /** Fetch the manifest for a given issue number. Returns null if not found. */
@@ -75,8 +76,12 @@ export async function updateManifest(
   relays: string[] = DEFAULT_RELAYS,
   previousEventId: string | null = null,
   previousCreatedAt: number | null = null,
+  assertActive?: () => void,
 ): Promise<NostrEvent> {
+  if (relays.length === 0) throw new Error('No relays configured')
+  assertActive?.()
   const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Amber identity request')
+  assertActive?.()
 
   // Only Compass pubkey should publish manifests
   if (pubkey !== COMPASS_PUBKEY) {
@@ -91,9 +96,13 @@ export async function updateManifest(
     pubkey,
   }
 
-  if (relays.length === 0) throw new Error('No relays configured')
+  assertActive?.()
   const event = await withSignerTimeout(signer.signEvent(unsigned), 'Amber manifest signing')
+  assertActive?.()
+  assertEventSignedByExpected(event, COMPASS_PUBKEY)
+  await assertSignerStillExpected(signer, COMPASS_PUBKEY, assertActive)
   await publishToRelays(event, relays)
+  assertActive?.()
   return event
 }
 

@@ -28,6 +28,7 @@ import { sha256Blob, now } from './utils'
 import { fetchRaw, HttpError } from './http'
 import { SignerTimeoutError, withSignerTimeout } from './signer-timeout'
 import { validateTrustedBlobUrl } from './blob-trust'
+import { assertEventSignedByExpected, assertExpectedSignerPubkey, assertSignerStillExpected, SignerIdentityError } from './signer-identity'
 
 const AUTH_EXPIRY_SECONDS = 60 * 5 // 5 minutes
 const MIN_BLOB_BYTES = 100 // servers content-sniff; sub-100B blobs always reject
@@ -51,10 +52,13 @@ export interface UploadResult {
 export async function uploadBlob(
   blob: Blob,
   signer: NostrSigner,
+  expectedPubkey: string,
   servers: string[] = BLOSSOM_SERVERS,
   onProgress?: (stage: string) => void,
+  assertActive?: () => void,
 ): Promise<UploadResult> {
   if (servers.length === 0) throw new Error('No Blossom servers configured')
+  assertActive?.()
 
   // Fail fast on a blob that servers would reject anyway. An empty recording
   // (e.g. MediaRecorder stop with no dataavailable) produces a header-only or
@@ -68,6 +72,7 @@ export async function uploadBlob(
 
   onProgress?.('hashing')
   const sha256 = await sha256Blob(blob)
+  assertActive?.()
 
   // Try each eligible primary in order until one accepts the blob.
   const primaries = servers.filter((s) => !MIRROR_ONLY.has(s))
@@ -76,13 +81,16 @@ export async function uploadBlob(
   let primaryUsed = ''
 
   for (const server of primaries) {
+    assertActive?.()
     onProgress?.(`uploading to ${new URL(server).host}`)
     try {
-      descriptor = await uploadToPrimary(blob, sha256, server, signer, onProgress)
+      descriptor = await uploadToPrimary(blob, sha256, server, signer, expectedPubkey, onProgress, assertActive)
+      assertActive?.()
       primaryUsed = server
       break
     } catch (err) {
-      if (err instanceof SignerTimeoutError) throw err
+      assertActive?.()
+      if (err instanceof SignerTimeoutError || err instanceof SignerIdentityError) throw err
       const msg = err instanceof Error ? err.message : String(err)
       errors.push(`${new URL(server).host}: ${msg}`)
       console.warn(`Blossom upload to ${server} failed, trying next:`, msg)
@@ -94,6 +102,7 @@ export async function uploadBlob(
 
   // Mirror to every other configured server (including mirror-only ones).
   // Failures are collected, not thrown — the primary already has the bytes.
+  assertActive?.()
   const mirrored: string[] = []
   const mirrorFailures: { server: string; error: string }[] = []
   await Promise.all(
@@ -101,15 +110,22 @@ export async function uploadBlob(
       .filter((m) => m !== primaryUsed)
       .map(async (mirror) => {
         try {
-          await mirrorBlob(descriptor!.url, sha256, blob.type, mirror, signer)
+          assertActive?.()
+          await mirrorBlob(descriptor!.url, sha256, blob.type, mirror, signer, expectedPubkey, assertActive)
+          assertActive?.()
           mirrored.push(mirror)
         } catch (err) {
+          assertActive?.()
           const msg = err instanceof Error ? err.message : String(err)
+          // Primary bytes are already durable. Treat a signer switch here as a
+          // non-retryable mirror failure so the caller can retain the descriptor;
+          // the subsequent segment identity check will fail closed.
           mirrorFailures.push({ server: mirror, error: msg })
           console.warn(`Blossom mirror to ${mirror} failed:`, msg)
         }
       }),
   )
+  assertActive?.()
 
   return { descriptor, mirrored, mirrorFailures }
 }
@@ -123,7 +139,9 @@ async function uploadToPrimary(
   sha256: string,
   serverUrl: string,
   signer: NostrSigner,
+  expectedPubkey: string,
   onProgress?: (stage: string) => void,
+  assertActive?: () => void,
 ): Promise<BlobDescriptor> {
   const base = serverUrl.replace(/\/$/, '')
 
@@ -132,8 +150,11 @@ async function uploadToPrimary(
   let lastErr: unknown
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
+      assertActive?.()
       onProgress?.(`Awaiting Amber signature for ${new URL(serverUrl).host}`)
-      const authEvent = await makeBlossomAuth(sha256, 'upload', signer)
+      const authEvent = await makeBlossomAuth(sha256, 'upload', signer, expectedPubkey, assertActive)
+      assertActive?.()
+      await assertSignerStillExpected(signer, expectedPubkey, assertActive)
       const res = await fetchRaw(`${base}/upload`, {
         method: 'PUT',
         headers: {
@@ -144,6 +165,7 @@ async function uploadToPrimary(
         timeoutMs: 30_000,
         attempts: 1, // we handle retry ourselves so auth is re-signed each time
       })
+      assertActive?.()
 
       if (!res.ok) {
         const body = await res.text().catch(() => '')
@@ -155,9 +177,11 @@ async function uploadToPrimary(
       const descriptor = validateUploadDescriptor(data, blob, sha256, [serverUrl])
       return descriptor
     } catch (err) {
+      assertActive?.()
       lastErr = err
       // A disconnected NIP-46 signer cannot be repaired by retrying the same
       // server. Return the saved draft promptly so the user can reopen Amber.
+      if (err instanceof SignerIdentityError) throw err
       if (err instanceof SignerTimeoutError) break
       // Don't retry client errors (4xx) — they won't succeed on a retry.
       if (err instanceof HttpError && err.status !== undefined && err.status < 500) break
@@ -205,12 +229,17 @@ async function mirrorBlob(
   mime: string,
   serverUrl: string,
   signer: NostrSigner,
+  expectedPubkey: string,
+  assertActive?: () => void,
 ): Promise<void> {
   const base = serverUrl.replace(/\/$/, '')
   let lastErr: unknown
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const authEvent = await makeBlossomAuth(sha256, 'upload', signer)
+      assertActive?.()
+      const authEvent = await makeBlossomAuth(sha256, 'upload', signer, expectedPubkey, assertActive)
+      assertActive?.()
+      await assertSignerStillExpected(signer, expectedPubkey, assertActive)
       const res = await fetchRaw(`${base}/mirror`, {
         method: 'PUT',
         headers: {
@@ -221,12 +250,15 @@ async function mirrorBlob(
         timeoutMs: 20_000,
         attempts: 1,
       })
+      assertActive?.()
       if (!res.ok) {
         const body = await res.text().catch(() => '')
         throw new HttpError(`mirror failed (${res.status}): ${body.slice(0, 160)}`, res.status)
       }
       return
     } catch (err) {
+      assertActive?.()
+      if (err instanceof SignerIdentityError) throw err
       lastErr = err
       if (err instanceof HttpError && err.status !== undefined && err.status < 500) break
       if (attempt < 2) await new Promise((r) => setTimeout(r, 400))
@@ -244,9 +276,14 @@ async function makeBlossomAuth(
   sha256: string,
   t: 'upload' | 'get' | 'delete' | 'list',
   signer: NostrSigner,
+  expectedPubkey: string,
+  assertActive?: () => void,
 ): Promise<NostrEvent> {
+  assertActive?.()
   const expiration = now() + AUTH_EXPIRY_SECONDS
   const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Amber identity request')
+  assertActive?.()
+  assertExpectedSignerPubkey(pubkey, expectedPubkey)
   const unsigned = {
     kind: KINDS.BLOSSOM_AUTH,
     created_at: now(),
@@ -258,7 +295,11 @@ async function makeBlossomAuth(
     content: `${t} ${sha256}`,
     pubkey,
   }
-  return withSignerTimeout(signer.signEvent(unsigned), 'Amber Blossom authorization')
+  assertActive?.()
+  const event = await withSignerTimeout(signer.signEvent(unsigned), 'Amber Blossom authorization')
+  assertActive?.()
+  assertEventSignedByExpected(event, expectedPubkey)
+  return event
 }
 
 /** Delete a blob from a server (best-effort). */
@@ -266,8 +307,10 @@ export async function deleteBlob(
   sha256: string,
   serverUrl: string,
   signer: NostrSigner,
+  expectedPubkey: string,
 ): Promise<void> {
-  const authEvent = await makeBlossomAuth(sha256, 'delete', signer)
+  const authEvent = await makeBlossomAuth(sha256, 'delete', signer, expectedPubkey)
+  await assertSignerStillExpected(signer, expectedPubkey)
   await fetchRaw(`${serverUrl.replace(/\/$/, '')}/${sha256}`, {
     method: 'DELETE',
     headers: { Authorization: `Nostr ${btoa(JSON.stringify(authEvent))}` },

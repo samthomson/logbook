@@ -3,6 +3,7 @@ import type { AuthState } from './lib/auth'
 import { connectBunker, connectNsec, connectWindowNostr, restoreSession, startAmberConnect } from './lib/auth'
 import { AUTH_SESSION_KEY, readSelectedIssueNumber, restorePersistedAuthSession, saveRestorableAuthSession, saveSelectedIssueNumber } from './lib/session'
 import { withSignerTimeout } from './lib/signer-timeout'
+import { createLatestRequestGuard, type LatestRequestGuard } from './lib/latest-request'
 import { useKeyboardOffset } from './lib/useKeyboardOffset'
 
 import IssueTimeline from './components/IssueTimeline'
@@ -22,45 +23,85 @@ export default function App() {
   const [auth, setAuth] = useState<AuthState | null>(null)
   const [restoringAuth, setRestoringAuth] = useState(false)
   const [restoreError, setRestoreError] = useState<string | null>(null)
-  const [view, setView] = useState<AppView>('auth')
+  const [view, setView] = useState<AppView>('timeline')
   const [recordingNotice, setRecordingNotice] = useState<string | null>(null)
   const [issue, setIssue] = useState<CompassIssue | null>(null)
   const [isWhitelisted, setIsWhitelisted] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
   const [contributorPubkeys, setContributorPubkeys] = useState<Set<string>>(new Set())
   const [accessDegraded, setAccessDegraded] = useState(false)
-  const [issueLoading, setIssueLoading] = useState(false)
+  const [issueLoading, setIssueLoading] = useState(true)
   const [issueError, setIssueError] = useState<string | null>(null)
   const keyboardOffset = useKeyboardOffset()
+  const [issueRequests] = useState(createLatestRequestGuard)
+  const [accessRequests] = useState(createLatestRequestGuard)
+  const [authRequests] = useState(createLatestRequestGuard)
+  const [manifestWriteRequests] = useState(createLatestRequestGuard)
+  const [whitelistWriteRequests] = useState(createLatestRequestGuard)
+  const [timelineCapabilityRequests] = useState(createLatestRequestGuard)
+  const [timelineCapabilityRequest, setTimelineCapabilityRequest] = useState<number | null>(null)
+  const [adminCapabilityRequests] = useState(createLatestRequestGuard)
+  const [adminCapabilityRequest, setAdminCapabilityRequest] = useState<number | null>(null)
+
+  const clearAccess = useCallback(() => {
+    accessRequests.invalidate()
+    manifestWriteRequests.invalidate()
+    whitelistWriteRequests.invalidate()
+    timelineCapabilityRequests.invalidate()
+    adminCapabilityRequests.invalidate()
+    setTimelineCapabilityRequest(null)
+    setAdminCapabilityRequest(null)
+    setIsWhitelisted(false)
+    setIsAdmin(false)
+    setContributorPubkeys(new Set())
+    setAccessDegraded(false)
+  }, [accessRequests, adminCapabilityRequests, manifestWriteRequests, timelineCapabilityRequests, whitelistWriteRequests])
 
   /** Single access-control fetch — canRecord + isAdmin derive from the same
    *  call, so the two gates can never race or disagree. */
   const loadAccess = useCallback(async (issueNumber: number, pubkey: string) => {
+    timelineCapabilityRequests.invalidate()
+    adminCapabilityRequests.invalidate()
+    setTimelineCapabilityRequest(null)
+    setAdminCapabilityRequest(null)
+    const request = accessRequests.begin()
     const isCompass = pubkey.toLowerCase() === COMPASS_PUBKEY.toLowerCase()
     const isBootstrapAdmin = isCompass || ADMIN_PUBKEYS.some((admin) => admin.toLowerCase() === pubkey.toLowerCase())
     try {
       const access = await fetchAccessLists(issueNumber)
+      if (!accessRequests.isCurrent(request)) return
+      manifestWriteRequests.invalidate()
+      whitelistWriteRequests.invalidate()
       // Admin review must use the same merged set that grants recording,
       // including admins who are allowed to contribute without a separate
       // contributor-list entry.
       const allowed = new Set([...access.contributors, ...access.admins])
       allowed.add(COMPASS_PUBKEY)
+      const canRecord = isBootstrapAdmin || allowed.has(pubkey.toLowerCase())
+      const canAdmin = isBootstrapAdmin || access.admins.has(pubkey.toLowerCase())
+      setTimelineCapabilityRequest(canRecord ? timelineCapabilityRequests.begin() : null)
+      setAdminCapabilityRequest(canAdmin ? adminCapabilityRequests.begin() : null)
       setContributorPubkeys(allowed)
-      setIsWhitelisted(isBootstrapAdmin || allowed.has(pubkey.toLowerCase()))
-      setIsAdmin(isBootstrapAdmin || access.admins.has(pubkey.toLowerCase()))
+      setIsWhitelisted(canRecord)
+      setIsAdmin(canAdmin)
       setAccessDegraded(access.degraded)
     } catch {
+      if (!accessRequests.isCurrent(request)) return
+      manifestWriteRequests.invalidate()
+      whitelistWriteRequests.invalidate()
       // Total failure — fail closed on record, but never lock out bootstrap
       // admins (they need the UI that fixes the list). fetchAccessLists
       // already encodes this; a throw here means something truly unexpected.
       // The Compass identity must retain the repair path even when every
       // whitelist relay is down; otherwise it cannot restore access.
+      setTimelineCapabilityRequest(isBootstrapAdmin ? timelineCapabilityRequests.begin() : null)
+      setAdminCapabilityRequest(isBootstrapAdmin ? adminCapabilityRequests.begin() : null)
       setIsWhitelisted(isBootstrapAdmin)
       setIsAdmin(isBootstrapAdmin)
       setContributorPubkeys(isBootstrapAdmin ? new Set([COMPASS_PUBKEY, ...ADMIN_PUBKEYS]) : new Set())
       setAccessDegraded(true)
     }
-  }, [])
+  }, [accessRequests, adminCapabilityRequests, manifestWriteRequests, timelineCapabilityRequests, whitelistWriteRequests])
 
   useEffect(() => {
     const { supported, message } = checkRecordingSupport(IOS_RECORDING_MIN_VERSION)
@@ -77,25 +118,40 @@ export default function App() {
     const saved = restorePersistedAuthSession(localStorage, sessionStorage)
     if (!saved) return
 
+    const request = authRequests.begin()
+    const restore = (promise: Promise<AuthState>, failure: string) => {
+      promise
+        .then((state) => {
+          if (!authRequests.isCurrent(request)) return
+          setAuth(state)
+          setView('timeline')
+        })
+        .catch(() => {
+          if (authRequests.isCurrent(request)) setRestoreError(failure)
+        })
+        .finally(() => {
+          if (authRequests.isCurrent(request)) setRestoringAuth(false)
+        })
+    }
+
     setRestoringAuth(true)
     if (saved.method === 'extension' && typeof window !== 'undefined' && 'nostr' in window) {
-      connectWindowNostr()
-        .then((state) => { setAuth(state); setView('timeline') })
-        .catch(() => setRestoreError('Your browser signer could not restore this session.'))
-        .finally(() => setRestoringAuth(false))
+      restore(connectWindowNostr(), 'Your browser signer could not restore this session.')
     } else if ((saved.method === 'amber' || saved.method === 'bunker') && saved.session) {
-      withSignerTimeout(restoreSession(saved.session, saved.method, saved.pubkey), 'Amber session restoration')
-        .then((state) => { setAuth(state); setView('timeline') })
-        .catch(() => setRestoreError('Amber could not restore this session. Reopen Amber, then sign in again.'))
-        .finally(() => setRestoringAuth(false))
+      restore(
+        withSignerTimeout(restoreSession(saved.session, saved.method, saved.pubkey), 'Amber session restoration'),
+        'Amber could not restore this session. Reopen Amber, then sign in again.',
+      )
     } else {
       setRestoringAuth(false)
     }
-  }, [])
+    return () => authRequests.invalidate()
+  }, [authRequests])
 
-  // Load latest issue + whitelist check after login
+  // Public reading never depends on a signer. Resolve the selected/latest issue
+  // once on mount so losing an auth session cannot hide already-published content.
   useEffect(() => {
-    if (!auth) return
+    const request = issueRequests.begin()
     setIssueLoading(true)
     setIssueError(null)
 
@@ -105,27 +161,39 @@ export default function App() {
       : fetchLatestIssueWithSegments().then((populated) => populated ?? fetchLatestIssue())
 
     issueRequest
-      .then(async (event) => {
-        if (!event) return
-        const parsed = parseIssue(event)
-        setIssue(parsed)
-        await loadAccess(parsed.issueNumber, auth.pubkey)
+      .then((event) => {
+        if (issueRequests.isCurrent(request) && event) setIssue(parseIssue(event))
       })
       .catch((err: unknown) => {
-        setIssueError(err instanceof Error ? err.message : String(err))
+        if (issueRequests.isCurrent(request)) setIssueError(err instanceof Error ? err.message : String(err))
       })
-      .finally(() => setIssueLoading(false))
-  }, [auth, loadAccess])
+      .finally(() => {
+        if (issueRequests.isCurrent(request)) setIssueLoading(false)
+      })
+    return () => issueRequests.invalidate()
+  }, [issueRequests])
 
-  const handleSelectIssue = async (event: NostrEvent) => {
-    if (!auth) return
+  // Authentication only enables recording/admin capabilities. Keep it separate
+  // from the public issue request to avoid duplicate relay loads and auth races.
+  useEffect(() => {
+    if (!auth || !issue) {
+      clearAccess()
+      return
+    }
+    void loadAccess(issue.issueNumber, auth.pubkey)
+    return () => accessRequests.invalidate()
+  }, [auth, issue, loadAccess, clearAccess, accessRequests])
+
+  const handleSelectIssue = (event: NostrEvent) => {
+    authRequests.invalidate()
+    issueRequests.invalidate()
+    clearAccess()
     setIssueLoading(true)
     setIssueError(null)
     try {
       const parsed = parseIssue(event)
       saveSelectedIssueNumber(localStorage, parsed.issueNumber)
       setIssue(parsed)
-      await loadAccess(parsed.issueNumber, auth.pubkey)
       setView('timeline')
     } catch (err: unknown) {
       setIssueError(err instanceof Error ? err.message : String(err))
@@ -134,42 +202,33 @@ export default function App() {
     }
   }
 
-  if (view === 'auth' || !auth) {
-    return (
-      <div className="app">
-        {recordingNotice && (
-          <div className="notice notice--warning" role="alert">
-            {recordingNotice}
-          </div>
-        )}
-        {restoringAuth && (
-          <div className="notice notice--warning" role="status">Restoring your Amber session…</div>
-        )}
-        {restoreError && (
-          <div className="notice notice--error" role="alert">{restoreError}</div>
-        )}
-        <AuthScreen onAuth={(state, method) => {
-        setRestoreError(null)
-        // Persist only the non-secret extension marker across browser sessions.
-        // NIP-46 nbunksec values are signing capabilities, so keep them scoped
-        // to this tab while still allowing ordinary page reload restoration.
-        if (method === 'extension') {
-          saveRestorableAuthSession(localStorage, { method: 'extension' })
-          sessionStorage.removeItem(AUTH_SESSION_KEY)
-        } else {
-          localStorage.removeItem(AUTH_SESSION_KEY)
-          saveRestorableAuthSession(
-            sessionStorage,
-            ((method === 'amber' || method === 'bunker') && state.session
-              ? { method, session: state.session, pubkey: state.pubkey }
-              : null),
-          )
-        }
-        setAuth(state)
-        setView('timeline')
-      }} />
-      </div>
-    )
+  const navigateTo = useCallback((next: AppView) => {
+    if (next !== 'auth') authRequests.invalidate()
+    setView(next)
+  }, [authRequests])
+
+  const handleAuth = (state: AuthState, method: string) => {
+    authRequests.invalidate()
+    setRestoringAuth(false)
+    clearAccess()
+    setRestoreError(null)
+    // Persist only the non-secret extension marker across browser sessions.
+    // NIP-46 nbunksec values are signing capabilities, so keep them scoped
+    // to this tab while still allowing ordinary page reload restoration.
+    if (method === 'extension') {
+      saveRestorableAuthSession(localStorage, { method: 'extension' })
+      sessionStorage.removeItem(AUTH_SESSION_KEY)
+    } else {
+      localStorage.removeItem(AUTH_SESSION_KEY)
+      saveRestorableAuthSession(
+        sessionStorage,
+        ((method === 'amber' || method === 'bunker') && state.session
+          ? { method, session: state.session, pubkey: state.pubkey }
+          : null),
+      )
+    }
+    setAuth(state)
+    setView('timeline')
   }
 
   return (
@@ -187,53 +246,80 @@ export default function App() {
         <nav className="app-nav">
           <button
             className={`btn btn--ghost btn--small ${view === 'timeline' ? 'btn--active' : ''}`}
-            onClick={() => setView('timeline')}
+            onClick={() => navigateTo('timeline')}
           >
             Timeline
           </button>
           <button
             className={`btn btn--ghost btn--small ${view === 'issue-picker' ? 'btn--active' : ''}`}
-            onClick={() => setView('issue-picker')}
+            onClick={() => navigateTo('issue-picker')}
           >
             Episodes
           </button>
-          {isAdmin && (
+          {auth && isAdmin && (
             <button
               className={`btn btn--ghost btn--small ${view === 'admin' ? 'btn--active' : ''}`}
-              onClick={() => setView('admin')}
+              onClick={() => navigateTo('admin')}
             >
               Admin
             </button>
           )}
         </nav>
-        <button
-          className="btn btn--ghost btn--small app-logout"
-          onClick={() => {
-            localStorage.removeItem(AUTH_SESSION_KEY)
-            sessionStorage.removeItem(AUTH_SESSION_KEY)
-            setAuth(null)
-            setIssue(null)
-            setView('auth')
-          }}
-          aria-label="Log out"
-        >
-          Log out
-        </button>
+        {auth ? (
+          <button
+            className="btn btn--ghost btn--small app-logout"
+            onClick={() => {
+              authRequests.invalidate()
+              setRestoringAuth(false)
+              clearAccess()
+              localStorage.removeItem(AUTH_SESSION_KEY)
+              sessionStorage.removeItem(AUTH_SESSION_KEY)
+              setAuth(null)
+              setView('timeline')
+            }}
+            aria-label="Log out"
+          >
+            Log out
+          </button>
+        ) : (
+          <button
+            className="btn btn--primary btn--small app-login"
+            onClick={() => {
+              authRequests.invalidate()
+              setRestoringAuth(false)
+              setView('auth')
+            }}
+          >
+            Sign in to record
+          </button>
+        )}
       </header>
 
       <div className="app-body">
+        {restoringAuth && (
+          <div className="notice notice--warning" role="status">Restoring your Amber session…</div>
+        )}
+        {restoreError && (
+          <div className="notice notice--error" role="alert">{restoreError}</div>
+        )}
+        {view === 'auth' && !auth && <AuthScreen onAuth={handleAuth} authRequests={authRequests} />}
+
         {accessDegraded && (
           <div className="notice notice--warning" role="alert">
             Couldn't load the contributor list — recording is paused.
             <button
               className="btn btn--ghost btn--small"
-              onClick={() => { if (issue && auth) void loadAccess(issue.issueNumber, auth.pubkey) }}
+              onClick={() => {
+                if (!issue || !auth) return
+                clearAccess()
+                void loadAccess(issue.issueNumber, auth.pubkey)
+              }}
             >
               Retry
             </button>
           </div>
         )}
-        {issueLoading && (
+        {view !== 'auth' && issueLoading && (
           <div className="app-loading">
             <div className="spinner" aria-label="Loading" />
             <p>Loading issue…</p>
@@ -248,9 +334,11 @@ export default function App() {
         {view === 'timeline' && !issueLoading && issue && (
           <IssueTimeline
             issue={issue}
-            signer={auth.signer}
-            myPubkey={auth.pubkey}
-            isWhitelisted={isWhitelisted}
+            signer={auth?.signer ?? null}
+            myPubkey={auth?.pubkey ?? null}
+            canRecord={Boolean(auth && isWhitelisted)}
+            capabilityRequests={timelineCapabilityRequests}
+            capabilityRequest={timelineCapabilityRequest}
           />
         )}
 
@@ -264,17 +352,21 @@ export default function App() {
           <IssuePicker
             currentIssueNumber={issue?.issueNumber ?? null}
             onSelect={handleSelectIssue}
-            onBack={() => setView('timeline')}
+            onBack={() => navigateTo('timeline')}
           />
         )}
 
-        {view === 'admin' && isAdmin && issue && (
+        {view === 'admin' && isAdmin && issue && auth && (
           <Suspense fallback={<div className="app-empty"><p>Loading admin tools…</p></div>}>
             <AdminPanel
               issue={issue}
               signer={auth.signer}
               pubkey={auth.pubkey}
               contributorPubkeys={contributorPubkeys}
+              manifestWriteRequests={manifestWriteRequests}
+              whitelistWriteRequests={whitelistWriteRequests}
+              capabilityRequests={adminCapabilityRequests}
+              capabilityRequest={adminCapabilityRequest}
             />
           </Suspense>
         )}
@@ -290,8 +382,9 @@ export default function App() {
 
 // ─── Auth Screen ──────────────────────────────────────────────────────────────
 
-function AuthScreen({ onAuth }: {
+function AuthScreen({ onAuth, authRequests }: {
   onAuth: (state: AuthState, method: string) => void
+  authRequests: LatestRequestGuard
 }) {
   const [advanced, setAdvanced] = useState<'bunker' | 'nsec' | null>(null)
   const [input, setInput] = useState('')
@@ -303,10 +396,14 @@ function AuthScreen({ onAuth }: {
   const hasExtension = typeof window !== 'undefined' && 'nostr' in window
   const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)
 
-  // Cancel any pending Amber connection on unmount
-  useEffect(() => () => { amberCancelRef.current?.() }, [])
+  // Cancel pending sign-in and revoke every interactive continuation on unmount.
+  useEffect(() => () => {
+    authRequests.invalidate()
+    amberCancelRef.current?.()
+  }, [authRequests])
 
   function handleAmber() {
+    const request = authRequests.begin()
     // Everything before the navigation must be synchronous — Android Chrome
     // blocks scheme navigations that aren't tied directly to the user gesture.
     setError(null)
@@ -315,8 +412,13 @@ function AuthScreen({ onAuth }: {
       amberCancelRef.current = handle.cancel
       setAmberWaiting(true)
       handle.wait()
-        .then((state) => { amberCancelRef.current = null; onAuth(state, 'amber') })
+        .then((state) => {
+          if (!authRequests.isCurrent(request)) return
+          amberCancelRef.current = null
+          onAuth(state, 'amber')
+        })
         .catch((err) => {
+          if (!authRequests.isCurrent(request)) return
           setAmberWaiting(false)
           if (!(err instanceof Error && err.message === 'Aborted')) {
             setError(err instanceof Error ? err.message : String(err))
@@ -324,25 +426,30 @@ function AuthScreen({ onAuth }: {
         })
       window.location.href = handle.uri // synchronous deep link into Amber
     } catch (err) {
+      if (!authRequests.isCurrent(request)) return
       setAmberWaiting(false)
       setError(err instanceof Error ? err.message : String(err))
     }
   }
 
   async function handleExtension() {
+    const request = authRequests.begin()
     setError(null)
     setLoading('extension')
     try {
       const state = await connectWindowNostr()
+      if (!authRequests.isCurrent(request)) return
       onAuth(state, 'extension')
     } catch (err) {
+      if (!authRequests.isCurrent(request)) return
       setError(err instanceof Error ? err.message : String(err))
     } finally {
-      setLoading(null)
+      if (authRequests.isCurrent(request)) setLoading(null)
     }
   }
 
   async function handleAdvancedConnect() {
+    const request = authRequests.begin()
     setError(null)
     setLoading(advanced)
     try {
@@ -354,11 +461,13 @@ function AuthScreen({ onAuth }: {
       } else {
         return
       }
+      if (!authRequests.isCurrent(request)) return
       onAuth(state, advanced)
     } catch (err) {
+      if (!authRequests.isCurrent(request)) return
       setError(err instanceof Error ? err.message : String(err))
     } finally {
-      setLoading(null)
+      if (authRequests.isCurrent(request)) setLoading(null)
     }
   }
 
@@ -379,6 +488,7 @@ function AuthScreen({ onAuth }: {
               <button
                 className="btn btn--ghost btn--small"
                 onClick={() => {
+                  authRequests.invalidate()
                   amberCancelRef.current?.()
                   amberCancelRef.current = null
                   setAmberWaiting(false)

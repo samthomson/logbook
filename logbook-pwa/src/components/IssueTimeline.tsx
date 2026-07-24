@@ -29,15 +29,18 @@ import { computeSeedOrder } from '../lib/ordering'
 import { PlaybackProvider } from '../lib/playback'
 import { fetchProfiles, type Profile } from '../lib/profiles'
 import { getPool } from '../lib/pool'
-import { deleteDraft, listDrafts, saveDraft, type RecordingDraft } from '../lib/drafts'
+import { deleteDraft, draftBelongsTo, listDrafts, saveDraft, selectDraftForPrincipal, type RecordingDraft } from '../lib/drafts'
 import type { Filter } from 'nostr-tools'
 import { BLOSSOM_SERVERS, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from '../config'
+import { areRequestScopesCurrent, createLatestRequestGuard, type LatestRequestGuard } from '../lib/latest-request'
 
 interface Props {
   issue: CompassIssue
-  signer: NostrSigner
-  myPubkey: string
-  isWhitelisted: boolean
+  signer: NostrSigner | null
+  myPubkey: string | null
+  canRecord: boolean
+  capabilityRequests: LatestRequestGuard
+  capabilityRequest: number | null
 }
 
 interface SectionState {
@@ -70,11 +73,24 @@ function recordingSections(issue: CompassIssue): { group: IssueSection; targets:
   })
 }
 
-export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }: Props) {
+export default function IssueTimeline({
+  issue,
+  signer,
+  myPubkey,
+  canRecord,
+  capabilityRequests,
+  capabilityRequest,
+}: Props) {
+  const recordingEnabled = canRecord && signer !== null
+  const publishCapabilityRef = useRef({ issueNumber: issue.issueNumber, myPubkey, recordingEnabled, signer })
+  publishCapabilityRef.current = { issueNumber: issue.issueNumber, myPubkey, recordingEnabled, signer }
+  const [publishRequests] = useState(createLatestRequestGuard)
   const [sections, setSections] = useState<Map<string, SectionState>>(new Map())
   const [recordTarget, setRecordTarget] = useState<RecordTarget | null>(null)
   const [publishing, setPublishing] = useState(false)
   const [publishError, setPublishError] = useState<string | null>(null)
+  const [uploadStage, setUploadStage] = useState<string | null>(null)
+  const [pendingDraft, setPendingDraft] = useState<RecordingDraft | null>(null)
   const [justPublished, setJustPublished] = useState<Set<string>>(new Set())
   const [newSegmentIds, setNewSegmentIds] = useState<Set<string>>(new Set())
   const [profiles, setProfiles] = useState<Map<string, Profile>>(new Map())
@@ -230,28 +246,65 @@ export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }
   // Tracks which section's plain (non-reply) recorder was last armed, so
   // handleRecorded can resolve the target even when recordTarget is null.
   const plainTargetRef = useRef<RecordTarget | null>(null)
+  useEffect(() => {
+    publishRequests.invalidate()
+    setPublishing(false)
+    setUploadStage(null)
+    setPublishError(null)
+    if (!recordingEnabled) {
+      setRecordTarget(null)
+      plainTargetRef.current = null
+    }
+    return () => publishRequests.invalidate()
+  }, [issue.issueNumber, myPubkey, publishRequests, recordingEnabled, signer])
   // Cache the upload descriptor + recording across a failed publish so a retry
   // reuses the already-uploaded blob; IndexedDB keeps this state across reloads.
   const pendingRef = useRef<{
+    ownerPubkey: string
     target: RecordTarget
     result: InlineRecordingResult
     descriptor: import('../types/nostr').BlobDescriptor | null
     draftId: string
   } | null>(null)
-  const [uploadStage, setUploadStage] = useState<string | null>(null)
-  const [pendingDraft, setPendingDraft] = useState<RecordingDraft | null>(null)
 
   const handleRecorded = useCallback(
     async (result: InlineRecordingResult, restoredTarget?: RecordTarget) => {
+      if (!recordingEnabled || !signer || !myPubkey) return
+      const ownerPubkey = myPubkey
       // Fallback: plain (non-reply) recorders don't set recordTarget — infer
       // the section from the most recently armed plain recorder.
-      const target = restoredTarget ?? recordTarget ?? plainTargetRef.current ?? pendingRef.current?.target
+      const resumablePending = pendingRef.current?.ownerPubkey === ownerPubkey
+        ? pendingRef.current
+        : null
+      const target = restoredTarget ?? recordTarget ?? plainTargetRef.current ?? resumablePending?.target
       if (!target) return
-      const draftId = pendingRef.current?.draftId ?? crypto.randomUUID()
+      const publishRequest = publishRequests.begin()
+      const isPublishingActive = () => {
+        const current = publishCapabilityRef.current
+        return areRequestScopesCurrent(
+          capabilityRequests,
+          capabilityRequest,
+          publishRequests,
+          publishRequest,
+        )
+          && current.recordingEnabled
+          && current.signer === signer
+          && current.myPubkey === myPubkey
+          && current.issueNumber === issue.issueNumber
+      }
+      const assertPublishingActive = () => {
+        if (!isPublishingActive()) {
+          throw new Error('Publishing authorization was revoked.')
+        }
+      }
+      if (!isPublishingActive()) return
+      const draftId = resumablePending?.draftId ?? crypto.randomUUID()
       const persistDraft = async (descriptor: import('../types/nostr').BlobDescriptor | null) => {
+        assertPublishingActive()
         const draft: RecordingDraft = {
           id: draftId,
           issueNumber: issue.issueNumber,
+          ownerPubkey,
           target: { sectionId: target.sectionId, respondingTo: target.respondingTo ?? null },
           blob: result.blob,
           duration: result.duration,
@@ -261,6 +314,7 @@ export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }
         }
         // Render the in-place upload bubble before IndexedDB finishes so stop
         // never leaves a visual gap on slower devices.
+        pendingRef.current = { ownerPubkey, target, result, descriptor, draftId }
         setPendingDraft(draft)
         try {
           await saveDraft(draft)
@@ -269,18 +323,26 @@ export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }
           // available, but the user gets an explicit warning if it later fails.
           console.warn('Unable to persist recording draft:', error)
         }
+        assertPublishingActive()
       }
-      setPublishing(true)
-      setPublishError(null)
-      setUploadStage('Preparing upload')
-      await persistDraft(pendingRef.current?.descriptor ?? null)
       try {
+        assertPublishingActive()
+        setPublishing(true)
+        setPublishError(null)
+        setUploadStage('Preparing upload')
+        await persistDraft(resumablePending?.descriptor ?? null)
+        assertPublishingActive()
         // Reuse a prior attempt's descriptor if the upload already succeeded —
         // otherwise the blob gets re-uploaded and the old one is orphaned.
-        let descriptor = pendingRef.current?.descriptor ?? null
+        let descriptor = resumablePending?.descriptor ?? null
         if (!descriptor) {
-          const up = await uploadBlob(result.blob, signer, undefined, (stage) =>
-            setUploadStage(stage),
+          const up = await uploadBlob(
+            result.blob,
+            signer,
+            ownerPubkey,
+            undefined,
+            (stage) => setUploadStage(stage),
+            assertPublishingActive,
           )
           descriptor = up.descriptor
           await persistDraft(descriptor)
@@ -288,22 +350,29 @@ export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }
             console.warn('Some mirrors failed:', up.mirrorFailures)
           }
         }
-        pendingRef.current = { target, result, descriptor, draftId }
+        assertPublishingActive()
+        pendingRef.current = { ownerPubkey, target, result, descriptor, draftId }
         setUploadStage('Publishing to relays')
 
         const event = await publishSegment({
           signer,
+          expectedPubkey: ownerPubkey,
           blob: descriptor,
           duration: result.duration,
           waveform: result.waveform,
           sectionId: target.sectionId,
           issueNumber: issue.issueNumber,
           respondingTo: target.respondingTo,
+          assertActive: assertPublishingActive,
         })
-        // Published — delete the crash-safe draft only after relay publishing succeeds.
-        pendingRef.current = null
+        assertPublishingActive()
+        // Publication completed while this capability was current. Clear only
+        // this operation's in-memory draft synchronously; any awaited cleanup
+        // after this point must re-check capability before touching UI again.
+        if (pendingRef.current?.draftId === draftId) pendingRef.current = null
+        setPendingDraft((current) => current?.id === draftId ? null : current)
         await deleteDraft(draftId).catch((error) => console.warn('Unable to remove published recording draft:', error))
-        setPendingDraft(null)
+        if (!isPublishingActive()) return
         const newSeg = parseSegment(event)
         if (newSeg) {
           knownIdsRef.current.add(newSeg.event.id)
@@ -320,6 +389,7 @@ export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }
           // Subtle published indicator on the new bubble
           setJustPublished((prev) => new Set([...prev, newSeg.event.id]))
           setTimeout(() => {
+            if (!isPublishingActive()) return
             setJustPublished((prev) => {
               const next = new Set(prev)
               next.delete(newSeg.event.id)
@@ -331,61 +401,78 @@ export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }
         // Transcription is deliberately opt-in while the browser inference
         // dependency tree has unresolved upstream audit findings.
         if (isLocalTranscriptionEnabled()) {
-          void transcribeAndPublish(result.blob, event, signer).then(() => {
+          void transcribeAndPublish(result.blob, event, signer, ownerPubkey, assertPublishingActive).then(() => {
             // Transcript will arrive via the live fetch on next load.
           })
         }
-    } catch (err) {
-        // Keep the pending recording + descriptor so the user can retry without
-        // re-recording or re-uploading. Surface a visible banner — never silent.
-        console.error('Publish failed:', err)
-        const msg = err instanceof Error ? err.message : String(err)
-        setPublishError(`Publish failed — recording NOT lost, tap Record again to retry. (${msg.slice(0, 160)})`)
+      } catch (err) {
+        if (isPublishingActive()) {
+          // Keep the pending recording + descriptor so a current contributor can
+          // retry without re-recording or re-uploading. Stale sessions stay silent.
+          console.error('Publish failed:', err)
+          const msg = err instanceof Error ? err.message : String(err)
+          setPublishError(`Publish failed — recording NOT lost, tap Record again to retry. (${msg.slice(0, 160)})`)
+        }
       } finally {
-        setPublishing(false)
-        setUploadStage(null)
+        if (isPublishingActive()) {
+          setPublishing(false)
+          setUploadStage(null)
+        }
       }
     },
-    [recordTarget, signer, issue.issueNumber],
+    [capabilityRequest, capabilityRequests, issue.issueNumber, myPubkey, publishRequests, recordTarget, recordingEnabled, signer],
   )
 
   // Restore the newest local take for this issue. It is never published
   // automatically; the contributor explicitly resumes the upload.
   useEffect(() => {
+    pendingRef.current = null
+    setPendingDraft(null)
     let alive = true
     listDrafts(issue.issueNumber).then((drafts) => {
-      if (!alive || !drafts[0]) return
-      const draft = drafts[0]
+      if (!alive) return
+      const draft = selectDraftForPrincipal(drafts, myPubkey)
+      if (!draft) return
       const target: RecordTarget = {
         sectionId: draft.target.sectionId,
         respondingTo: draft.target.respondingTo ?? undefined,
       }
-      pendingRef.current = {
-        target,
-        result: { blob: draft.blob, duration: draft.duration, waveform: draft.waveform },
-        descriptor: draft.descriptor,
-        draftId: draft.id,
+      if (draftBelongsTo(draft, myPubkey)) {
+        pendingRef.current = {
+          ownerPubkey: draft.ownerPubkey,
+          target,
+          result: { blob: draft.blob, duration: draft.duration, waveform: draft.waveform },
+          descriptor: draft.descriptor,
+          draftId: draft.id,
+        }
       }
       setPendingDraft(draft)
     }).catch((error) => console.warn('Unable to restore recording draft:', error))
     return () => { alive = false }
-  }, [issue.issueNumber])
+  }, [issue.issueNumber, myPubkey])
 
   const retryPendingDraft = useCallback(() => {
     const pending = pendingRef.current
-    if (!pending || publishing) return
+    if (!pending || pending.ownerPubkey !== myPubkey || publishing) return
     void handleRecorded(pending.result, pending.target)
-  }, [handleRecorded, publishing])
+  }, [handleRecorded, myPubkey, publishing])
 
   const discardPendingDraft = useCallback(() => {
+    if (
+      capabilityRequest === null
+      || !capabilityRequests.isCurrent(capabilityRequest)
+      || !pendingDraft
+      || !draftBelongsTo(pendingDraft, myPubkey)
+    ) return
     const id = pendingRef.current?.draftId
+    if (!id) return
     pendingRef.current = null
     setPendingDraft(null)
-    if (id) void deleteDraft(id).catch((error) => console.warn('Unable to discard recording draft:', error))
-  }, [])
+    void deleteDraft(id).catch((error) => console.warn('Unable to discard recording draft:', error))
+  }, [capabilityRequest, capabilityRequests, myPubkey, pendingDraft])
 
   const communityNotes = useMemo(
-    () => collectCommunityNotes([...sections.values()].map((state) => state.segments), myPubkey),
+    () => collectCommunityNotes([...sections.values()].map((state) => state.segments), myPubkey ?? ''),
     [myPubkey, sections],
   )
 
@@ -439,8 +526,8 @@ export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }
                     segment={seg}
                     profile={profiles.get(seg.event.pubkey)}
                     transcript={transcripts.get(seg.event.id)}
-                    onReply={isWhitelisted ? handleReply : undefined}
-                    isWhitelisted={isWhitelisted}
+                    onReply={recordingEnabled ? handleReply : undefined}
+                    isWhitelisted={recordingEnabled}
                     isNew={newSegmentIds.has(seg.event.id)}
                     isOwn={false}
                     justPublished={justPublished.has(seg.event.id)}
@@ -478,13 +565,13 @@ export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }
                               segment={seg}
                               profile={profiles.get(seg.event.pubkey)}
                               transcript={transcripts.get(id)}
-                              onReply={isWhitelisted ? handleReply : undefined}
-                              isWhitelisted={isWhitelisted}
+                              onReply={recordingEnabled ? handleReply : undefined}
+                              isWhitelisted={recordingEnabled}
                               isNew={newSegmentIds.has(id)}
                               isOwn={seg.event.pubkey === myPubkey}
                               justPublished={justPublished.has(id)}
                             />
-                            {isReplyingHere && !pendingDraft && (
+                            {recordingEnabled && isReplyingHere && !pendingDraft && (
                               <InlineRecorder
                                 onRecorded={handleRecorded}
                                 onCancel={() => setRecordTarget(null)}
@@ -502,12 +589,14 @@ export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }
                       draft={pendingDraft}
                       stage={uploadStage}
                       publishing={publishing}
+                      canResume={recordingEnabled && draftBelongsTo(pendingDraft, myPubkey)}
+                      canDiscard={recordingEnabled && draftBelongsTo(pendingDraft, myPubkey)}
                       onResume={retryPendingDraft}
                       onDiscard={discardPendingDraft}
                     />
                   )}
 
-                  {isWhitelisted && !pendingDraft && !isRecordingHere && !publishing && (
+                  {recordingEnabled && !pendingDraft && !isRecordingHere && !publishing && (
                     <div className="timeline__recrow">
                       <InlineRecorder
                         onRecorded={handleRecorded}
@@ -515,7 +604,7 @@ export default function IssueTimeline({ issue, signer, myPubkey, isWhitelisted }
                       />
                     </div>
                   )}
-                  {isPlainRecordingHere && !pendingDraft && (
+                  {recordingEnabled && isPlainRecordingHere && !pendingDraft && (
                     <div className="timeline__recrow">
                       <InlineRecorder
                         onRecorded={handleRecorded}

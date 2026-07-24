@@ -841,6 +841,36 @@ html, #root { overflow-x: hidden; max-width: 100vw; }
 .issue-picker__status--published { background: #052e16; color: var(--success); }
 
 /* ─── Responsive ───────────────────────────────────────────────────────────────── */
+@media (max-width: 680px) {
+  .app > .app-header {
+    gap: 5px;
+    padding-inline: 8px;
+    overflow: hidden;
+  }
+  .app > .app-header .app-title { display: none; }
+  .app > .app-header .app-nav {
+    display: grid;
+    min-width: 0;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    overflow: hidden;
+  }
+  .app > .app-header .app-nav .btn {
+    width: 100%;
+    min-width: 0;
+    padding-inline: 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .app > .app-header .app-login,
+  .app > .app-header .app-logout {
+    min-width: 0;
+    flex-shrink: 1;
+    padding-inline: 8px;
+    white-space: nowrap;
+  }
+}
+
 @media (max-width: 480px) {
   .timeline { padding: 12px; }
   .auth-screen { padding: 32px 16px 24px; }

@@ -39,6 +39,8 @@ import type { NostrEvent, NostrSigner } from '../types/nostr'
 import { getPool } from './pool'
 import { filterVerified, publishToRelays } from './relay'
 import { now } from './utils'
+import { assertEventSignedByExpected, assertSignerStillExpected } from './signer-identity'
+import { withSignerTimeout } from './signer-timeout'
 
 export interface WhitelistEntry {
   pubkey: string          // hex-64, normalized
@@ -184,8 +186,12 @@ export async function publishWhitelist(
   entries: WhitelistEntry[],
   signer: NostrSigner,
   relays: string[] = DEFAULT_RELAYS,
+  assertActive?: () => void,
 ): Promise<NostrEvent> {
-  const pubkey = await signer.getPublicKey()
+  if (relays.length === 0) throw new Error('No relays configured')
+  assertActive?.()
+  const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Amber identity request')
+  assertActive?.()
   if (pubkey !== COMPASS_PUBKEY) {
     throw new Error(
       'Whitelist events are only trusted when signed by the Compass key. ' +
@@ -209,8 +215,13 @@ export async function publishWhitelist(
     content,
     pubkey,
   }
-  const event = await signer.signEvent(unsigned)
+  assertActive?.()
+  const event = await withSignerTimeout(signer.signEvent(unsigned), 'Amber whitelist signing')
+  assertActive?.()
+  assertEventSignedByExpected(event, COMPASS_PUBKEY)
+  await assertSignerStillExpected(signer, COMPASS_PUBKEY, assertActive)
   await publishToRelays(event, relays)
+  assertActive?.()
   // Own publish invalidates the cache for ALL d-tags this session holds.
   eventCache.clear()
   return event

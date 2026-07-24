@@ -3,6 +3,8 @@ import type { BlobDescriptor } from '../types/nostr'
 export interface RecordingDraft {
   id: string
   issueNumber: number
+  /** Authenticated principal that created the draft. Legacy rows may lack this at runtime and fail closed. */
+  ownerPubkey: string
   target: { sectionId: string; respondingTo: string | null }
   blob: Blob
   duration: number
@@ -59,6 +61,20 @@ export async function listDrafts(issueNumber: number): Promise<RecordingDraft[]>
   } finally {
     db.close()
   }
+}
+
+/** Anonymous visitors may see the newest local take; authenticated users only receive their own. */
+export function selectDraftForPrincipal(
+  drafts: readonly RecordingDraft[],
+  ownerPubkey: string | null,
+): RecordingDraft | undefined {
+  if (!ownerPubkey) return drafts[0]
+  const normalized = ownerPubkey.toLowerCase()
+  return drafts.find((draft) => draft.ownerPubkey?.toLowerCase() === normalized)
+}
+
+export function draftBelongsTo(draft: RecordingDraft, ownerPubkey: string | null): boolean {
+  return Boolean(ownerPubkey && draft.ownerPubkey?.toLowerCase() === ownerPubkey.toLowerCase())
 }
 
 export async function deleteDraft(id: string): Promise<void> {

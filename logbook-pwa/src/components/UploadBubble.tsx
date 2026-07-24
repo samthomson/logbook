@@ -5,12 +5,14 @@ interface Props {
   draft: RecordingDraft
   stage: string | null
   publishing: boolean
+  canResume: boolean
+  canDiscard: boolean
   onResume: () => void
   onDiscard: () => void
 }
 
 /** A durable, in-place chat bubble for a take that has not reached relays yet. */
-export default function UploadBubble({ draft, stage, publishing, onResume, onDiscard }: Props) {
+export default function UploadBubble({ draft, stage, publishing, canResume, canDiscard, onResume, onDiscard }: Props) {
   const status = publishing
     ? (stage ?? 'Preparing upload')
     : 'Upload paused — recording saved on this device'
@@ -31,8 +33,10 @@ export default function UploadBubble({ draft, stage, publishing, onResume, onDis
         </div>
         {!publishing && (
           <div className="bubble__upload-actions">
-            <button type="button" onClick={onResume}>Resume upload</button>
-            <button type="button" onClick={onDiscard}>Discard</button>
+            <button type="button" onClick={onResume} disabled={!canResume}>
+              {canResume ? 'Resume upload' : 'Sign in to resume'}
+            </button>
+            <button type="button" onClick={onDiscard} disabled={!canDiscard}>Discard</button>
           </div>
         )}
       </div>

@@ -1,6 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { finalizeEvent, generateSecretKey } from 'nostr-tools'
-import { parseSegment, selectTrustedSegmentEvents, selectTrustedTranscripts } from './segment'
+import { publishToRelays } from './relay'
+import { parseSegment, publishSegment, publishTranscript, selectTrustedSegmentEvents, selectTrustedTranscripts } from './segment'
+import type { NostrEvent, NostrSigner } from '../types/nostr'
+
+vi.mock('./relay', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./relay')>()
+  return { ...actual, publishToRelays: vi.fn() }
+})
 
 const HASH = 'a'.repeat(64)
 const SERVERS = ['https://blossom.example']
@@ -94,5 +101,277 @@ describe('selectTrustedTranscripts', () => {
       content: 'invalid',
     }, author)
     expect(selectTrustedTranscripts([parseSegment(segmentEvent)!], [invalid]).size).toBe(0)
+  })
+})
+
+describe('publishTranscript authorization', () => {
+  it('does not sign when the live signer identity differs from the authenticated principal', async () => {
+    const signEvent = vi.fn()
+    const signer: NostrSigner = {
+      getPublicKey: async () => 'b'.repeat(64),
+      signEvent,
+    }
+
+    await expect(publishTranscript(
+      segment(),
+      'fixture transcript',
+      signer,
+      'a'.repeat(64),
+      ['wss://relay.example'],
+      undefined,
+    )).rejects.toThrow(/signer identity changed/i)
+    expect(signEvent).not.toHaveBeenCalled()
+    expect(publishToRelays).not.toHaveBeenCalled()
+  })
+
+  it('revalidates signer identity immediately before transcript publication', async () => {
+    let identityCalls = 0
+    const signer: NostrSigner = {
+      getPublicKey: async () => (++identityCalls === 1 ? 'a' : 'b').repeat(64),
+      signEvent: async (event) => ({
+        ...event,
+        id: 'd'.repeat(64),
+        sig: 'e'.repeat(128),
+      }) as NostrEvent,
+    }
+    const relayPublish = vi.mocked(publishToRelays)
+    relayPublish.mockClear()
+
+    await expect(publishTranscript(
+      segment(),
+      'fixture transcript',
+      signer,
+      'a'.repeat(64),
+      ['wss://relay.example'],
+    )).rejects.toThrow(/signer identity changed/i)
+    expect(identityCalls).toBeGreaterThanOrEqual(2)
+    expect(relayPublish).not.toHaveBeenCalled()
+  })
+
+  it('does not sign after authorization is revoked during identity lookup', async () => {
+    let active = true
+    const signEvent = vi.fn(async (event) => ({
+      ...event,
+      id: 'd'.repeat(64),
+      sig: 'e'.repeat(128),
+    }) as NostrEvent)
+    const signer: NostrSigner = {
+      getPublicKey: async () => {
+        active = false
+        return 'a'.repeat(64)
+      },
+      signEvent,
+    }
+
+    await expect(publishTranscript(
+      segment(),
+      'fixture transcript',
+      signer,
+      'a'.repeat(64),
+      ['wss://relay.example'],
+      () => {
+        if (!active) throw new Error('Publishing authorization was revoked.')
+      },
+    )).rejects.toThrow('Publishing authorization was revoked.')
+    expect(signEvent).not.toHaveBeenCalled()
+  })
+
+  it('rejects when authorization is revoked while awaiting relay acknowledgement', async () => {
+    let active = true
+    const relayPublish = vi.mocked(publishToRelays)
+    relayPublish.mockClear()
+    relayPublish.mockImplementationOnce(async () => {
+      active = false
+    })
+    const signer: NostrSigner = {
+      getPublicKey: async () => 'a'.repeat(64),
+      signEvent: async (event) => ({
+        ...event,
+        id: 'd'.repeat(64),
+        sig: 'e'.repeat(128),
+      }) as NostrEvent,
+    }
+
+    await expect(publishTranscript(
+      segment(),
+      'fixture transcript',
+      signer,
+      'a'.repeat(64),
+      ['wss://relay.example'],
+      () => {
+        if (!active) throw new Error('Publishing authorization was revoked.')
+      },
+    )).rejects.toThrow('Publishing authorization was revoked.')
+    expect(relayPublish).toHaveBeenCalledOnce()
+  })
+})
+
+describe('publishSegment authorization', () => {
+  it('does not sign or publish when the live signer identity differs from the authenticated principal', async () => {
+    const signEvent = vi.fn()
+    const signer: NostrSigner = {
+      getPublicKey: async () => 'b'.repeat(64),
+      signEvent,
+    }
+    const relayPublish = vi.mocked(publishToRelays)
+    relayPublish.mockClear()
+
+    await expect(publishSegment({
+      signer,
+      expectedPubkey: 'a'.repeat(64),
+      blob: {
+        url: `https://blossom.example/${HASH}`,
+        sha256: HASH,
+        size: 1024,
+        mime: 'audio/webm',
+        uploaded: 1,
+      },
+      duration: 2,
+      waveform: [],
+      sectionId: 'sec-one-31',
+      issueNumber: 31,
+      relays: ['wss://relay.example'],
+    })).rejects.toThrow(/signer identity changed/i)
+    expect(signEvent).not.toHaveBeenCalled()
+    expect(relayPublish).not.toHaveBeenCalled()
+  })
+
+  it('does not publish when the signer changes identity while signing', async () => {
+    const signer: NostrSigner = {
+      getPublicKey: async () => 'a'.repeat(64),
+      signEvent: async (event) => ({
+        ...event,
+        pubkey: 'b'.repeat(64),
+        id: 'c'.repeat(64),
+        sig: 'd'.repeat(128),
+      }) as NostrEvent,
+    }
+    const relayPublish = vi.mocked(publishToRelays)
+    relayPublish.mockClear()
+
+    await expect(publishSegment({
+      signer,
+      expectedPubkey: 'a'.repeat(64),
+      blob: {
+        url: `https://blossom.example/${HASH}`,
+        sha256: HASH,
+        size: 1024,
+        mime: 'audio/webm',
+        uploaded: 1,
+      },
+      duration: 2,
+      waveform: [],
+      sectionId: 'sec-one-31',
+      issueNumber: 31,
+      relays: ['wss://relay.example'],
+    })).rejects.toThrow(/signer identity changed/i)
+    expect(relayPublish).not.toHaveBeenCalled()
+  })
+
+  it('revalidates signer identity immediately before relay publication', async () => {
+    let identityCalls = 0
+    const signer: NostrSigner = {
+      getPublicKey: async () => (++identityCalls === 1 ? 'a' : 'b').repeat(64),
+      signEvent: async (event) => ({
+        ...event,
+        id: 'c'.repeat(64),
+        sig: 'd'.repeat(128),
+      }) as NostrEvent,
+    }
+    const relayPublish = vi.mocked(publishToRelays)
+    relayPublish.mockClear()
+
+    await expect(publishSegment({
+      signer,
+      expectedPubkey: 'a'.repeat(64),
+      blob: {
+        url: `https://blossom.example/${HASH}`,
+        sha256: HASH,
+        size: 1024,
+        mime: 'audio/webm',
+        uploaded: 1,
+      },
+      duration: 2,
+      waveform: [],
+      sectionId: 'sec-one-31',
+      issueNumber: 31,
+      relays: ['wss://relay.example'],
+    })).rejects.toThrow(/signer identity changed/i)
+    expect(identityCalls).toBeGreaterThanOrEqual(2)
+    expect(relayPublish).not.toHaveBeenCalled()
+  })
+
+  it('does not sign or publish after authorization is revoked during an awaited signer step', async () => {
+    let active = true
+    let signCalls = 0
+    const signer: NostrSigner = {
+      getPublicKey: async () => {
+        active = false
+        return 'a'.repeat(64)
+      },
+      signEvent: async (event) => {
+        signCalls += 1
+        return { ...event, id: 'b'.repeat(64), sig: 'c'.repeat(128) } as NostrEvent
+      },
+    }
+
+    await expect(publishSegment({
+      signer,
+      expectedPubkey: 'a'.repeat(64),
+      blob: {
+        url: `https://blossom.example/${HASH}`,
+        sha256: HASH,
+        size: 1024,
+        mime: 'audio/webm',
+        uploaded: 1,
+      },
+      duration: 2,
+      waveform: [],
+      sectionId: 'sec-one-31',
+      issueNumber: 31,
+      relays: ['wss://relay.example'],
+      assertActive: () => {
+        if (!active) throw new Error('Publishing authorization was revoked.')
+      },
+    })).rejects.toThrow('Publishing authorization was revoked.')
+    expect(signCalls).toBe(0)
+  })
+
+  it('rejects after relay acknowledgement when authorization is revoked while awaiting it', async () => {
+    let active = true
+    const relayPublish = vi.mocked(publishToRelays)
+    relayPublish.mockClear()
+    relayPublish.mockImplementationOnce(async () => {
+      active = false
+    })
+    const signer: NostrSigner = {
+      getPublicKey: async () => 'a'.repeat(64),
+      signEvent: async (event) => ({
+        ...event,
+        id: 'b'.repeat(64),
+        sig: 'c'.repeat(128),
+      }) as NostrEvent,
+    }
+
+    await expect(publishSegment({
+      signer,
+      expectedPubkey: 'a'.repeat(64),
+      blob: {
+        url: `https://blossom.example/${HASH}`,
+        sha256: HASH,
+        size: 1024,
+        mime: 'audio/webm',
+        uploaded: 1,
+      },
+      duration: 2,
+      waveform: [],
+      sectionId: 'sec-one-31',
+      issueNumber: 31,
+      relays: ['wss://relay.example'],
+      assertActive: () => {
+        if (!active) throw new Error('Publishing authorization was revoked.')
+      },
+    })).rejects.toThrow('Publishing authorization was revoked.')
+    expect(relayPublish).toHaveBeenCalledOnce()
   })
 })

@@ -19,10 +19,13 @@ import { now } from './utils'
 import { filterVerified, publishToRelays } from './relay'
 import { withSignerTimeout } from './signer-timeout'
 import { validateTrustedBlobUrl } from './blob-trust'
+import { assertEventSignedByExpected, assertExpectedSignerPubkey, assertSignerStillExpected } from './signer-identity'
 
 
 export interface PublishSegmentParams {
   signer: NostrSigner
+  /** Authenticated principal captured when this operation was authorized. */
+  expectedPubkey: string
   blob: BlobDescriptor
   duration: number
   waveform: number[]
@@ -31,6 +34,8 @@ export interface PublishSegmentParams {
   respondingTo?: string   // event ID of the segment being replied to
   isIntro?: boolean
   relays?: string[]
+  /** Throws when the initiating auth/issue context is no longer current. */
+  assertActive?: () => void
 }
 
 /**
@@ -40,6 +45,7 @@ export interface PublishSegmentParams {
 export async function publishSegment(params: PublishSegmentParams): Promise<NostrEvent> {
   const {
     signer,
+    expectedPubkey,
     blob,
     duration,
     waveform,
@@ -48,10 +54,15 @@ export async function publishSegment(params: PublishSegmentParams): Promise<Nost
     respondingTo,
     isIntro = false,
     relays = DEFAULT_RELAYS,
+    assertActive,
   } = params
 
+  if (relays.length === 0) throw new Error('No relays configured')
+  assertActive?.()
   const issueId = `${ISSUE_PREFIX}-${issueNumber}`
   const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Amber identity request')
+  assertActive?.()
+  assertExpectedSignerPubkey(pubkey, expectedPubkey)
 
   const content = JSON.stringify({
     audio: {
@@ -85,9 +96,13 @@ export async function publishSegment(params: PublishSegmentParams): Promise<Nost
     pubkey,
   }
 
-  if (relays.length === 0) throw new Error('No relays configured')
+  assertActive?.()
   const event = await withSignerTimeout(signer.signEvent(unsigned), 'Amber segment signing')
+  assertActive?.()
+  assertEventSignedByExpected(event, expectedPubkey)
+  await assertSignerStillExpected(signer, expectedPubkey, assertActive)
   await publishToRelays(event, relays)
+  assertActive?.()
   return event
 }
 
@@ -99,9 +114,15 @@ export async function publishTranscript(
   segmentEvent: NostrEvent,
   transcript: string,
   signer: NostrSigner,
+  expectedPubkey: string,
   relays: string[] = DEFAULT_RELAYS,
+  assertActive?: () => void,
 ): Promise<NostrEvent> {
+  if (relays.length === 0) throw new Error('No relays configured')
+  assertActive?.()
   const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Amber identity request')
+  assertActive?.()
+  assertExpectedSignerPubkey(pubkey, expectedPubkey)
 
   const tags: string[][] = [
     ['e', segmentEvent.id, '', 'root'],
@@ -117,9 +138,13 @@ export async function publishTranscript(
     pubkey,
   }
 
-  if (relays.length === 0) throw new Error('No relays configured')
-  const event = await withSignerTimeout(signer.signEvent(unsigned), 'Amber segment signing')
+  assertActive?.()
+  const event = await withSignerTimeout(signer.signEvent(unsigned), 'Amber transcript signing')
+  assertActive?.()
+  assertEventSignedByExpected(event, expectedPubkey)
+  await assertSignerStillExpected(signer, expectedPubkey, assertActive)
   await publishToRelays(event, relays)
+  assertActive?.()
   return event
 }
 

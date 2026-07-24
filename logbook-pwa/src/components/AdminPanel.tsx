@@ -19,6 +19,7 @@ import { nip19 } from 'nostr-tools'
 import { COMPASS_PUBKEY } from '../config'
 import type { CompassIssue, IssueManifest, ManifestContent, NostrSigner, Segment } from '../types/nostr'
 import { createAdminSaveController } from '../lib/admin-save'
+import { areRequestScopesCurrent, type LatestRequestGuard } from '../lib/latest-request'
 import {
   canEditManifest,
   canLockEpisode,
@@ -48,6 +49,10 @@ interface Props {
   signer: NostrSigner
   pubkey: string
   contributorPubkeys: ReadonlySet<string>
+  manifestWriteRequests: LatestRequestGuard
+  whitelistWriteRequests: LatestRequestGuard
+  capabilityRequests: LatestRequestGuard
+  capabilityRequest: number | null
 }
 
 function issueReference(issue: CompassIssue): string {
@@ -56,7 +61,18 @@ function issueReference(issue: CompassIssue): string {
   return nip19.naddrEncode({ kind: issue.event.kind, pubkey: issue.event.pubkey, identifier })
 }
 
-export default function AdminPanel({ issue, signer, pubkey, contributorPubkeys }: Props) {
+export default function AdminPanel({
+  issue,
+  signer,
+  pubkey,
+  contributorPubkeys,
+  manifestWriteRequests,
+  whitelistWriteRequests,
+  capabilityRequests,
+  capabilityRequest,
+}: Props) {
+  const manifestCapabilityRef = useRef({ issueNumber: issue.issueNumber, pubkey, signer })
+  manifestCapabilityRef.current = { issueNumber: issue.issueNumber, pubkey, signer }
   const targets = useMemo(() => buildRecordingTargets(issue), [issue])
   const initialDraft = useCallback(() => buildInitialManifest(
     issue.issueNumber,
@@ -77,13 +93,14 @@ export default function AdminPanel({ issue, signer, pubkey, contributorPubkeys }
 
   const saveController = useMemo(() => createAdminSaveController({
     fetchLatest: () => fetchManifest(issue.issueNumber),
-    publish: (content, previousEventId, previousCreatedAt) => updateManifest(
+    publish: (content, previousEventId, previousCreatedAt, assertActive) => updateManifest(
       issue.issueNumber,
       content,
       signer,
       undefined,
       previousEventId,
       previousCreatedAt,
+      assertActive,
     ),
   }), [issue.issueNumber, signer])
 
@@ -154,20 +171,41 @@ export default function AdminPanel({ issue, signer, pubkey, contributorPubkeys }
   )
 
   const save = useCallback(async (content: ManifestContent, message: string) => {
+    const request = manifestWriteRequests.begin()
+    const capability = { issueNumber: issue.issueNumber, pubkey, signer }
+    const isActive = () => {
+      const current = manifestCapabilityRef.current
+      return areRequestScopesCurrent(
+        capabilityRequests,
+        capabilityRequest,
+        manifestWriteRequests,
+        request,
+      )
+        && current.issueNumber === capability.issueNumber
+        && current.pubkey === capability.pubkey
+        && current.signer === capability.signer
+    }
+    const assertActive = () => {
+      if (!isActive()) throw new Error('Admin capability was revoked')
+    }
+
+    if (!isActive()) return
     setSaving(true)
     setError(null)
     setNotice(null)
     try {
-      const acknowledged = await saveController.save(baseManifest, content)
+      const acknowledged = await saveController.save(baseManifest, content, assertActive)
+      if (!isActive()) return
       setBaseManifest(acknowledged)
       setDraft(acknowledged.content)
       setNotice(message)
     } catch (cause) {
+      if (!isActive()) return
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setSaving(false)
+      if (isActive()) setSaving(false)
     }
-  }, [baseManifest, saveController])
+  }, [baseManifest, capabilityRequest, capabilityRequests, issue.issueNumber, manifestWriteRequests, pubkey, saveController, signer])
 
   const handleSave = () => {
     if (draft && editable && dirty) void save(draft, 'Episode saved and relay revision verified.')
@@ -342,6 +380,9 @@ export default function AdminPanel({ issue, signer, pubkey, contributorPubkeys }
           issueMarkdown={issue.event.content}
           signer={signer}
           pubkey={pubkey}
+          writeRequests={whitelistWriteRequests}
+          capabilityRequests={capabilityRequests}
+          capabilityRequest={capabilityRequest}
         />
       </details>
     </div>

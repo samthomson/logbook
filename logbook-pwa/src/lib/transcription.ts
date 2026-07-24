@@ -81,18 +81,30 @@ export async function transcribeAndPublish(
   blob: Blob,
   segmentEvent: NostrEvent,
   signer: NostrSigner,
+  expectedPubkey: string,
+  assertActive?: () => void,
 ): Promise<void> {
-  const result = await transcribeBlob(blob)
-  if (!result?.text) return
-
-  const content = JSON.stringify({
-    text: result.text,
-    chunks: result.chunks ?? [],
-  })
-
   try {
-    await publishTranscript(segmentEvent, content, signer)
+    assertActive?.()
+    const result = await transcribeBlob(blob)
+    assertActive?.()
+    if (!result?.text) return
+
+    const content = JSON.stringify({
+      text: result.text,
+      chunks: result.chunks ?? [],
+    })
+
+    await publishTranscript(segmentEvent, content, signer, expectedPubkey, undefined, assertActive)
+    assertActive?.()
   } catch (err) {
+    try {
+      assertActive?.()
+    } catch {
+      // Revocation is an expected cancellation path; never surface it in a
+      // replacement session or ask the stale signer for another signature.
+      return
+    }
     console.error('Failed to publish transcript:', err)
   }
 }

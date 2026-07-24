@@ -225,21 +225,8 @@
 
 @media (max-width: 680px) {
   .app--admin,
-  .app--admin .app-body,
-  .app--admin .app-header { width: 100%; max-width: 100%; min-width: 0; }
+  .app--admin .app-body { width: 100%; max-width: 100%; min-width: 0; }
   .app--admin .app-body { overflow-x: hidden; overflow-x: clip; }
-  .app--admin .app-header { gap: 5px; padding-inline: 8px; overflow: hidden; }
-  .app--admin .app-title { display: none; }
-  .app--admin .app-nav {
-    display: grid;
-    min-width: 0;
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(0, 1fr);
-    overflow: hidden;
-  }
-  .app--admin .app-nav .btn,
-  .app--admin .app-logout { min-width: 0; padding-inline: 8px; }
-  .app--admin .app-nav .btn { width: 100%; overflow: hidden; text-overflow: ellipsis; }
   .admin-workspace {
     max-width: 100%;
     padding: 10px 8px calc(100px + env(safe-area-inset-bottom));

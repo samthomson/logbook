@@ -115,4 +115,24 @@ describe('admin save controller', () => {
     await controller.save(null, content())
     expect(publish).toHaveBeenCalledWith(content(), null, null)
   })
+
+  it('does not publish when admin capability is revoked during the preflight await', async () => {
+    let active = true
+    const publish = vi.fn()
+    const controller = createAdminSaveController({
+      fetchLatest: vi.fn(async () => {
+        active = false
+        return manifest(BASE_ID)
+      }),
+      publish,
+      delay: vi.fn(),
+    })
+    const assertActive = () => {
+      if (!active) throw new Error('Admin capability was revoked')
+    }
+
+    await expect(controller.save(manifest(BASE_ID), content(), assertActive))
+      .rejects.toThrow('Admin capability was revoked')
+    expect(publish).not.toHaveBeenCalled()
+  })
 })

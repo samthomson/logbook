@@ -1,10 +1,11 @@
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, it } from 'vitest'
-import { clearDrafts, deleteDraft, listDrafts, saveDraft, type RecordingDraft } from './drafts'
+import { clearDrafts, deleteDraft, draftBelongsTo, listDrafts, saveDraft, selectDraftForPrincipal, type RecordingDraft } from './drafts'
 
 const baseDraft: RecordingDraft = {
   id: 'draft-1',
   issueNumber: 32,
+  ownerPubkey: 'a'.repeat(64),
   target: { sectionId: 'sec-intro-32', respondingTo: null },
   blob: new Blob(['audio'], { type: 'audio/webm' }),
   duration: 2,
@@ -22,6 +23,26 @@ describe('recording drafts', () => {
     expect(drafts).toHaveLength(1)
     expect(drafts[0]).toMatchObject({ id: 'draft-1', issueNumber: 32, duration: 2, descriptor: null })
     expect(await drafts[0].blob.text()).toBe('audio')
+  })
+
+  it('binds resume and deletion authority to the authenticated draft owner', () => {
+    const alice = baseDraft
+    const bob = { ...baseDraft, id: 'draft-2', ownerPubkey: 'b'.repeat(64), updatedAt: 200 }
+    const drafts = [bob, alice]
+
+    expect(selectDraftForPrincipal(drafts, alice.ownerPubkey)?.id).toBe(alice.id)
+    expect(selectDraftForPrincipal(drafts, bob.ownerPubkey)?.id).toBe(bob.id)
+    expect(selectDraftForPrincipal(drafts, null)?.id).toBe(bob.id)
+    expect(draftBelongsTo(alice, alice.ownerPubkey)).toBe(true)
+    expect(draftBelongsTo(alice, bob.ownerPubkey)).toBe(false)
+    expect(draftBelongsTo(alice, null)).toBe(false)
+  })
+
+  it('fails closed for legacy drafts without an owner', () => {
+    const legacy = { ...baseDraft, ownerPubkey: undefined } as unknown as RecordingDraft
+    expect(selectDraftForPrincipal([legacy], baseDraft.ownerPubkey)).toBeUndefined()
+    expect(selectDraftForPrincipal([legacy], null)).toBe(legacy)
+    expect(draftBelongsTo(legacy, baseDraft.ownerPubkey)).toBe(false)
   })
 
   it('upserts descriptor state and removes completed drafts', async () => {
