@@ -27,12 +27,18 @@ test('tracked worker service is hardened, restartable, and never asks for a hot 
   assert.doesNotMatch(service, /COMPASS_NSEC/)
 })
 
-test('nsyte config is authoritative and legacy owner-mismatched TOML configs are absent', async () => {
+test('nsyte config is authoritative and build-only tooling is not a production dependency', async () => {
   const config = JSON.parse(await read('logbook-pwa/.nsite/config.json')) as {
     relays?: unknown[]
     servers?: unknown[]
     title?: string
   }
+  const packageJson = JSON.parse(await read('logbook-pwa/package.json')) as {
+    dependencies?: Record<string, string>
+    devDependencies?: Record<string, string>
+  }
+  assert.equal(packageJson.dependencies?.['vite-plugin-pwa'], undefined)
+  assert.ok(packageJson.devDependencies?.['vite-plugin-pwa'])
   assert.equal(config.title, 'Logbook')
   assert.ok((config.relays?.length ?? 0) >= 3)
   assert.ok((config.servers?.length ?? 0) >= 3)
