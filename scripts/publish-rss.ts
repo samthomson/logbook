@@ -13,6 +13,7 @@
 
 import { SimplePool } from 'nostr-tools/pool'
 import { readFileSync, writeFileSync, statSync, existsSync, mkdirSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { join, basename, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -30,6 +31,8 @@ import { verifyNostrEvent } from './segment-security.ts'
 import { createCompassAmberSigner, type CompassSigner } from './amber-signer.ts'
 import { latestVerifiedManifest, type ManifestEvent } from './watch-state.ts'
 import { assertPublishableManifest, selectTrustedReleaseMetadata } from './rss-state.ts'
+import { FileReleaseLedger, assertRunMatchesManifest, manifestRevision, runReleaseStages, type ManifestRevision } from './release-state.ts'
+import { acknowledgeStaticSync } from './static-sync.ts'
 
 // ── npubs.yml loading ─────────────────────────────────────────────────────────
 
@@ -166,7 +169,7 @@ function formatDuration(seconds: number): string {
 
 // ── relay helpers ─────────────────────────────────────────────────────────────
 
-async function fetchManifest(issueId: string, pool: SimplePool): Promise<ManifestContent> {
+async function fetchManifest(issueId: string, pool: SimplePool): Promise<{ manifest: ManifestContent; event: ManifestEvent }> {
   const events = await pool.querySync(DEFAULT_RELAYS, {
     kinds: [KINDS.MANIFEST],
     authors: [COMPASS_PUBKEY],
@@ -180,7 +183,7 @@ async function fetchManifest(issueId: string, pool: SimplePool): Promise<Manifes
   })
   if (!event) throw new Error(`No verified manifest found for ${issueId}`)
 
-  return JSON.parse(event.content) as ManifestContent
+  return { manifest: JSON.parse(event.content) as ManifestContent, event }
 }
 
 // ── mp3 duration via ffprobe ──────────────────────────────────────────────────
@@ -380,6 +383,7 @@ async function publishPodstrEpisode(
 
 interface RunMeta {
   issueId: string
+  manifest: ManifestRevision
   mp3Url: string
   mp3Urls: string[]
   mp3Sha256: string
@@ -397,17 +401,15 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2)
   const issueFlag = args.indexOf('--issue')
   if (issueFlag === -1 || !args[issueFlag + 1]) {
-    console.error('Usage: publish-rss.ts --issue <issueId> [--no-announce]')
+    console.error('Usage: publish-rss.ts --issue <issueId>')
     process.exit(1)
   }
   const issueId = args[issueFlag + 1]
-  const noAnnounce = args.includes('--no-announce')
-
   const signer = createCompassAmberSigner()
   const pool = new SimplePool()
 
   console.log(`[publish-rss] Fetching manifest for ${issueId}…`)
-  const manifest = await fetchManifest(issueId, pool)
+  const { manifest, event: manifestEvent } = await fetchManifest(issueId, pool)
   assertPublishableManifest(manifest)
 
   // Run metadata from stitch.ts carries the canonical Blossom mp3 URL.
@@ -416,6 +418,12 @@ async function main(): Promise<void> {
     throw new Error(`Run metadata not found: ${metaPath}. Run stitch.ts first.`)
   }
   const run = JSON.parse(readFileSync(metaPath, 'utf-8')) as RunMeta
+  const revision = manifestRevision(manifestEvent)
+  assertRunMatchesManifest(run, revision)
+  const assertExactCut = async (): Promise<void> => {
+    const latest = manifestRevision((await fetchManifest(issueId, pool)).event)
+    assertRunMatchesManifest({ manifest: revision }, latest)
+  }
 
   // Upload chapters JSON to Blossom so podcatchers can fetch it from anywhere.
   const chaptersPath = join(AUDIO_DIR, `${issueId}-chapters.json`)
@@ -425,6 +433,7 @@ async function main(): Promise<void> {
     const cf = JSON.parse(readFileSync(chaptersPath, 'utf-8')) as ChaptersFile
     chapters = cf.chapters
     if (!chaptersUrl) {
+      await assertExactCut()
       const blob = await uploadToBlossom(
         Buffer.from(JSON.stringify(cf, null, 2)),
         'application/json',
@@ -459,6 +468,7 @@ async function main(): Promise<void> {
     .join('\n\n')
   let transcriptUrl: string | null = null
   if (fullTranscript) {
+    await assertExactCut()
     const blob = await uploadToBlossom(
       Buffer.from(JSON.stringify({ version: '1.0.0', transcript: fullTranscript }, null, 2)),
       'application/json',
@@ -503,16 +513,32 @@ async function main(): Promise<void> {
   console.log(`[publish-rss] NOTE: feed.xml must be reachable at ${BASE_URL}/feed.xml —`)
   console.log(`[publish-rss] sync ${STATIC_DIR} to the podcast.nostrcompass.org host (or set LOGBOOK_BASE_URL).`)
 
-  // Mark the manifest published so the Admin UI shows the final state
-  await publishManifestStatus(issueId, manifest, ep, signer, pool)
-
-  // Podstr-compatible episode event (kind 30054) so the podcast appears on
-  // podcast.nostrcompass.org and in Nostr podcast clients.
-  await publishPodstrEpisode(ep, signer, pool)
-
-  if (!noAnnounce) {
-    await publishAnnouncement(ep, signer, pool)
-  }
+  const feedDigest = createHash('sha256').update(xml).digest('hex')
+  const ledger = new FileReleaseLedger(STATIC_DIR, issueId)
+  await runReleaseStages({
+    ledger,
+    revision,
+    // Re-query and signature-verify the exact addressable revision before every
+    // remote stage; a newer draft, lock, or terminal replacement stops the run.
+    current: async () => manifestRevision((await fetchManifest(issueId, pool)).event),
+    stages: {
+      // The stitch run produced and hash-bound its immutable media artifact.
+      artifacts: async () => assertRunMatchesManifest(run, revision),
+      feed: async () => {
+        // A local write is not a hosted release. The deployer must provide a
+        // post-upload acknowledgement for this exact feed digest.
+        await acknowledgeStaticSync(feedDigest, async () => {
+          const raw = process.env.LOGBOOK_STATIC_SYNC_ACK
+          if (!raw) throw new Error('LOGBOOK_STATIC_SYNC_ACK is required after hosted static-root upload')
+          return JSON.parse(raw) as { hosted: boolean; feedDigest: string }
+        })
+      },
+      podstr: async () => publishPodstrEpisode(ep, signer, pool),
+      announcement: async () => publishAnnouncement(ep, signer, pool),
+      // Terminal state is published only after every distribution stage acks.
+      manifest: async () => publishManifestStatus(issueId, manifest, ep, signer, pool),
+    },
+  })
 
   pool.close(DEFAULT_RELAYS)
   console.log('[publish-rss] Done.')

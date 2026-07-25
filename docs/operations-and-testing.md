@@ -52,6 +52,34 @@ Run only from the secure Compass service environment with the real Compass signi
 6. Confirm the feed, audio, chapters, transcript URL, kind-30054 record, and publication note all point to the staging origin.
 7. Preserve command output, event IDs, checksums, and feed URL as release evidence. Promote to production only after a separate review.
 
+## Release stage recovery and status semantics
+
+`stitch.ts` binds `<issue>-run.json` to the exact verified cutting manifest:
+its event ID, `created_at`, `d` tag, and SHA-256 of the manifest content. `publish-rss.ts`
+rejects a run if any of those values differ from the latest verified revision. Do **not**
+edit a run file to bypass this check; re-stitch the current locked revision instead.
+
+Publication is durable in `<STATIC_DIR>/<issue>-release-ledger.json`. Its stages are:
+
+1. `artifacts` — the hash-bound stitch artifact is present;
+2. `feed` — the static host has explicitly acknowledged the exact feed SHA-256;
+3. `podstr` — kind `30054` was acknowledged;
+4. `announcement` — required NIP-73 kind `1111` announcement was acknowledged; and
+5. `manifest` — and only then the manifest is republished as terminal `published`.
+
+Retries resume at the first incomplete stage; acknowledged stages are not repeated. Before
+every stage the script refetches and signature-verifies the latest manifest and stops if it
+is not the exact cut bound to the run. A ledger with `terminal: false` is a failed or
+incomplete release, even if `feed.xml` exists locally. `terminal: true` means the terminal
+manifest acknowledgement completed, not merely that an RSS file was written.
+
+Writing to `STATIC_DIR` is deliberately **not** hosting. After the deployment mechanism has
+uploaded the feed, provide a post-upload acknowledgement (for the current CLI seam,
+`LOGBOOK_STATIC_SYNC_ACK='{"hosted":true,"feedDigest":"<sha256-of-feed.xml>"}'`) and rerun
+`publish-rss`. A missing, non-hosted, or mismatched acknowledgement leaves `feed` incomplete
+and prevents Podstr, NIP-73, and terminal manifest publication. The value is an acknowledgement
+from the deployer, never a claim inferred from a local filesystem write.
+
 ## Required checks before every merge or deployment
 
 ```bash

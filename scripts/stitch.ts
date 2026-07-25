@@ -32,6 +32,8 @@ import { parseVerifiedSegment, verifyNostrEvent } from './segment-security.ts'
 import { downloadVerifiedBlob } from './stitch-download.ts'
 import { assertLockedSegmentsPresent, assertStitchableManifest, collectLockedSegmentIds, selectActiveSections } from './stitch-state.ts'
 import { latestVerifiedManifest, type ManifestEvent } from './watch-state.ts'
+import { manifestRevision } from './release-state.ts'
+import { madeTheCutReactionTags } from './made-the-cut.ts'
 import { requiredChapterTargets } from './issue-targets.ts'
 import {
   acrossfade,
@@ -106,7 +108,7 @@ async function downloadBlob(url: string, destPath: string, expectedSha256: strin
 
 // ── relay helpers ─────────────────────────────────────────────────────────────
 
-async function fetchManifest(issueId: string, pool: SimplePool): Promise<ManifestContent> {
+async function fetchManifest(issueId: string, pool: SimplePool): Promise<{ manifest: ManifestContent; event: ManifestEvent }> {
   const events = await pool.querySync(DEFAULT_RELAYS, {
     kinds: [KINDS.MANIFEST],
     authors: [COMPASS_PUBKEY],
@@ -120,7 +122,7 @@ async function fetchManifest(issueId: string, pool: SimplePool): Promise<Manifes
   })
   if (!event) throw new Error(`No verified manifest found for issue ${issueId}`)
 
-  return JSON.parse(event.content) as ManifestContent
+  return { manifest: JSON.parse(event.content) as ManifestContent, event }
 }
 
 async function fetchRequiredChapterIds(
@@ -214,7 +216,7 @@ async function main(): Promise<void> {
   const pool = new SimplePool()
 
   console.log(`[stitch] Fetching manifest for ${issueId}…`)
-  const manifest = await fetchManifest(issueId, pool)
+  const { manifest, event: manifestEvent } = await fetchManifest(issueId, pool)
   const force = args.includes('--force')
   const requiredChapterIds = manifest.episodeStatus === 'cutting' || force
     ? await fetchRequiredChapterIds(issueId, manifest, pool)
@@ -374,6 +376,9 @@ async function main(): Promise<void> {
     JSON.stringify(
       {
         issueId,
+        // Release publication must use this exact verified cutting revision,
+        // rather than whichever replacement happens to arrive later.
+        manifest: manifestRevision(manifestEvent),
         mp3Url: blob.url,
         mp3Urls: blob.urls,
         mp3Sha256: blob.sha256,
@@ -412,7 +417,7 @@ async function main(): Promise<void> {
         const reaction = await signer.signEvent({
           kind: KINDS.REACTION,
           created_at: Math.floor(Date.now() / 1000),
-          tags: [['e', segId], ['k', String(KINDS.SEGMENT)]],
+          tags: madeTheCutReactionTags(segId, segments.get(segId)!.pubkey),
           content: '🎙️',
         })
         await Promise.any(reactPool.publish(DEFAULT_RELAYS, reaction))
