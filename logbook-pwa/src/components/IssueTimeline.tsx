@@ -26,7 +26,6 @@ import { orderTimelineSegments } from '../lib/timeline-order'
 import { saveCachedIssue } from '../lib/issue-cache'
 import { extractMentionedNpubs } from './SectionExcerpt'
 import { uploadBlob } from '../lib/blossom'
-import { isLocalTranscriptionEnabled, transcribeAndPublish } from '../lib/transcription'
 import { collectCommunityNotes } from '../lib/community-notes'
 import { computeSeedOrder } from '../lib/ordering'
 import { PlaybackProvider } from '../lib/playback'
@@ -419,13 +418,6 @@ export default function IssueTimeline({
           }, 3000)
         }
         setRecordTarget(null)
-        // Transcription is deliberately opt-in while the browser inference
-        // dependency tree has unresolved upstream audit findings.
-        if (isLocalTranscriptionEnabled()) {
-          void transcribeAndPublish(result.blob, event, signer, ownerPubkey, assertPublishingActive).then(() => {
-            // Transcript will arrive via the live fetch on next load.
-          })
-        }
       } catch (err) {
         if (isPublishingActive()) {
           // Keep the pending recording + descriptor so a current contributor can

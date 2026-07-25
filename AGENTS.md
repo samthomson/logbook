@@ -164,7 +164,7 @@ React + Vite + TypeScript, Nostr (nostr-tools), Blossom (BUD-01/BUD-04), transfo
 
 ## Phase 5: v2 — Client-Side Transcription
 
-- [ ] **TRANS-01**: `src/workers/transcribe.worker.ts` — loads `@xenova/transformers` Whisper-base; receives audio blob, returns transcript string + word timestamps
+- [ ] **TRANS-01**: add a reviewed, zero-high browser transcription dependency; the worker receives an audio blob and returns transcript text plus word timestamps
 - [ ] **TRANS-02**: Worker uses `env.backends.onnx.wasm.numThreads = 4`; detect WebGPU availability and set backend accordingly
 - [ ] **TRANS-03**: Main thread: after segment event publishes, post audio blob to worker; on result, publish companion transcript event with `["e", segmentId]` + `["k", "4200"]` tags
 - [ ] **TRANS-04**: VPS fallback: cron job checks for segments older than 30 minutes with no companion transcript event; runs `whisper` CLI on downloaded audio; publishes companion event via Compass npub

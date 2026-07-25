@@ -39,6 +39,7 @@ test('nsyte config is authoritative and build-only tooling is not a production d
   }
   assert.equal(packageJson.dependencies?.['vite-plugin-pwa'], undefined)
   assert.ok(packageJson.devDependencies?.['vite-plugin-pwa'])
+  assert.equal(packageJson.dependencies?.['@huggingface/transformers'], undefined)
   assert.equal(config.title, 'Logbook')
   assert.ok((config.relays?.length ?? 0) >= 3)
   assert.ok((config.servers?.length ?? 0) >= 3)

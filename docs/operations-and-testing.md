@@ -2,13 +2,12 @@
 
 ## Security posture and local transcription
 
-Browser-side transcription is **disabled by default**. Enable it only in a controlled test build:
-
-```bash
-VITE_ENABLE_LOCAL_TRANSCRIPTION=true npm run dev -- --host 127.0.0.1
-```
-
-Reason: `@huggingface/transformers` removed the earlier critical dependency path, but its current npm package still has four no-fix high audit findings through Node-oriented `onnxruntime-node`/`adm-zip` and `sharp`. The PWA uses Web/WASM inference, but the package manager still installs and audits those dependencies. Do not reintroduce `@xenova/transformers`: its previous dependency chain had a critical vulnerability.
+Browser-side transcription is not shipped in v1. The former opt-in worker and
+`@huggingface/transformers` dependency were removed because the dependency path
+had four no-fix high audit findings and added a 23 MB WASM asset to every build.
+The trusted worker may publish fallback transcripts without sending audio to an
+unapproved third party. Do not reintroduce `@xenova/transformers`: its previous
+dependency chain had a critical vulnerability.
 
 Before enabling transcription for production, require all of:
 
@@ -36,7 +35,6 @@ Test nsec:
 5. Add this identity only to a dedicated test issue's signed whitelist. Do not relax whitelist code or modify a production issue to test it.
 6. Record a 3–10 second non-sensitive sample. Verify upload, kind-4200 publication, reload persistence, section/reply placement, and playback.
 7. Disable networking after recording a second sample, stop it, restore networking, then retry. Confirm the already uploaded descriptor is reused and only one segment is published.
-8. With `VITE_ENABLE_LOCAL_TRANSCRIPTION=true`, repeat once and verify transcript publication separately.
 
 The test nsec is **not** a Compass signer. Do not run `watch`, `stitch`, `publish-rss`, or `transcribe-missing` with it. The scripts reject a key that does not derive the configured Compass pubkey.
 
