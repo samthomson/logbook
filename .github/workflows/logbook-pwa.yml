@@ -1,20 +1,24 @@
-name: Logbook PWA
+name: Logbook validation
 
 on:
   push:
     paths:
       - 'logbook-pwa/**'
+      - 'scripts/**'
+      - 'deploy/**'
       - '.github/workflows/logbook-pwa.yml'
   pull_request:
     paths:
       - 'logbook-pwa/**'
+      - 'scripts/**'
+      - 'deploy/**'
       - '.github/workflows/logbook-pwa.yml'
 
 permissions:
   contents: read
 
 jobs:
-  validate:
+  validate-pwa:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -35,3 +39,19 @@ jobs:
       - run: npm run test:browser
       - run: npm run lint
       - run: npm run build
+
+  validate-worker:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: scripts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: scripts/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test

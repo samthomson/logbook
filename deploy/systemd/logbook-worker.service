@@ -1,0 +1,36 @@
+[Unit]
+Description=Logbook trusted episode worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=logbook
+Group=logbook
+WorkingDirectory=/opt/logbook/scripts
+Environment=NODE_ENV=production
+Environment=HOME=/home/logbook
+EnvironmentFile=-/etc/logbook/logbook.env
+ExecStart=/usr/bin/npm run watch
+Restart=on-failure
+RestartSec=15s
+TimeoutStopSec=45s
+UMask=0077
+StateDirectory=logbook
+CacheDirectory=logbook
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectClock=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/var/www/logbook /var/lib/logbook /var/cache/logbook
+
+[Install]
+WantedBy=multi-user.target
