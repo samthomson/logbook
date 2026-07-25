@@ -14,6 +14,9 @@ import { fetchIssueByDTag, fetchLatestIssue, fetchLatestIssueWithSegments, parse
 import { checkRecordingSupport } from './lib/utils'
 import { ADMIN_PUBKEYS, COMPASS_PUBKEY, IOS_RECORDING_MIN_VERSION } from './config'
 import { fetchAccessLists } from './lib/whitelist'
+import { loadCachedIssue } from './lib/issue-cache'
+import { fetchProfiles, type Profile } from './lib/profiles'
+import { nip19 } from 'nostr-tools'
 import type { CompassIssue, NostrEvent } from './types/nostr'
 import './App.css'
 
@@ -32,6 +35,8 @@ export default function App() {
   const [accessDegraded, setAccessDegraded] = useState(false)
   const [issueLoading, setIssueLoading] = useState(true)
   const [issueError, setIssueError] = useState<string | null>(null)
+  const [cachedSegments, setCachedSegments] = useState<[string, NostrEvent[]][]>([])
+  const [identityProfile, setIdentityProfile] = useState<Profile | null>(null)
   const keyboardOffset = useKeyboardOffset()
   const [issueRequests] = useState(createLatestRequestGuard)
   const [accessRequests] = useState(createLatestRequestGuard)
@@ -164,8 +169,15 @@ export default function App() {
       .then((event) => {
         if (issueRequests.isCurrent(request) && event) setIssue(parseIssue(event))
       })
-      .catch((err: unknown) => {
-        if (issueRequests.isCurrent(request)) setIssueError(err instanceof Error ? err.message : String(err))
+      .catch(async (err: unknown) => {
+        const cached = await loadCachedIssue<CompassIssue, [string, NostrEvent[]][]>().catch(() => null)
+        if (!issueRequests.isCurrent(request)) return
+        if (cached) {
+          setIssue(cached.issue)
+          setCachedSegments(cached.segments)
+          return
+        }
+        setIssueError(err instanceof Error ? err.message : String(err))
       })
       .finally(() => {
         if (issueRequests.isCurrent(request)) setIssueLoading(false)
@@ -231,6 +243,15 @@ export default function App() {
     setView('timeline')
   }
 
+  useEffect(() => {
+    let alive = true
+    if (!auth) { setIdentityProfile(null); return () => { alive = false } }
+    fetchProfiles([auth.pubkey]).then((profiles) => {
+      if (alive) setIdentityProfile(profiles.get(auth.pubkey) ?? null)
+    }).catch(() => { if (alive) setIdentityProfile(null) })
+    return () => { alive = false }
+  }, [auth])
+
   return (
     <div className={`app${view === 'admin' ? ' app--admin' : ''}`}>
       {recordingNotice && (
@@ -266,7 +287,13 @@ export default function App() {
           )}
         </nav>
         {auth ? (
-          <button
+          <>
+            <span className="app-identity" title={auth.pubkey}>
+              {identityProfile?.picture && <img src={identityProfile.picture} alt="" />}
+              {identityProfile?.name ?? nip19.npubEncode(auth.pubkey).slice(0, 16) + '…'}
+            </span>
+            {!isWhitelisted && !isAdmin && <span className="app-read-only" role="status">Read-only</span>}
+            <button
             className="btn btn--ghost btn--small app-logout"
             onClick={() => {
               authRequests.invalidate()
@@ -281,6 +308,7 @@ export default function App() {
           >
             Log out
           </button>
+          </>
         ) : (
           <button
             className="btn btn--primary btn--small app-login"
@@ -339,6 +367,7 @@ export default function App() {
             canRecord={Boolean(auth && isWhitelisted)}
             capabilityRequests={timelineCapabilityRequests}
             capabilityRequest={timelineCapabilityRequest}
+            cachedSegments={cachedSegments}
           />
         )}
 

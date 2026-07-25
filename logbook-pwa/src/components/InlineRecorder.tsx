@@ -33,6 +33,7 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
   const [elapsed, setElapsed] = useState(0)
   const [bars, setBars] = useState<number[]>(new Array(36).fill(0))
   const [micError, setMicError] = useState<string | null>(null)
+  const [review, setReview] = useState<InlineRecordingResult | null>(null)
 
   const streamRef = useRef<MediaStream | null>(null)
   const audioCtxRef = useRef<AudioContext | null>(null)
@@ -43,6 +44,7 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const rafRef = useRef(0)
   const cancelledRef = useRef(false)
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null)
 
   const cleanup = useCallback(() => {
     cancelAnimationFrame(rafRef.current)
@@ -52,6 +54,8 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
     streamRef.current = null
     void audioCtxRef.current?.close().catch(() => {})
     audioCtxRef.current = null
+    void wakeLockRef.current?.release().catch(() => {})
+    wakeLockRef.current = null
   }, [])
 
   useEffect(() => cleanup, [cleanup])
@@ -72,6 +76,9 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
       return
     }
     streamRef.current = stream
+    if ('wakeLock' in navigator) {
+      wakeLockRef.current = await navigator.wakeLock.request('screen').catch(() => null)
+    }
 
     const ctx = new AudioContext()
     audioCtxRef.current = ctx
@@ -99,7 +106,7 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
       const blob = new Blob(chunksRef.current, { type: mr.mimeType || 'audio/webm' })
       const duration = (Date.now() - startRef.current) / 1000
       const waveform = downsample(samplesRef.current, WAVEFORM_SAMPLES)
-      onRecorded({ blob, waveform, duration })
+      setReview({ blob, waveform, duration })
     }
 
     mr.start(100)
@@ -127,7 +134,7 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
       rafRef.current = requestAnimationFrame(loop)
     }
     rafRef.current = requestAnimationFrame(loop)
-  }, [onArm, onRecorded])
+  }, [onArm])
 
   const stop = useCallback(() => {
     cancelAnimationFrame(rafRef.current)
@@ -154,6 +161,18 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
   useEffect(() => {
     if (autoStart) void start()
   }, [autoStart, start])
+
+  if (review) {
+    return (
+      <div className="irec irec--review" role="status">
+        <audio controls src={URL.createObjectURL(review.blob)} aria-label="Preview recording" />
+        <span>{Math.ceil(review.duration)}s ready</span>
+        <button type="button" onClick={() => onRecorded(review)}>Publish</button>
+        <button type="button" onClick={() => { setReview(null); void start() }}>Re-record</button>
+        <button type="button" onClick={() => { setReview(null); onCancel?.() }}>Discard</button>
+      </div>
+    )
+  }
 
   if (!recording) {
     return (

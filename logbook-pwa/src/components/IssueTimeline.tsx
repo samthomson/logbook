@@ -21,6 +21,9 @@ import type {
   NostrEvent,
 } from '../types/nostr'
 import { fetchSegmentsForIssue, parseSegment, publishSegment, fetchTranscripts, selectTrustedSegmentEvents } from '../lib/segment'
+import { fetchManifest } from '../lib/manifest'
+import { orderTimelineSegments } from '../lib/timeline-order'
+import { saveCachedIssue } from '../lib/issue-cache'
 import { extractMentionedNpubs } from './SectionExcerpt'
 import { uploadBlob } from '../lib/blossom'
 import { isLocalTranscriptionEnabled, transcribeAndPublish } from '../lib/transcription'
@@ -41,6 +44,7 @@ interface Props {
   canRecord: boolean
   capabilityRequests: LatestRequestGuard
   capabilityRequest: number | null
+  cachedSegments?: [string, NostrEvent[]][]
 }
 
 interface SectionState {
@@ -80,6 +84,7 @@ export default function IssueTimeline({
   canRecord,
   capabilityRequests,
   capabilityRequest,
+  cachedSegments = [],
 }: Props) {
   const recordingEnabled = canRecord && signer !== null
   const publishCapabilityRef = useRef({ issueNumber: issue.issueNumber, myPubkey, recordingEnabled, signer })
@@ -116,14 +121,21 @@ export default function IssueTimeline({
   // Load all segments in one query
   useEffect(() => {
     let mounted = true
+    const cachedGrouped = new Map(cachedSegments)
     setSections(() => {
       const next = new Map<string, SectionState>()
-      for (const t of allTargets) next.set(t.id, { segments: [], order: [], loading: true, error: null })
+      for (const t of allTargets) {
+        const cached = (cachedGrouped.get(t.id) ?? []).flatMap((event) => {
+          const segment = parseSegment(event)
+          return segment ? [segment] : []
+        })
+        next.set(t.id, { segments: cached, order: computeSeedOrder(cached), loading: cached.length === 0, error: null })
+      }
       return next
     })
 
-    fetchSegmentsForIssue(`${ISSUE_PREFIX}-${issue.issueNumber}`)
-      .then((grouped) => {
+    Promise.all([fetchSegmentsForIssue(`${ISSUE_PREFIX}-${issue.issueNumber}`), fetchManifest(issue.issueNumber).catch(() => null)])
+      .then(([grouped, manifest]) => {
         if (!mounted) return
         const allParsed: Segment[] = []
         const orphaned: Segment[] = []
@@ -140,7 +152,15 @@ export default function IssueTimeline({
               knownIdsRef.current.add(seg.event.id)
               allParsed.push(seg)
             }
-            next.set(t.id, { segments: parsed, order: computeSeedOrder(parsed), loading: false, error: null })
+            const manifestSection = manifest?.content.sections.find((section) => section.id === t.id)
+            next.set(t.id, {
+              segments: parsed,
+              order: manifestSection
+                ? orderTimelineSegments(parsed, manifestSection.order, manifestSection.excluded)
+                : computeSeedOrder(parsed),
+              loading: false,
+              error: null,
+            })
           }
           // Segments whose section tag no longer matches any item (old ID
           // formats) — surface them under the first group so nothing is lost
@@ -164,6 +184,7 @@ export default function IssueTimeline({
           }
           return next
         })
+        void saveCachedIssue(issue, [...grouped.entries()]).catch((error) => console.warn('Unable to cache public timeline:', error))
         if (allParsed.length) {
           fetchProfiles(allParsed.map((s) => s.event.pubkey)).then((map) => {
             if (!mounted) return
@@ -191,7 +212,7 @@ export default function IssueTimeline({
       })
 
     return () => { mounted = false }
-  }, [allTargets, issue.issueNumber])
+  }, [allTargets, cachedSegments, issue])
 
   // Live subscription
   useEffect(() => {
@@ -519,20 +540,11 @@ export default function IssueTimeline({
         {communityNotes.length > 0 && (
           <section className="timeline__group timeline__community" aria-label="Voice notes from other contributors">
             <h2 className="timeline__group-title">Other contributors · {communityNotes.length} notes</h2>
-            <div className="timeline__notes">
+            <div className="timeline__community-links">
               {communityNotes.map((seg) => (
-                <div key={seg.event.id} className="timeline__note">
-                  <VoiceBubble
-                    segment={seg}
-                    profile={profiles.get(seg.event.pubkey)}
-                    transcript={transcripts.get(seg.event.id)}
-                    onReply={recordingEnabled ? handleReply : undefined}
-                    isWhitelisted={recordingEnabled}
-                    isNew={newSegmentIds.has(seg.event.id)}
-                    isOwn={false}
-                    justPublished={justPublished.has(seg.event.id)}
-                  />
-                </div>
+                <a key={seg.event.id} href={`#voice-note-${seg.event.id}`}>
+                  {profiles.get(seg.event.pubkey)?.name ?? seg.event.pubkey.slice(0, 8)}
+                </a>
               ))}
             </div>
           </section>

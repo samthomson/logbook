@@ -55,7 +55,10 @@ export default function VoiceBubble({
   const initial = (profile?.name ?? segment.event.pubkey).slice(0, 2).toUpperCase()
 
   return (
-    <div className={`bubble ${isOwn ? 'bubble--own' : ''} ${isNew ? 'bubble--new' : ''}`}>
+    <div
+      id={`voice-note-${segment.event.id}`}
+      className={`bubble ${isOwn ? 'bubble--own' : ''} ${isNew ? 'bubble--new' : ''}`}
+    >
       <div className="bubble__avatar" aria-hidden="true">
         {profile?.picture ? (
           <img src={profile.picture} alt="" loading="lazy" />
@@ -117,6 +120,15 @@ export default function VoiceBubble({
 
         {transcript && (
           <p className="bubble__transcript">{transcript}</p>
+        )}
+        {segment.respondingTo && (
+          <button
+            className="bubble__reply-context"
+            onClick={() => document.getElementById(`voice-note-${segment.respondingTo}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+            aria-label="Go to parent voice note"
+          >
+            In reply to ↩
+          </button>
         )}
       </div>
     </div>
