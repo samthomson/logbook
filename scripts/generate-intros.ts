@@ -15,10 +15,12 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { execSync } from 'child_process'
 import { SimplePool } from 'nostr-tools/pool'
-import { finalizeEvent, getPublicKey } from 'nostr-tools'
-import { loadPrivateKey, COMPASS_PUBKEY, BLOSSOM_SERVERS, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from './config.ts'
+import { COMPASS_PUBKEY, BLOSSOM_SERVERS, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from './config.ts'
+import { createCompassAmberSigner, type CompassSigner } from './amber-signer.ts'
+import { verifyNostrEvent } from './segment-security.ts'
 
 const ISSUE_NUMBER = parseInt(process.argv[2] ?? '0', 10)
+type IntroSigner = CompassSigner & { getPublicKey: () => Promise<string> }
 if (!ISSUE_NUMBER) {
   console.error('Usage: generate-intros.ts <issueNumber>')
   process.exit(1)
@@ -83,7 +85,7 @@ async function buildBlossomAuthEvent(
   sha256: string,
   size: number,
   mime: string,
-  signer: { getPublicKey: () => Promise<string>; signEvent: (e: object) => Promise<object & { id: string; sig: string }> },
+  signer: IntroSigner,
 ) {
   const pubkey = await signer.getPublicKey()
   const unsigned = {
@@ -102,7 +104,7 @@ async function buildBlossomAuthEvent(
 
 async function uploadToBlossom(
   wavPath: string,
-  signer: { getPublicKey: () => Promise<string>; signEvent: (e: object) => Promise<object & { id: string; sig: string }> },
+  signer: IntroSigner,
 ): Promise<{ url: string; sha256: string; size: number; mime: string }> {
   const data = readFileSync(wavPath)
   const sha256 = createHash('sha256').update(data).digest('hex')
@@ -141,8 +143,8 @@ async function publishIntroSegment(
   sectionId: string,
   blob: { url: string; sha256: string; mime: string },
   durationSec: number,
-  signer: { getPublicKey: () => Promise<string>; signEvent: (e: object) => Promise<object & { id: string; sig: string }> },
-): Promise<void> {
+  signer: IntroSigner,
+): Promise<string> {
   const issueId = `${ISSUE_PREFIX}-${ISSUE_NUMBER}`
   const pubkey = await signer.getPublicKey()
 
@@ -164,6 +166,7 @@ async function publishIntroSegment(
       ['x', blob.sha256],
       ['section', sectionId],
       ['issue', issueId],
+      ['t', issueId],
       ['alt', `AI intro for section: ${sectionId}`],
     ],
     content,
@@ -173,7 +176,9 @@ async function publishIntroSegment(
   const event = await signer.signEvent(unsigned)
   const pool = new SimplePool()
   await Promise.any(pool.publish(DEFAULT_RELAYS, event as Parameters<typeof pool.publish>[1]))
-  console.log(`Published intro segment for ${sectionId}: ${(event as { id: string }).id}`)
+  const id = (event as { id: string }).id
+  console.log(`Published intro segment for ${sectionId}: ${id}`)
+  return id
 }
 
 // ── Manifest fetch ────────────────────────────────────────────────────────────
@@ -185,30 +190,49 @@ async function fetchManifest(issueNumber: number) {
     kinds: [KINDS.MANIFEST],
     authors: [COMPASS_PUBKEY],
     '#d': [dTag],
-    limit: 1,
+    limit: 50,
   })
   const event = events
-    .filter(e => e.pubkey === COMPASS_PUBKEY)
-    .sort((a, b) => b.created_at - a.created_at)[0]
+    .filter(e => e.pubkey === COMPASS_PUBKEY && verifyNostrEvent(e))
+    .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))[0]
   if (!event) throw new Error(`No manifest found for issue ${issueNumber}`)
   return JSON.parse(event.content)
+}
+
+async function publishIntroManifestRevision(
+  manifest: { episodeStatus?: string; sections: Array<{ id: string; introEventId?: string | null; order?: string[] }> },
+  signer: CompassSigner,
+): Promise<void> {
+  if (manifest.episodeStatus === 'cutting' || manifest.episodeStatus === 'published') {
+    throw new Error('Refusing to overwrite a cutting or published manifest with an intro revision')
+  }
+  const issueId = `${ISSUE_PREFIX}-${ISSUE_NUMBER}`
+  const event = await signer.signEvent({
+    kind: KINDS.MANIFEST,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [['d', issueId], ['title', `Logbook #${ISSUE_NUMBER}`], ['issue', issueId]],
+    content: JSON.stringify(manifest),
+  })
+  const pool = new SimplePool()
+  try {
+    await Promise.any(pool.publish(DEFAULT_RELAYS, event as Parameters<typeof pool.publish>[1]))
+  } finally {
+    pool.close(DEFAULT_RELAYS)
+  }
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const privkey = await loadPrivateKey()
+  const amber = createCompassAmberSigner()
   const signer = {
-    getPublicKey: async () => getPublicKey(privkey),
-    signEvent: async (e: object) => {
-      const signed = finalizeEvent(e as Parameters<typeof finalizeEvent>[0], privkey)
-      return signed as object & { id: string; sig: string }
-    },
+    getPublicKey: async () => COMPASS_PUBKEY,
+    signEvent: amber.signEvent,
   }
   const manifest = await fetchManifest(ISSUE_NUMBER)
 
-  for (const section of manifest.sections as Array<{ id: string; title: string; body?: string; intro?: string }>) {
-    if (section.intro) {
+  for (const section of manifest.sections as Array<{ id: string; title: string; body?: string; introEventId?: string | null; order?: string[] }>) {
+    if (section.introEventId) {
       console.log(`Section ${section.id} already has intro, skipping`)
       continue
     }
@@ -239,7 +263,10 @@ async function main() {
     const durationSec = wavData.length / (48000 * 2 * 2) // rough: 48kHz, 16-bit stereo
 
     const blob = await uploadToBlossom(wavPath, signer)
-    await publishIntroSegment(section.id, blob, durationSec, signer)
+    const introEventId = await publishIntroSegment(section.id, blob, durationSec, signer)
+    section.introEventId = introEventId
+    section.order = [introEventId, ...(section.order ?? []).filter((id) => id !== introEventId)]
+    await publishIntroManifestRevision(manifest, signer)
 
     console.log(`Done: ${section.id}`)
   }

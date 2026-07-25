@@ -1,4 +1,5 @@
 import type { NostrEvent } from 'nostr-tools'
+import { COMPASS_PUBKEY } from './config.ts'
 import { parseVerifiedSegment, verifyNostrEvent } from './segment-security.ts'
 
 const TRANSCRIPT_KIND = 1111
@@ -36,6 +37,7 @@ export function selectTrustedReleaseMetadata(
   segmentCandidates: NostrEvent[],
   transcriptCandidates: NostrEvent[],
   blossomServers: readonly string[],
+  fallbackAuthor = COMPASS_PUBKEY,
 ): TrustedReleaseMetadata {
   const requestedIds = [...new Set(segmentIds)]
   const requested = new Set(requestedIds)
@@ -55,7 +57,8 @@ export function selectTrustedReleaseMetadata(
     throw new Error(`Missing verified segment event(s): ${missing.join(', ')}`)
   }
 
-  const selectedTranscripts = new Map<string, NostrEvent>()
+  const selectedPrimary = new Map<string, NostrEvent>()
+  const selectedFallback = new Map<string, NostrEvent>()
   for (const event of transcriptCandidates) {
     if (event.kind !== TRANSCRIPT_KIND || !verifyNostrEvent(event)) continue
     const eTags = event.tags.filter((tag) => tag[0] === 'e' && tag[1])
@@ -63,16 +66,22 @@ export function selectTrustedReleaseMetadata(
     if (eTags.length !== 1 || kTags.length !== 1 || kTags[0][1] !== String(SEGMENT_KIND)) continue
     const segmentId = eTags[0][1]
     const segment = segments.get(segmentId)
-    if (!segment || event.pubkey !== segment.event.pubkey || transcriptText(event.content) === null) continue
-    const prior = selectedTranscripts.get(segmentId)
+    if (!segment || transcriptText(event.content) === null) continue
+    const selected = event.pubkey === segment.event.pubkey
+      ? selectedPrimary
+      : event.pubkey === fallbackAuthor
+        ? selectedFallback
+        : null
+    if (!selected) continue
+    const prior = selected.get(segmentId)
     if (!prior || event.created_at > prior.created_at || (
       event.created_at === prior.created_at && event.id.localeCompare(prior.id) > 0
-    )) selectedTranscripts.set(segmentId, event)
+    )) selected.set(segmentId, event)
   }
 
   const transcriptBySegment = new Map<string, string>()
   for (const id of requestedIds) {
-    const event = selectedTranscripts.get(id)
+    const event = selectedPrimary.get(id) ?? selectedFallback.get(id)
     if (event) transcriptBySegment.set(id, transcriptText(event.content)!)
   }
 

@@ -8,7 +8,7 @@ export interface WatcherCycleDependencies {
   runPublish: (issueId: string) => number
 }
 
-export type WatcherCycleOutcome = 'stale' | 'stitch-failed' | 'publish-failed' | 'published'
+export type WatcherCycleOutcome = 'stale' | 'stitch-failed' | 'publish-failed' | 'publish-unacknowledged' | 'published'
 export interface WatcherCycleResult {
   issueId: string
   outcome: WatcherCycleOutcome
@@ -18,12 +18,16 @@ function dTag(event: ManifestEvent): string | null {
   return event.tags.find((tag) => tag[0] === 'd')?.[1] ?? null
 }
 
-function isCutting(event: ManifestEvent): boolean {
+function isStatus(event: ManifestEvent, status: string): boolean {
   try {
-    return (JSON.parse(event.content) as { episodeStatus?: unknown }).episodeStatus === 'cutting'
+    return (JSON.parse(event.content) as { episodeStatus?: unknown }).episodeStatus === status
   } catch {
     return false
   }
+}
+
+function isCutting(event: ManifestEvent): boolean {
+  return isStatus(event, 'cutting')
 }
 
 /**
@@ -44,7 +48,7 @@ export async function runWatcherCycle(
 
   for (const candidate of candidates) {
     const issueId = dTag(candidate)
-    if (!issueId || completed.has(candidate.id)) continue
+    if (!issueId || completed.has(issueId)) continue
 
     const candidateIsCurrent = async (): Promise<boolean> => {
       const fresh = await dependencies.fetchManifests()
@@ -59,20 +63,33 @@ export async function runWatcherCycle(
       continue
     }
 
-    completed.add(candidate.id)
+    // Record only a fully acknowledged publication and key it by the stable
+    // addressable d-tag, not a replaceable manifest revision ID.
+    completed.add(issueId)
     if (dependencies.runStitch(issueId) !== 0) {
-      completed.delete(candidate.id)
+      completed.delete(issueId)
       results.push({ issueId, outcome: 'stitch-failed' })
       continue
     }
     if (!(await candidateIsCurrent())) {
-      completed.delete(candidate.id)
+      completed.delete(issueId)
       results.push({ issueId, outcome: 'stale' })
       continue
     }
     if (dependencies.runPublish(issueId) !== 0) {
-      completed.delete(candidate.id)
+      completed.delete(issueId)
       results.push({ issueId, outcome: 'publish-failed' })
+      continue
+    }
+    // A child process exit is not an acknowledgement. Only durably suppress
+    // retries after relays expose a newer verified terminal revision.
+    const acknowledged = latestVerifiedManifest(await dependencies.fetchManifests(), issueId, {
+      expectedPubkey: dependencies.expectedPubkey,
+      verify: dependencies.verify,
+    })
+    if (!acknowledged || !isStatus(acknowledged, 'published')) {
+      completed.delete(issueId)
+      results.push({ issueId, outcome: 'publish-unacknowledged' })
       continue
     }
     results.push({ issueId, outcome: 'published' })

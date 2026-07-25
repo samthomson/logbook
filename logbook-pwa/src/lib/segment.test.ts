@@ -53,6 +53,23 @@ describe('selectTrustedSegmentEvents', () => {
 })
 
 describe('selectTrustedTranscripts', () => {
+  it('uses a verified Compass fallback only when no verified same-author transcript exists', () => {
+    const author = generateSecretKey()
+    const compass = generateSecretKey()
+    const segmentEvent = finalizeEvent({
+      kind: 4200,
+      created_at: 1,
+      tags: [['x', HASH], ['section', 'sec-one-31'], ['issue', 'logbook-31'], ['t', 'logbook-31']],
+      content: JSON.stringify({ audio: { url: `https://blossom.example/${HASH}`, sha256: HASH, mime: 'audio/webm', duration: 2, waveform: [] }, isIntro: false }),
+    }, author)
+    const fallback = finalizeEvent({ kind: 1111, created_at: 4, tags: [['e', segmentEvent.id, '', 'root'], ['k', '4200']], content: 'Compass fallback' }, compass)
+    const malformedNewer = finalizeEvent({ kind: 1111, created_at: 5, tags: [['e', segmentEvent.id], ['k', '1']], content: 'bad' }, compass)
+    const primary = finalizeEvent({ kind: 1111, created_at: 3, tags: [['e', segmentEvent.id, '', 'root'], ['k', '4200']], content: 'Author primary' }, author)
+
+    expect(selectTrustedTranscripts([parseSegment(segmentEvent)!], [fallback, malformedNewer], compass && fallback.pubkey).get(segmentEvent.id)?.text).toBe('Compass fallback')
+    expect(selectTrustedTranscripts([parseSegment(segmentEvent)!], [fallback, primary], fallback.pubkey).get(segmentEvent.id)?.text).toBe('Author primary')
+  })
+
   it('accepts only verified same-author companions and selects newest deterministically', () => {
     const author = generateSecretKey()
     const other = generateSecretKey()

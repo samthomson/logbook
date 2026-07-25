@@ -1,10 +1,12 @@
 import { SimplePool } from 'nostr-tools'
 import type { Filter, NostrEvent } from 'nostr-tools'
-import { finalizeEvent, nip19 } from 'nostr-tools'
+import { nip19 } from 'nostr-tools'
 import { spawnSync } from 'node:child_process'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { COMPASS_PUBKEY, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX, loadPrivateKey } from './config.ts'
+import { COMPASS_PUBKEY, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from './config.ts'
+import { createCompassAmberSigner, type CompassSigner } from './amber-signer.ts'
+import { requiredChapterTargets } from './issue-targets.ts'
 import { missingManifestIssueIds } from './watch-state.ts'
 import { runWatcherCycle } from './watch-runner.ts'
 import { verifyNostrEvent } from './segment-security.ts'
@@ -60,10 +62,12 @@ function parseIssue(event: NostrEvent, issueNumber: number): Section[] {
 
 // ── manifest creation ────────────────────────────────────────────────────────
 
-async function createManifest(event: NostrEvent, privkey: Uint8Array): Promise<void> {
+async function createManifest(event: NostrEvent, signer: CompassSigner): Promise<void> {
   const issueNumber = extractIssueNumber(event)
   const issueId = `${ISSUE_PREFIX}-${issueNumber}`
-  const sections = parseIssue(event, issueNumber)
+  // The canonical target projection includes H3 recording targets and never
+  // manufactures unused H2-only chapters when a group is only a container.
+  const sections = requiredChapterTargets(event.content, issueNumber)
 
   // SPEC §2: content must carry issueRef + sections[].introEventId/order/excluded[]/reviewed[]
   const issueRef = nip19.naddrEncode({
@@ -101,10 +105,13 @@ async function createManifest(event: NostrEvent, privkey: Uint8Array): Promise<v
     content: manifestContent,
   }
 
-  const signed = finalizeEvent(template, privkey)
+  const signed = await signer.signEvent(template)
   const pool = new SimplePool()
-  await Promise.any(pool.publish(DEFAULT_RELAYS, signed))
-  pool.close(DEFAULT_RELAYS)
+  try {
+    await Promise.any(pool.publish(DEFAULT_RELAYS, signed))
+  } finally {
+    pool.close(DEFAULT_RELAYS)
+  }
   console.log(`[watch-compass] Published manifest for issue ${issueId}`)
 }
 
@@ -158,7 +165,7 @@ async function pollCuttingManifests(completedRevisionIds: Set<string>): Promise<
 
 // ── watcher ──────────────────────────────────────────────────────────────────
 
-async function poll(privkey: Uint8Array, seen: Set<string>): Promise<void> {
+async function poll(signer: CompassSigner, seen: Set<string>): Promise<void> {
   const pool = new SimplePool()
   const filter: Filter = {
     kinds: [KINDS.COMPASS_ISSUE],
@@ -177,12 +184,12 @@ async function poll(privkey: Uint8Array, seen: Set<string>): Promise<void> {
     if (seen.has(event.id)) continue
     seen.add(event.id)
     console.log(`[watch-compass] New issue detected: ${event.id}`)
-    await createManifest(event, privkey)
+    await createManifest(event, signer)
   }
 }
 
 async function main(): Promise<void> {
-  const privkey = await loadPrivateKey()
+  const signer = createCompassAmberSigner()
   const seen = new Set<string>()
 
   // Bootstrap existing issues, then idempotently backfill any that do not
@@ -203,7 +210,7 @@ async function main(): Promise<void> {
     const issue = issueById.get(id)
     if (!issue) continue
     console.log(`[watch-compass] Backfilling missing manifest for ${id}`)
-    await createManifest(issue, privkey)
+    await createManifest(issue, signer)
   }
   for (const event of validIssues) seen.add(event.id)
   console.log(`[watch-compass] Bootstrapped with ${seen.size} verified issues; backfilled ${missingIds.length} manifest(s)`)
@@ -211,7 +218,7 @@ async function main(): Promise<void> {
   const completedRevisionIds = new Set<string>()
 
   const INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
-  setInterval(() => poll(privkey, seen).catch(console.error), INTERVAL_MS)
+  setInterval(() => poll(signer, seen).catch(console.error), INTERVAL_MS)
   setInterval(() => pollCuttingManifests(completedRevisionIds).catch(console.error), INTERVAL_MS)
   console.log('[watch-compass] Polling every 10 minutes…')
 }

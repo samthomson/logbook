@@ -18,7 +18,6 @@
  */
 
 import { SimplePool } from 'nostr-tools/pool'
-import { finalizeEvent } from 'nostr-tools'
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -29,10 +28,9 @@ import {
   COMPASS_PUBKEY,
   DEFAULT_RELAYS,
   KINDS,
-  ISSUE_PREFIX,
   BLOSSOM_SERVERS,
-  loadPrivateKey,
 } from './config.ts'
+import { createCompassAmberSigner } from './amber-signer.ts'
 import { getTrustedBlobCandidates, parseVerifiedSegment } from './segment-security.ts'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
@@ -113,7 +111,7 @@ async function main(): Promise<void> {
   const modelPath = modelFlag !== -1 ? args[modelFlag + 1] : DEFAULT_MODEL
 
   requireWhisper(modelPath)
-  const privkey = await loadPrivateKey()
+  const signer = createCompassAmberSigner()
   const pool = new SimplePool()
   const since = Math.floor(Date.now() / 1000) - hours * 3600
 
@@ -163,7 +161,7 @@ async function main(): Promise<void> {
 
       // Companion event: NIP-34-style scoped comment (kind 1111) per SPEC §5
       const issueTag = seg.tags.find((t) => t[0] === 'issue')?.[1] ?? ''
-      const event = finalizeEvent(
+      const event = await signer.signEvent(
         {
           kind: KINDS.TRANSCRIPT,
           created_at: Math.floor(Date.now() / 1000),
@@ -175,7 +173,6 @@ async function main(): Promise<void> {
           ],
           content: text,
         },
-        privkey,
       )
       await Promise.any(pool.publish(DEFAULT_RELAYS, event))
       done++

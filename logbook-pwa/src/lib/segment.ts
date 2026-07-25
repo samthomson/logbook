@@ -6,7 +6,7 @@ import { getPool } from './pool'
  * Also handles companion transcript events (kind 1111).
  */
 
-import { BLOSSOM_SERVERS, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from '../config'
+import { BLOSSOM_SERVERS, COMPASS_PUBKEY, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from '../config'
 import type {
   NostrEvent,
   NostrSigner,
@@ -239,12 +239,14 @@ function parseTranscriptText(content: string): string | null {
 export function selectTrustedTranscripts(
   segments: Segment[],
   candidates: NostrEvent[],
+  fallbackAuthor = COMPASS_PUBKEY,
 ): Map<string, TranscriptEvent> {
   const verifiedSegmentIds = new Set(filterVerified(segments.map((segment) => segment.event)).map((event) => event.id))
   const byId = new Map(segments
     .filter((segment) => verifiedSegmentIds.has(segment.event.id))
     .map((segment) => [segment.event.id, segment]))
-  const selected = new Map<string, NostrEvent>()
+  const selectedPrimary = new Map<string, NostrEvent>()
+  const selectedFallback = new Map<string, NostrEvent>()
 
   for (const event of filterVerified(candidates)) {
     if (event.kind !== KINDS.TRANSCRIPT) continue
@@ -254,14 +256,25 @@ export function selectTrustedTranscripts(
     const segmentId = eTags[0][1]
     const segment = byId.get(segmentId)
     const text = parseTranscriptText(event.content)
-    if (!segment || event.pubkey !== segment.event.pubkey || text === null) continue
+    if (!segment || text === null) continue
+    // A verified Compass fallback is authoritative only when the segment's
+    // author has not supplied a verified companion transcript.
+    const selected = event.pubkey === segment.event.pubkey
+      ? selectedPrimary
+      : event.pubkey === fallbackAuthor
+        ? selectedFallback
+        : null
+    if (!selected) continue
     const previous = selected.get(segmentId)
     if (!previous || event.created_at > previous.created_at || (
       event.created_at === previous.created_at && event.id.localeCompare(previous.id) > 0
     )) selected.set(segmentId, event)
   }
 
-  return new Map([...selected].map(([segmentId, event]) => [segmentId, {
+  return new Map([...byId.keys()].flatMap((segmentId) => {
+    const event = selectedPrimary.get(segmentId) ?? selectedFallback.get(segmentId)
+    return event ? [[segmentId, event] as const] : []
+  }).map(([segmentId, event]) => [segmentId, {
     event,
     segmentEventId: segmentId,
     text: parseTranscriptText(event.content)!,

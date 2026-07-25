@@ -33,24 +33,38 @@ test('assertPublishableManifest permits only a cutting manifest', () => {
   assert.throws(() => assertPublishableManifest({ episodeStatus: 'published' }), /cutting/i)
 })
 
-test('release metadata accepts only verified included segments and same-author transcripts', () => {
+test('release metadata prefers verified same-author transcripts but accepts a verified Compass fallback', () => {
   const key = generateSecretKey()
   const segment = signedSegment(key)
   const accepted = transcript(segment.id, key, 'newest', 20)
   const older = transcript(segment.id, key, 'older', 19)
-  const wrongAuthor = transcript(segment.id, generateSecretKey(), 'forged author', 30)
+  const compassKey = generateSecretKey()
+  const compassFallback = transcript(segment.id, compassKey, 'Compass fallback', 30)
+  const wrongAuthor = transcript(segment.id, generateSecretKey(), 'forged author', 31)
   const forged = { ...accepted, id: 'f'.repeat(64) }
   const unknown = transcript('b'.repeat(64), key, 'unknown', 40)
 
   const selected = selectTrustedReleaseMetadata(
     [segment.id],
     [segment, { ...segment, sig: '0'.repeat(128) }],
-    [older, wrongAuthor, forged, unknown, accepted],
+    [older, wrongAuthor, forged, unknown, compassFallback, accepted],
     SERVERS,
+    compassFallback.pubkey,
   )
 
   assert.deepEqual(selected.participantPubkeys, [segment.pubkey])
   assert.equal(selected.transcriptBySegment.get(segment.id), 'newest')
+})
+
+test('release metadata does not let malformed or untrusted transcripts suppress a Compass fallback', () => {
+  const segment = signedSegment()
+  const compassKey = generateSecretKey()
+  const fallback = transcript(segment.id, compassKey, 'fallback', 20)
+  const malformed = finalizeEvent({ kind: 1111, created_at: 30, tags: [['e', segment.id], ['k', '1']], content: 'wrong link' }, compassKey)
+  const untrusted = transcript(segment.id, generateSecretKey(), 'untrusted', 40)
+
+  const selected = selectTrustedReleaseMetadata([segment.id], [segment], [malformed, untrusted, fallback], SERVERS, fallback.pubkey)
+  assert.equal(selected.transcriptBySegment.get(segment.id), 'fallback')
 })
 
 test('release metadata rejects a requested segment that has no verified relay event', () => {

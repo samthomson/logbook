@@ -34,14 +34,16 @@ test('watcher cycle revalidates the exact latest cutting revision before side ef
 
 test('watcher cycle runs stitch then publish once for an exact revalidated revision', async () => {
   const cutting = manifest('cutting', 1, 'cutting')
+  const published = manifest('published', 2, 'published')
+  let acknowledged = false
   const calls: string[] = []
   const stitched = new Set<string>()
   const deps = {
-    fetchManifests: async () => [cutting],
+    fetchManifests: async () => [acknowledged ? published : cutting],
     expectedPubkey: COMPASS,
     verify: () => true,
     runStitch: (issueId: string) => { calls.push(`stitch:${issueId}`); return 0 },
-    runPublish: (issueId: string) => { calls.push(`publish:${issueId}`); return 0 },
+    runPublish: (issueId: string) => { calls.push(`publish:${issueId}`); acknowledged = true; return 0 },
   }
   assert.deepEqual(await runWatcherCycle(stitched, deps), [
     { issueId: 'logbook-31', outcome: 'published' },
@@ -51,22 +53,42 @@ test('watcher cycle runs stitch then publish once for an exact revalidated revis
 
   const replacement = manifest('replacement-cutting', 2, 'cutting')
   const replacementDeps = { ...deps, fetchManifests: async () => [cutting, replacement] }
-  assert.deepEqual(await runWatcherCycle(stitched, replacementDeps), [
-    { issueId: 'logbook-31', outcome: 'published' },
-  ])
-  assert.equal(stitched.has('replacement-cutting'), true)
+  assert.deepEqual(await runWatcherCycle(stitched, replacementDeps), [])
+  assert.equal(stitched.has('logbook-31'), true)
+})
+
+test('watcher deduplicates acknowledged publications by stable d-tag across replacement revisions', async () => {
+  const original = manifest('cutting-a', 1, 'cutting')
+  const replacement = manifest('cutting-b', 2, 'cutting')
+  const terminal = manifest('published', 3, 'published')
+  let acknowledged = false
+  const calls: string[] = []
+  const completed = new Set<string>()
+  const deps = {
+    fetchManifests: async () => acknowledged ? [terminal] : [original, replacement],
+    expectedPubkey: COMPASS,
+    verify: () => true,
+    runStitch: (issueId: string) => { calls.push(`stitch:${issueId}`); return 0 },
+    runPublish: (issueId: string) => { calls.push(`publish:${issueId}`); acknowledged = true; return 0 },
+  }
+  await runWatcherCycle(completed, deps)
+  assert.deepEqual(completed, new Set(['logbook-31']))
+  assert.deepEqual(await runWatcherCycle(completed, deps), [])
+  assert.deepEqual(calls, ['stitch:logbook-31', 'publish:logbook-31'])
 })
 
 test('watcher cycle retries a failed stage on a later cycle', async () => {
   const cutting = manifest('cutting', 1, 'cutting')
   const stitched = new Set<string>()
   let stitchStatus = 1
+  let acknowledged = false
+  const published = manifest('published', 2, 'published')
   const deps = {
-    fetchManifests: async () => [cutting],
+    fetchManifests: async () => acknowledged ? [published] : [cutting],
     expectedPubkey: COMPASS,
     verify: () => true,
     runStitch: () => stitchStatus,
-    runPublish: () => 0,
+    runPublish: () => { acknowledged = true; return 0 },
   }
   assert.deepEqual(await runWatcherCycle(stitched, deps), [
     { issueId: 'logbook-31', outcome: 'stitch-failed' },
