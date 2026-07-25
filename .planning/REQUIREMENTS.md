@@ -46,16 +46,9 @@
 ### Nostr Event Publishing
 
 - [ ] **EVENT-01**: Published voice note uses the Logbook custom event envelope (kind TBD, spec in SPEC.md)
-- [ ] **EVENT-02**: Event tags include: section ID, contributor npub, imeta block (url, mime, sha256, duration, waveform), intro flag, soft reply pointer
+- [ ] **EVENT-02**: Event uses the canonical `SPEC.md` envelope: author pubkey plus `t`, `section`, `issue`, `x`, and optional `responding_to` tags; audio metadata and intro flag are in signed JSON content
 - [ ] **EVENT-03**: Event is published to configured relay set
 - [ ] **EVENT-04**: Transcript (if available) is attached per the transcript spec (SPEC.md §transcript)
-
-### Transcription
-
-- [ ] **TRANS-01**: App attempts in-browser transcription via transformers.js (Whisper-base or Moonshine) after recording
-- [ ] **TRANS-02**: Transcription model is downloaded once and cached (service worker / Cache API)
-- [ ] **TRANS-03**: User sees transcription progress; can publish without waiting if desired
-- [ ] **TRANS-04**: Transcript is stored alongside the event (exact storage location per SPEC.md)
 
 ### Playback & Timeline
 
@@ -70,7 +63,7 @@
 - [ ] **ADMIN-01**: Admin user sees a drag-to-reorder list of all voice notes per section (the EDL)
 - [ ] **ADMIN-02**: Admin can omit notes from the episode cut (soft delete from EDL, not from Nostr)
 - [ ] **ADMIN-03**: Admin can trigger VPS stitcher job by publishing a signed manifest event
-- [ ] **ADMIN-04**: Admin can upload the AI-generated intro track on behalf of the Compass npub
+
 
 ### Stitcher (VPS)
 
@@ -82,38 +75,57 @@
 
 ### RSS / Distribution
 
-- [ ] **RSS-01**: Published RSS is valid Podcasting 2.0 with `podcast:value` splits per contributor npub
-- [ ] **RSS-02**: RSS includes `podcast:chapters` entries named per contributor segment
-- [ ] **RSS-03**: Feed URL is stable and served from GitHub Pages
+- [ ] **RSS-01**: Published RSS is valid Podcasting 2.0 and binds the exact verified manifest revision used by the stitcher
+- [ ] **RSS-02**: Publication is resumable and reaches the trusted HTTPS origin, Podstr event, and NIP-73 discussion before the manifest becomes terminal
+- [ ] **RSS-03**: Feed URL is stable and served from the trusted HTTPS origin with byte-range media support
 
 ### PWA / Hosting
 
 - [ ] **PWA-01**: App is installable as a PWA (manifest, service worker, icons)
 - [ ] **PWA-02**: App works offline for browsing cached issue and queued drafts
 - [ ] **PWA-03**: Wake lock is requested during recording to prevent screen-sleep killing a long take
-- [ ] **PWA-04**: App is deployable as a Nostr nsite (NIP-5A)
-- [ ] **PWA-05**: App is deployed on GitHub Pages under the Compass domain
+- [ ] **PWA-04**: App is deployable with current nsyte/NIP-5A tooling
+- [ ] **PWA-05**: A release is live only after same-gateway HTML, exact bundle SHA-256, and change-marker verification
 
 ## v2 Requirements
+
+### Transcription
+
+- **TRANS-01**: Trusted-worker fallback publishes a verified Compass-authored transcript when no verified contributor transcript exists
+- **TRANS-02**: Browser transcription remains opt-in until its shipped dependency path has no unresolved high-severity audit findings
+- **TRANS-03**: User sees transcription progress and can publish audio without waiting
+- **TRANS-04**: Transcript uses the verified kind-1111 contract in `SPEC.md`
+
+### Episode enrichment
+
+- **ADMIN-04**: Compass admin can insert a generated/uploaded intro into the signed manifest cut
+- **RSS-CHAPTERS-01**: RSS includes `podcast:chapters` entries derived from the exact stitched boundaries
+- **CUT-01**: PWA displays verified “made the cut” reactions
+
+### TTS Intro Generation (in-client)
+
+- **TTS-01**: Admin can generate a TTS intro track from text using Kokoro (local) or ElevenLabs (BYOK)
+
+### Enhanced Search
+
+- **SEARCH-01**: Full-text search across all transcripts for the current issue
+- **SEARCH-02**: AI-generated summary of all voice notes per section
+
+## v3 Requirements
 
 ### Voice Changer / Anonymizer
 
 - **ANON-01**: User can apply a voice changer effect before upload (reference: Amethyst VoiceAnonymizer)
 - **ANON-02**: Voice changer parameters are configurable (pitch shift, formant)
 
-### TTS Intro Generation (in-client)
+### Lightning distribution
 
-- **TTS-01**: Admin can generate a TTS intro track from text using Kokoro (local) or ElevenLabs (BYOK)
+- **VALUE-01**: `podcast:value` splits use explicit contributor Lightning addresses from the signed access workflow; npubs are not payment destinations
 
 ### Native Apps
 
 - **NATIVE-01**: iOS app (Swift / React Native) for users below iOS 18.4 WebM/Opus threshold
 - **NATIVE-02**: Android app
-
-### Enhanced Search
-
-- **SEARCH-01**: Full-text search across all transcripts for the current issue
-- **SEARCH-02**: AI-generated summary of all voice notes per section
 
 ## Out of Scope
 
@@ -136,18 +148,13 @@
 | REC-01–06 | Phase 2 | Pending |
 | BLOB-01–04 | Phase 2 | Pending |
 | EVENT-01–04 | Phase 2 | Pending |
-| TRANS-01–04 | Phase 2 | Pending |
+| TRANS-01–04 | v2 | Deferred/security-gated |
 | PLAY-01–05 | Phase 3 | Pending |
 | ADMIN-01–04 | Phase 4 | Pending |
 | STITCH-01–05 | Phase 4 | Pending |
 | RSS-01–03 | Phase 4 | Pending |
 | PWA-01–05 | Phase 5 | Pending |
 
-**Coverage:**
-- v1 requirements: 47 total
-- Mapped to phases: 47
-- Unmapped: 0 ✓
-
 ---
 *Requirements defined: 2026-07-20*
-*Last updated: 2026-07-20 after initialization*
+*Last updated: 2026-07-25 after implementation audit and hosting/security reconciliation*

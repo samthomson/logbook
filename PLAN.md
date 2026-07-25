@@ -219,7 +219,8 @@ client renders it as a normal like.
 - **v1 MVP:** full timeline/recording/threading UI, client-side whitelist gating,
   VPS-generated manifest, admin drag-to-reorder, manual VPS-triggered stitcher,
   one produced episode published to Podcasting 2.0 RSS by hand to prove the
-  format. PWA installable, hosted on GitHub Pages under the Compass domain.
+  format. PWA installable and published through nsyte/nsite; RSS and episode
+  media remain on the trusted HTTPS origin.
   Transcription, AI intro, and voice changer wait for v2/v3, matching the
   "none required for MVP" call. **[R2]** With transcription deferred, the v1
   timeline shows waveform and duration per note (transcript-first rendering
@@ -242,7 +243,7 @@ client renders it as a normal like.
   transcribe-then-TTS "strong" mode), `podcast:value` Lightning splits (needs a
   new whitelist field for contributor Lightning addresses, separate from npubs),
   an auto-triggered stitcher on "lock episode" replacing the manual VPS command,
-  and multi-gateway nsite hosting as a resilience option alongside GitHub Pages.
+  and multi-gateway nsite resilience with release-by-release gateway verification.
 
 ## 5. Items resolved by round-1 review, carried forward as confirmed design
 
@@ -251,8 +252,8 @@ client renders it as a normal like.
    repos stay under 1GB, and caps a published Pages site at 1GB with a 100GB/month
    soft bandwidth limit; Pages' own policy excludes content distribution as a use
    case. Weekly episodes would blow the 1GB cap within about three months. Fix
-   confirmed: the PWA static shell stays on GitHub Pages under the Compass
-   domain; the episode audio and feed.xml live on the VPS's own HTTPS origin
+   confirmed: the PWA static shell is a content-addressed nsyte/nsite release;
+   the episode audio and feed.xml live on the VPS's own HTTPS origin
    (already serving as the Blossom origin). A 96kbps mono encode is available as
    a size-margin option if needed.
 2. **`podcast:value` needs contributor Lightning addresses**, which the

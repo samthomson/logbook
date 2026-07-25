@@ -22,12 +22,12 @@ Contributors leave a voice note in under 60 seconds; it appears under the right 
 - [ ] Record voice note locally (WebM/Opus), upload to Blossom, publish custom Nostr event
 - [ ] Display voice notes threaded under their section with waveform + transcript
 - [ ] Reply to existing voice note (soft context pointer, no deep tree)
-- [ ] In-browser transcription (transformers.js Whisper-base / Moonshine via WebGPU)
+- [ ] In-browser transcription (deferred until the browser dependency path has no unresolved high-severity audit findings; trusted-worker fallback is the production path)
 - [ ] Admin view: drag-to-reorder EDL per section, trigger VPS stitcher
 - [ ] VPS stitcher: concat + loudnorm (EBU R128) + silence-trim + crossfades → MP3
 - [ ] Publish Podcasting 2.0 RSS feed + NIP-73 scoped note for Fountain
 - [ ] PWA: service worker, installable, offline draft queue
-- [ ] nsite: deployable as Nostr nsite and on GitHub Pages
+- [ ] nsite: deployable through nsyte with exact same-gateway bundle verification
 
 ### Out of Scope (v1)
 
@@ -46,7 +46,7 @@ Contributors leave a voice note in under 60 seconds; it appears under the right 
 - Blossom: sha256-addressed blobs, kind 24242 upload auth, BUD-04 mirroring. Public servers have no retention SLA — run own Blossom origin on VPS, mirror out.
 - iOS ≥ 18.4 required for WebM/Opus recording + wake-lock in installed PWAs.
 - Final episode format: MP3 (Apple RSS rejects Opus). Podcasting 2.0 RSS with `podcast:value` splits and `podcast:chapters` per contributor.
-- Hosting: GitHub Pages under existing Compass domain. Gateway-eviction fragility avoided by stable domain.
+- Hosting: nsyte/nsite for the PWA; trusted HTTPS origin for RSS and episode media. Public gateway freshness must be hash-verified per release.
 
 ## Constraints
 
@@ -63,7 +63,7 @@ Contributors leave a voice note in under 60 seconds; it appears under the right 
 |----------|-----------|---------|
 | Custom event envelope (not NIP-A0 shape) | Interop non-goal; need section-ID tag, EDL ordering, transcript pointer, intro flag | — Pending spec |
 | VPS stitcher, not ffmpeg.wasm | 1.3 GB RAM decoding 1 hr PCM kills mobile tabs | ✓ Good |
-| GitHub Pages hosting, not pure nsite gateway | Stable origin for PWA service worker + cached drafts | ✓ Good |
+| nsyte/nsite PWA + trusted feed/media origin | Content-addressed static releases; feed/audio need stable HTTPS and byte ranges | ✓ Good |
 | NIP-46 bunker primary (not extension/nsec) | Remote signers work on all platforms including iOS | ✓ Good |
 | Podcasting 2.0 RSS (not NIP-74) | NIP-74 unmerged, low adoption; RSS is what Fountain/Wavlake use | ✓ Good |
 | Intro track pre-published by Compass pipeline | Anti-slop + claim-verification gates already exist there | ✓ Good |
