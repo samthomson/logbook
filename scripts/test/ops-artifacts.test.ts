@@ -16,6 +16,9 @@ test('CI validates both the PWA and trusted worker when either surface changes',
 
 test('tracked worker service is hardened, restartable, and never asks for a hot Compass nsec', async () => {
   const service = await read('deploy/systemd/logbook-worker.service')
+  const runbook = await read('deploy/README.md')
+  assert.doesNotMatch(runbook, /npm ci --omit=dev/)
+  assert.match(runbook, /npm ci --no-audit --no-fund/)
   assert.match(service, /User=logbook/)
   assert.match(service, /EnvironmentFile=-\/etc\/logbook\/logbook\.env/)
   assert.match(service, /Restart=on-failure/)
