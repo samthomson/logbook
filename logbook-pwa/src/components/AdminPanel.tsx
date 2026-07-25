@@ -27,6 +27,7 @@ import {
   moveSectionRecording,
   reorderSection,
   toggleSegmentExcluded,
+  toggleSegmentReviewed,
 } from '../lib/admin-state'
 import { collectWhitelistedTimeline } from '../lib/admin-timeline'
 import {
@@ -335,6 +336,7 @@ export default function AdminPanel({
                         onExclude={() => setDraft(toggleSegmentExcluded(draft, chapter.sectionIndex!, row.segmentId))}
                         onMoveUp={() => setDraft(moveSectionRecording(draft, chapter.sectionIndex!, row.segmentId, -1))}
                         onMoveDown={() => setDraft(moveSectionRecording(draft, chapter.sectionIndex!, row.segmentId, 1))}
+                        onToggleReviewed={() => setDraft(toggleSegmentReviewed(draft, chapter.sectionIndex!, row.segmentId))}
                       />
                     ))}
                   </div>
@@ -364,6 +366,11 @@ export default function AdminPanel({
                       }}
                       onMoveUp={() => {}}
                       onMoveDown={() => {}}
+                      onToggleReviewed={() => {
+                        if (chapter.sectionIndex !== null && row.state !== 'inventory') {
+                          setDraft(toggleSegmentReviewed(draft, chapter.sectionIndex, row.segmentId))
+                        }
+                      }}
                     />
                   ))}
                 </div>

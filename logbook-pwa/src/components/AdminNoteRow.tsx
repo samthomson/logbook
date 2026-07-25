@@ -3,6 +3,7 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import type { WorkspaceRow } from '../lib/admin-workspace'
 import type { Profile } from '../lib/profiles'
+import AudioPlayer from './AudioPlayer'
 
 export interface AdminNoteRowProps {
   row: WorkspaceRow
@@ -16,6 +17,7 @@ export interface AdminNoteRowProps {
   onExclude: () => void
   onMoveUp: () => void
   onMoveDown: () => void
+  onToggleReviewed: () => void
 }
 
 export function AdminNoteRow({
@@ -30,6 +32,7 @@ export function AdminNoteRow({
   onExclude,
   onMoveUp,
   onMoveDown,
+  onToggleReviewed,
 }: AdminNoteRowProps) {
   const [open, setOpen] = useState(false)
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -82,6 +85,11 @@ export function AdminNoteRow({
           <span className="episode-note__badges">
             {row.isIntro && <span className="episode-badge">intro</span>}
             {row.isNew && <span className="episode-badge episode-badge--new">new</span>}
+            {row.state !== 'inventory' && (
+              <span className={`episode-badge${row.reviewed ? '' : ' episode-badge--warning'}`}>
+                {row.reviewed ? 'reviewed' : 'needs review'}
+              </span>
+            )}
             {row.problem && <span className="episode-badge episode-badge--warning">issue</span>}
           </span>
           <span className="episode-note__chevron" aria-hidden="true">{open ? '⌃' : '⌄'}</span>
@@ -92,7 +100,11 @@ export function AdminNoteRow({
           <div className="episode-note__player">
             <span>Voice message from {authorName}</span>
             {row.segment ? (
-              <audio controls preload="metadata" src={row.segment.audio.url} />
+              <AudioPlayer
+                url={row.segment.audio.url}
+                duration={row.segment.audio.duration}
+                waveform={row.segment.audio.waveform}
+              />
             ) : (
               <p className="episode-note__empty">Event {row.segmentId.slice(0, 12)}… is referenced but unavailable.</p>
             )}
@@ -111,6 +123,11 @@ export function AdminNoteRow({
                   <button type="button" className="btn btn--ghost btn--small" disabled={!canMoveUp} onClick={onMoveUp}>Move up</button>
                   <button type="button" className="btn btn--ghost btn--small" disabled={!canMoveDown} onClick={onMoveDown}>Move down</button>
                 </div>
+              )}
+              {row.state !== 'inventory' && (
+                <button type="button" className="btn btn--ghost btn--small" onClick={onToggleReviewed}>
+                  {row.reviewed ? 'Mark unreviewed' : 'Mark reviewed'}
+                </button>
               )}
               {row.state === 'inventory' ? (
                 <button type="button" className="btn btn--small" onClick={onInclude}>Add recording</button>
