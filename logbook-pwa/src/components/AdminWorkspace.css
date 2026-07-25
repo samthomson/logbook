@@ -11,6 +11,9 @@
   color: #f5f5f5;
   background: #000;
 }
+.admin-workspace *,
+.admin-workspace *::before,
+.admin-workspace *::after { box-sizing: border-box; }
 .admin-workspace__toolbar {
   position: static;
   display: flex;
@@ -174,6 +177,10 @@
 .episode-note__details > *,
 .episode-note__player { width: 100%; max-width: 100%; min-width: 0; }
 .episode-note__player { display: grid; align-content: start; gap: 5px; }
+.episode-note__player .audio-player,
+.episode-note__player .audio-player__controls { width: 100%; max-width: 100%; min-width: 0; }
+.episode-note__player .audio-player__scrubber { min-width: 0; }
+.episode-note__player .audio-player__speed-btn { min-width: 44px; min-height: 44px; }
 .episode-note__player > span,
 .episode-note__detail-label {
   display: block;

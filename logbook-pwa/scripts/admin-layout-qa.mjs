@@ -124,7 +124,8 @@ try {
         details: {
           expanded: expanded.querySelector('.episode-note__summary')?.getAttribute('aria-expanded'),
           chevron: expanded.querySelector('.episode-note__chevron')?.textContent,
-          audio: Boolean(details.querySelector('audio[controls]')),
+          audio: Boolean(details.querySelector('.audio-player audio')
+            && details.querySelector('.audio-player__speed-btn')),
           transcript: Boolean(details.querySelector('.episode-note__transcript')?.textContent?.trim()),
           moveUp: moveLabels.includes('Move up'),
           moveDown: moveLabels.includes('Move down'),
