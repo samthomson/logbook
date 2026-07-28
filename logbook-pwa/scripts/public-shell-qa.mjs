@@ -38,6 +38,7 @@ const publicCompassFixture = {
       export async function fetchIssueByDTag() { return event }
       export async function fetchLatestIssue() { return event }
       export async function fetchLatestIssueWithSegments() { return event }
+      export function extractIssueNumber() { return 32 }
       export function parseIssue() { return issue }
     `
   },

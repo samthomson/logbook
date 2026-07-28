@@ -10,7 +10,7 @@ import IssueTimeline from './components/IssueTimeline'
 import IssuePicker from './components/IssuePicker'
 import InstallPrompt from './components/InstallPrompt'
 const AdminPanel = lazy(() => import('./components/AdminPanel'))
-import { fetchIssueByDTag, fetchLatestIssue, fetchLatestIssueWithSegments, parseIssue } from './lib/compass'
+import { extractIssueNumber, fetchIssueByDTag, fetchLatestIssue, fetchLatestIssueWithSegments, parseIssue } from './lib/compass'
 import { checkRecordingSupport } from './lib/utils'
 import { ADMIN_PUBKEYS, COMPASS_PUBKEY, IOS_RECORDING_MIN_VERSION } from './config'
 import { fetchAccessLists } from './lib/whitelist'
@@ -18,6 +18,7 @@ import { loadCachedIssue } from './lib/issue-cache'
 import { fetchProfiles, type Profile } from './lib/profiles'
 import { nip19 } from 'nostr-tools'
 import type { CompassIssue, NostrEvent } from './types/nostr'
+import { loadInitialIssue } from './lib/initial-issue'
 import './App.css'
 
 type AppView = 'auth' | 'timeline' | 'issue-picker' | 'admin'
@@ -36,6 +37,7 @@ export default function App() {
   const [issueLoading, setIssueLoading] = useState(true)
   const [issueError, setIssueError] = useState<string | null>(null)
   const [cachedSegments, setCachedSegments] = useState<[string, NostrEvent[]][]>([])
+  const [newerIssueEvent, setNewerIssueEvent] = useState<NostrEvent | null>(null)
   const [identityProfile, setIdentityProfile] = useState<Profile | null>(null)
   const keyboardOffset = useKeyboardOffset()
   const [issueRequests] = useState(createLatestRequestGuard)
@@ -161,13 +163,18 @@ export default function App() {
     setIssueError(null)
 
     const savedIssueNumber = readSelectedIssueNumber(localStorage)
-    const issueRequest = savedIssueNumber
-      ? fetchIssueByDTag(`newsletter-${savedIssueNumber}`).then((saved) => saved ?? fetchLatestIssueWithSegments().then((populated) => populated ?? fetchLatestIssue()))
-      : fetchLatestIssueWithSegments().then((populated) => populated ?? fetchLatestIssue())
+    const issueRequest = loadInitialIssue(savedIssueNumber, {
+      loadSaved: (issueNumber) => fetchIssueByDTag(`newsletter-${issueNumber}`),
+      loadPreferredLatest: () => fetchLatestIssueWithSegments().then((populated) => populated ?? fetchLatestIssue()),
+      issueNumberOf: extractIssueNumber,
+    })
 
     issueRequest
-      .then((event) => {
-        if (issueRequests.isCurrent(request) && event) setIssue(parseIssue(event))
+      .then(({ selected, newer }) => {
+        if (!issueRequests.isCurrent(request)) return
+        setCachedSegments([])
+        setIssue(selected ? parseIssue(selected) : null)
+        setNewerIssueEvent(newer)
       })
       .catch(async (err: unknown) => {
         const cached = await loadCachedIssue<CompassIssue, [string, NostrEvent[]][]>().catch(() => null)
@@ -175,6 +182,7 @@ export default function App() {
         if (cached) {
           setIssue(cached.issue)
           setCachedSegments(cached.segments)
+          setNewerIssueEvent(null)
           return
         }
         setIssueError(err instanceof Error ? err.message : String(err))
@@ -205,7 +213,9 @@ export default function App() {
     try {
       const parsed = parseIssue(event)
       saveSelectedIssueNumber(localStorage, parsed.issueNumber)
+      setCachedSegments([])
       setIssue(parsed)
+      setNewerIssueEvent((current) => current && extractIssueNumber(current) > parsed.issueNumber ? current : null)
       setView('timeline')
     } catch (err: unknown) {
       setIssueError(err instanceof Error ? err.message : String(err))
@@ -356,6 +366,17 @@ export default function App() {
         {issueError && (
           <div className="notice notice--error">
             Failed to load issue: {issueError}
+          </div>
+        )}
+
+        {view === 'timeline' && !issueLoading && issue && newerIssueEvent && (
+          <div className="notice notice--episode" role="status">
+            <span>
+              Showing Compass #{issue.issueNumber}. Compass #{extractIssueNumber(newerIssueEvent)} is newer.
+            </span>
+            <button className="btn btn--ghost btn--small" onClick={() => handleSelectIssue(newerIssueEvent)}>
+              Open newer episode
+            </button>
           </div>
         )}
 

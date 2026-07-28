@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Segment } from '../types/nostr'
-import { collectCommunityNotes } from './community-notes'
+import { collectEpisodeNotes } from './community-notes'
 
 function segment(id: string, pubkey: string, created_at: number): Segment {
   return {
@@ -14,12 +14,12 @@ function segment(id: string, pubkey: string, created_at: number): Segment {
   }
 }
 
-describe('collectCommunityNotes', () => {
-  it('keeps every other-author note visible once even when it appears in multiple section lists', () => {
+describe('collectEpisodeNotes', () => {
+  it('keeps every episode note visible once even when the active signer authored it or it appears in multiple section lists', () => {
     const own = segment('own', 'compass', 1)
     const alice = segment('alice', 'alice-pubkey', 3)
     const bob = segment('bob', 'bob-pubkey', 2)
 
-    expect(collectCommunityNotes([[own, alice], [bob, alice]], 'compass').map((note) => note.event.id)).toEqual(['bob', 'alice'])
+    expect(collectEpisodeNotes([[own, alice], [bob, alice]]).map((note) => note.event.id)).toEqual(['own', 'bob', 'alice'])
   })
 })

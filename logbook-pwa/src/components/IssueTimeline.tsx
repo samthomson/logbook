@@ -26,7 +26,7 @@ import { orderTimelineSegments } from '../lib/timeline-order'
 import { saveCachedIssue } from '../lib/issue-cache'
 import { extractMentionedNpubs } from './SectionExcerpt'
 import { uploadBlob } from '../lib/blossom'
-import { collectCommunityNotes } from '../lib/community-notes'
+import { collectEpisodeNotes } from '../lib/community-notes'
 import { computeSeedOrder } from '../lib/ordering'
 import { PlaybackProvider } from '../lib/playback'
 import { fetchProfiles, type Profile } from '../lib/profiles'
@@ -35,6 +35,7 @@ import { deleteDraft, draftBelongsTo, listDrafts, saveDraft, selectDraftForPrinc
 import type { Filter } from 'nostr-tools'
 import { BLOSSOM_SERVERS, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from '../config'
 import { areRequestScopesCurrent, createLatestRequestGuard, type LatestRequestGuard } from '../lib/latest-request'
+import { formatDuration } from '../lib/utils'
 
 interface Props {
   issue: CompassIssue
@@ -484,9 +485,9 @@ export default function IssueTimeline({
     void deleteDraft(id).catch((error) => console.warn('Unable to discard recording draft:', error))
   }, [capabilityRequest, capabilityRequests, myPubkey, pendingDraft])
 
-  const communityNotes = useMemo(
-    () => collectCommunityNotes([...sections.values()].map((state) => state.segments), myPubkey ?? ''),
-    [myPubkey, sections],
+  const episodeNotes = useMemo(
+    () => collectEpisodeNotes([...sections.values()].map((state) => state.segments)),
+    [sections],
   )
 
   const queue = useMemo(() => {
@@ -529,15 +530,23 @@ export default function IssueTimeline({
         {publishError && (
           <div className="timeline__publish-error" role="alert">{publishError}</div>
         )}
-        {communityNotes.length > 0 && (
-          <section className="timeline__group timeline__community" aria-label="Voice notes from other contributors">
-            <h2 className="timeline__group-title">Other contributors · {communityNotes.length} notes</h2>
+        {episodeNotes.length > 0 && (
+          <section className="timeline__group timeline__community" aria-label="Voice notes in this episode">
+            <h2 className="timeline__group-title">Voice notes in this episode · {episodeNotes.length}</h2>
             <div className="timeline__community-links">
-              {communityNotes.map((seg) => (
-                <a key={seg.event.id} href={`#voice-note-${seg.event.id}`}>
-                  {profiles.get(seg.event.pubkey)?.name ?? seg.event.pubkey.slice(0, 8)}
-                </a>
-              ))}
+              {episodeNotes.map((seg, index) => {
+                const author = profiles.get(seg.event.pubkey)?.name ?? seg.event.pubkey.slice(0, 8)
+                const duration = formatDuration(seg.audio.duration)
+                return (
+                  <a
+                    key={seg.event.id}
+                    href={`#voice-note-${seg.event.id}`}
+                    aria-label={`Voice note ${index + 1} from ${author}, ${duration}`}
+                  >
+                    {index + 1}. {author} · {duration}
+                  </a>
+                )
+              })}
             </div>
           </section>
         )}

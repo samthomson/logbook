@@ -2,8 +2,8 @@
  * NoteRow — slim voice-note row in the timeline.
  *
  * One row per note: play/pause button, scrollable timeline scrubber,
- * duration, reply affordance. Tapping play starts the shared queue;
- * when this note ends the next note in the issue auto-plays.
+ * duration, reply affordance. Tapping play starts only that note; completion
+ * stops playback until the listener explicitly chooses another note.
  */
 
 import { usePlayback } from '../lib/playback'

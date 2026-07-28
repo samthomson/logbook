@@ -170,6 +170,19 @@ html, #root { overflow-x: hidden; max-width: 100vw; }
 }
 .notice--warning { background: #451a03; border-color: var(--warning); color: #fcd34d; }
 .notice--error   { background: #450a0a; border-color: var(--error);   color: #fca5a5; }
+.notice--episode {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 12px 0;
+  border: 1px solid var(--border);
+  background: #000;
+  color: var(--text);
+}
+@media (max-width: 480px) {
+  .notice--episode { align-items: stretch; flex-direction: column; }
+}
 
 /* ─── Auth Screen ─────────────────────────────────────────────────────────────── */
 .auth-screen {
@@ -1437,6 +1450,24 @@ body {
   color: var(--text-muted);
   margin: 4px 0 0;
   white-space: pre-line;
+}
+.timeline__community-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.timeline__community-links a {
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  text-decoration: none;
+}
+.timeline__community-links a:hover,
+.timeline__community-links a:focus-visible {
+  border-color: var(--text-muted);
+  color: var(--text);
 }
 
 /* ─── Published check (subtle) ─────────────────────────────────────────────── */

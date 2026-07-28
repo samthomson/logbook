@@ -1,22 +1,24 @@
 /**
- * PlaybackContext — issue-wide audio queue with auto-advance.
+ * PlaybackContext — one active audio element with explicit per-note playback.
  *
- * A single HTMLAudioElement is shared across the whole timeline. Any note row
- * can start playback; when the current track ends, the next segment in issue
- * order starts automatically.
+ * The provider owns at most one active HTMLAudioElement for the whole timeline.
+ * Any note row can start playback; completion or failure stops that note and
+ * never starts a different recording without another user action.
  *
  * Design (adversarial-review hardened):
- *  - Audio element created once on mount, fully torn down on unmount.
- *  - order/byId read through refs (no stale closures in the ended handler).
- *  - el.src assignment gated on URL equality, not currentId — reorders can't
- *    leave the UI showing one row while another's audio plays.
- *  - loadedmetadata events from a stale src are ignored (track-switch race).
+ *  - A fresh audio element is installed on explicit track changes so delayed
+ *    terminal events from an old resource cannot cancel the new note.
+ *  - byId is read through a ref so event callbacks never see stale segments.
+ *  - A manually paused current note resumes its existing element and position.
+ *  - loadedmetadata events are accepted only from the active element/source.
  *  - Seeks requested before metadata loads are stashed and applied on
  *    loadedmetadata (scrub-before-load race).
- *  - Double `ended` events are de-duped via an epoch counter.
+ *  - Async play() failures are epoch- and element-gated so a stale rejection
+ *    cannot pause a newer user-selected note.
  *  - play() rejections surface `blocked: true` (autoplay policy) instead of
  *    silently stalling; `loading` is always reset.
- *  - Track errors skip to the next segment instead of stalling the queue.
+ *  - Track completion and errors clear the active note instead of walking the
+ *    issue queue.
  *  - No side effects inside React state updaters (StrictMode-safe).
  */
 
@@ -71,69 +73,50 @@ export function PlaybackProvider({ segments, children }: ProviderProps) {
     return m
   }, [segments])
 
-  const order = useMemo(() => segments.map((s) => s.event.id), [segments])
-
-  // Refs so event handlers always read the latest queue
-  const orderRef = useRef(order)
+  // Ref so event handlers always read the latest segments.
   const byIdRef = useRef(byId)
-  orderRef.current = order
   byIdRef.current = byId
 
-  /** Load a segment into the element and start playing it. */
-  const startTrack = useCallback((segmentId: string) => {
-    const seg = byIdRef.current.get(segmentId)
-    const el = audioRef.current
-    if (!seg || !el) return
+  const audioCleanupRef = useRef<() => void>(() => {})
 
+  const stopCurrent = useCallback((el: HTMLAudioElement) => {
+    if (audioRef.current !== el) return
     epochRef.current += 1
+    currentIdRef.current = null
+    pendingSeekRef.current = null
+    el.pause()
+    if (Number.isFinite(el.currentTime)) el.currentTime = 0
+    setCurrentId(null)
+    setPlaying(false)
+    setLoading(false)
+    setCurrentTime(0)
     setBlocked(false)
-    if (el.src !== seg.audio.url) {
-      el.src = seg.audio.url
-      setCurrentTime(0)
-      setDuration(seg.audio.duration || 0)
-    }
-    currentIdRef.current = segmentId
-    setCurrentId(segmentId)
-    el.play().catch(() => {
-      setPlaying(false)
-      setLoading(false)
-      setBlocked(true)
-    })
   }, [])
 
-  /** Advance to the next track in queue order. */
-  const advance = useCallback(
-    (fromId: string, epoch: number) => {
-      if (epoch !== epochRef.current) return // superseded by a manual action
-      const idx = orderRef.current.indexOf(fromId)
-      const nextId = idx >= 0 ? orderRef.current[idx + 1] : undefined
-      if (!nextId) {
-        currentIdRef.current = null
-        setCurrentId(null)
-        return
-      }
-      startTrack(nextId)
-    },
-    [startTrack],
-  )
+  /**
+   * Create a fresh event target for a new playback generation. Reusing one
+   * element across sources lets a delayed ended/error from the old resource
+   * cancel the newly selected note because media events do not carry a source
+   * generation. Rotating the element isolates those terminal events.
+   */
+  const replaceAudio = useCallback(() => {
+    audioCleanupRef.current()
 
-  // Create + wire the audio element once; tear down completely on unmount.
-  useEffect(() => {
     const el = new Audio()
     el.preload = 'metadata'
     audioRef.current = el
 
     let lastTimeUpdate = 0
+    const isActive = () => audioRef.current === el
     const onTime = () => {
-      // Throttle UI updates to ~4fps — 10fps default timeupdate re-renders
-      // every consumer each tick for no perceptible gain
+      if (!isActive()) return
       const now = performance.now()
       if (now - lastTimeUpdate < 250) return
       lastTimeUpdate = now
       setCurrentTime(el.currentTime)
     }
     const onMeta = () => {
-      // Ignore metadata from a stale src (track switched before it fired)
+      if (!isActive()) return
       const cur = currentIdRef.current ? byIdRef.current.get(currentIdRef.current) : null
       if (cur && el.src !== cur.audio.url) return
       setDuration(el.duration || 0)
@@ -144,22 +127,23 @@ export function PlaybackProvider({ segments, children }: ProviderProps) {
       }
     }
     const onPlay = () => {
+      if (!isActive()) return
       setPlaying(true)
       setLoading(false)
     }
-    const onPause = () => setPlaying(false)
-    const onWaiting = () => setLoading(true)
-    const onCanPlay = () => setLoading(false)
-    const onError = () => {
-      setPlaying(false)
-      setLoading(false)
-      // Dead URL — skip to next rather than stalling the queue
-      const id = currentIdRef.current
-      if (id) advance(id, epochRef.current)
+    const onPause = () => {
+      if (isActive()) setPlaying(false)
     }
-    const onEnded = () => {
-      const id = currentIdRef.current
-      if (id) advance(id, epochRef.current)
+    const onWaiting = () => {
+      if (isActive()) setLoading(true)
+    }
+    const onCanPlay = () => {
+      if (isActive()) setLoading(false)
+    }
+    const onEnded = () => stopCurrent(el)
+    const onError = () => {
+      stopCurrent(el)
+      if (audioRef.current === el) audioCleanupRef.current()
     }
 
     el.addEventListener('timeupdate', onTime)
@@ -171,7 +155,7 @@ export function PlaybackProvider({ segments, children }: ProviderProps) {
     el.addEventListener('error', onError)
     el.addEventListener('ended', onEnded)
 
-    return () => {
+    const cleanup = () => {
       el.removeEventListener('timeupdate', onTime)
       el.removeEventListener('loadedmetadata', onMeta)
       el.removeEventListener('play', onPlay)
@@ -183,9 +167,41 @@ export function PlaybackProvider({ segments, children }: ProviderProps) {
       el.pause()
       el.removeAttribute('src')
       el.load()
-      audioRef.current = null
+      if (audioRef.current === el) audioRef.current = null
     }
-  }, [advance])
+    audioCleanupRef.current = cleanup
+    return el
+  }, [stopCurrent])
+
+  /** Load a segment into an isolated audio generation and start it. */
+  const startTrack = useCallback((segmentId: string) => {
+    const seg = byIdRef.current.get(segmentId)
+    if (!seg) return
+
+    const existing = audioRef.current
+    const canResume = existing !== null
+      && currentIdRef.current === segmentId
+      && existing.src === seg.audio.url
+    const el = canResume ? existing : replaceAudio()
+    const epoch = ++epochRef.current
+    setBlocked(false)
+
+    if (!canResume) {
+      el.src = seg.audio.url
+      setCurrentTime(0)
+      setDuration(seg.audio.duration || 0)
+    }
+    currentIdRef.current = segmentId
+    setCurrentId(segmentId)
+    el.play().catch(() => {
+      if (epoch !== epochRef.current || audioRef.current !== el) return
+      setPlaying(false)
+      setLoading(false)
+      setBlocked(true)
+    })
+  }, [replaceAudio])
+
+  useEffect(() => () => audioCleanupRef.current(), [])
 
   const play = useCallback(
     (segmentId: string) => {
@@ -201,7 +217,7 @@ export function PlaybackProvider({ segments, children }: ProviderProps) {
   const toggle = useCallback(
     (segmentId: string) => {
       if (currentId === segmentId && playing) {
-        epochRef.current += 1 // cancel pending auto-advance intent
+        epochRef.current += 1 // invalidate any pending play() rejection
         pause()
       } else {
         play(segmentId)
