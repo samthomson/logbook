@@ -41,6 +41,7 @@ import { filterVerified, publishToRelays } from './relay'
 import { now } from './utils'
 import { assertEventSignedByExpected, assertSignerStillExpected } from './signer-identity'
 import { withSignerTimeout } from './signer-timeout'
+import { hasReasonableEventTimestamp, latestReasonableEventTimestamp } from './event-time'
 
 export interface WhitelistEntry {
   pubkey: string          // hex-64, normalized
@@ -69,21 +70,26 @@ const eventCache = new Map<string, NostrEvent | null>()
 async function fetchWhitelistEvent(
   dTag: string,
   relays: string[] = DEFAULT_RELAYS,
+  forceRefresh = false,
 ): Promise<NostrEvent | null> {
-  if (eventCache.has(dTag)) return eventCache.get(dTag) ?? null
+  if (!forceRefresh && eventCache.has(dTag)) return eventCache.get(dTag) ?? null
   const pool = getPool()
   const events = await pool.querySync(relays, {
     kinds: [KINDS.WHITELIST],
     authors: [COMPASS_PUBKEY], // REQUIRED — anyone can squat the d-tag
     '#d': [dTag],
-    limit: 5,
+    until: latestReasonableEventTimestamp(),
+    limit: 50,
   })
   // Latest-by-created_at wins after signature verification (manifest rule).
   const verified = filterVerified(events)
     .filter((e) => e.pubkey === COMPASS_PUBKEY)
-    .sort((a, b) => b.created_at - a.created_at)
+    .filter((e) => hasReasonableEventTimestamp(e))
+    .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))
   const winner = verified[0] ?? null
-  eventCache.set(dTag, winner)
+  // Cache only verified revisions. A timed-out/temporarily empty relay query
+  // must remain retryable when the PWA returns to the foreground.
+  if (winner) eventCache.set(dTag, winner)
   return winner
 }
 
@@ -122,14 +128,15 @@ function parseEntries(event: NostrEvent, field: 'contributors' | 'admins'): Whit
 export async function fetchAccessLists(
   issueNumber: number,
   relays: string[] = DEFAULT_RELAYS,
+  options: { forceRefresh?: boolean } = {},
 ): Promise<AccessLists> {
   const issueDTag = D_ISSUE_WL(issueNumber)
   const legacyIssueId = `${ISSUE_PREFIX}-${issueNumber}` // logbook-<N> static JSON
 
   const results = await Promise.allSettled([
-    fetchWhitelistEvent(issueDTag, relays),
-    fetchWhitelistEvent(D_STANDING, relays),
-    fetchWhitelistEvent(D_ADMINS, relays),
+    fetchWhitelistEvent(issueDTag, relays, options.forceRefresh),
+    fetchWhitelistEvent(D_STANDING, relays, options.forceRefresh),
+    fetchWhitelistEvent(D_ADMINS, relays, options.forceRefresh),
     fetchLegacyJson(legacyIssueId),
   ])
   const [issueEv, standingEv, adminsEv, legacy] = results.map((r) =>

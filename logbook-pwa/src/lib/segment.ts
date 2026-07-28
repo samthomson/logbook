@@ -20,6 +20,7 @@ import { filterVerified, publishToRelays } from './relay'
 import { withSignerTimeout } from './signer-timeout'
 import { validateTrustedBlobUrl } from './blob-trust'
 import { assertEventSignedByExpected, assertExpectedSignerPubkey, assertSignerStillExpected } from './signer-identity'
+import { hasReasonableEventTimestamp } from './event-time'
 
 
 export interface PublishSegmentParams {
@@ -329,6 +330,7 @@ export function selectTrustedSegmentEvents(
   trustedServers: readonly string[],
 ): NostrEvent[] {
   return filterVerified(events).filter((event) => {
+    if (!hasReasonableEventTimestamp(event)) return false
     if (event.kind !== KINDS.SEGMENT) return false
     if (expectedIssueId && (
       getTag(event, 'issue') !== expectedIssueId || getTag(event, 't') !== expectedIssueId

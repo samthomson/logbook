@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, it } from 'vitest'
-import { clearDrafts, deleteDraft, draftBelongsTo, listDrafts, saveDraft, selectDraftForPrincipal, type RecordingDraft } from './drafts'
+import { clearDrafts, deleteDraft, draftBelongsTo, listDrafts, saveDraft, selectDraftForPrincipal, selectDraftsForPrincipal, type RecordingDraft } from './drafts'
 
 const baseDraft: RecordingDraft = {
   id: 'draft-1',
@@ -36,6 +36,17 @@ describe('recording drafts', () => {
     expect(draftBelongsTo(alice, alice.ownerPubkey)).toBe(true)
     expect(draftBelongsTo(alice, bob.ownerPubkey)).toBe(false)
     expect(draftBelongsTo(alice, null)).toBe(false)
+  })
+
+  it('restores every draft owned by the authenticated principal', () => {
+    const older = baseDraft
+    const newer = { ...baseDraft, id: 'draft-2', updatedAt: 200 }
+    const other = { ...baseDraft, id: 'draft-3', ownerPubkey: 'b'.repeat(64), updatedAt: 300 }
+
+    expect(selectDraftsForPrincipal([other, newer, older], baseDraft.ownerPubkey).map((draft) => draft.id))
+      .toEqual(['draft-2', 'draft-1'])
+    expect(selectDraftsForPrincipal([other, newer, older], null).map((draft) => draft.id))
+      .toEqual(['draft-3'])
   })
 
   it('fails closed for legacy drafts without an owner', () => {

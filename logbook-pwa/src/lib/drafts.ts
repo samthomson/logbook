@@ -63,14 +63,21 @@ export async function listDrafts(issueNumber: number): Promise<RecordingDraft[]>
   }
 }
 
-/** Anonymous visitors may see the newest local take; authenticated users only receive their own. */
+/** Anonymous visitors may see the newest local take; authenticated users receive all of their own. */
+export function selectDraftsForPrincipal(
+  drafts: readonly RecordingDraft[],
+  ownerPubkey: string | null,
+): RecordingDraft[] {
+  if (!ownerPubkey) return drafts.length ? [drafts[0]] : []
+  const normalized = ownerPubkey.toLowerCase()
+  return drafts.filter((draft) => draft.ownerPubkey?.toLowerCase() === normalized)
+}
+
 export function selectDraftForPrincipal(
   drafts: readonly RecordingDraft[],
   ownerPubkey: string | null,
 ): RecordingDraft | undefined {
-  if (!ownerPubkey) return drafts[0]
-  const normalized = ownerPubkey.toLowerCase()
-  return drafts.find((draft) => draft.ownerPubkey?.toLowerCase() === normalized)
+  return selectDraftsForPrincipal(drafts, ownerPubkey)[0]
 }
 
 export function draftBelongsTo(draft: RecordingDraft, ownerPubkey: string | null): boolean {

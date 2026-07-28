@@ -22,7 +22,7 @@ export interface InlineRecordingResult {
 interface Props {
   onRecorded: (result: InlineRecordingResult) => void
   onCancel?: () => void
-  onArm?: () => void   // called when recording actually starts (mic acquired)
+  onArm?: () => void   // synchronously claims the shared recorder target
   autoStart?: boolean
 }
 
@@ -30,6 +30,7 @@ const MAX_RECORDING_SECONDS = 600 // 10 min hard cap
 
 export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart }: Props) {
   const [recording, setRecording] = useState(false)
+  const [arming, setArming] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [bars, setBars] = useState<number[]>(new Array(36).fill(0))
   const [micError, setMicError] = useState<string | null>(null)
@@ -45,6 +46,7 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
   const rafRef = useRef(0)
   const cancelledRef = useRef(false)
   const wakeLockRef = useRef<WakeLockSentinel | null>(null)
+  const activeStartRef = useRef(0)
 
   const cleanup = useCallback(() => {
     cancelAnimationFrame(rafRef.current)
@@ -58,83 +60,101 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
     wakeLockRef.current = null
   }, [])
 
-  useEffect(() => cleanup, [cleanup])
+  useEffect(() => () => {
+    activeStartRef.current += 1
+    cancelledRef.current = true
+    const recorder = mrRef.current
+    if (recorder && recorder.state !== 'inactive') recorder.stop()
+    cleanup()
+  }, [cleanup])
 
   const start = useCallback(async () => {
+    const generation = ++activeStartRef.current
+    const isCurrent = () => activeStartRef.current === generation
+    setArming(true)
     chunksRef.current = []
     samplesRef.current = []
     cancelledRef.current = false
     setElapsed(0)
     setBars(new Array(36).fill(0))
 
-    let stream: MediaStream
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-    } catch (err) {
-      setMicError('Microphone unavailable — check browser permission and retry.')
-      console.error('getUserMedia failed:', err)
-      return
-    }
-    streamRef.current = stream
-    if ('wakeLock' in navigator) {
-      wakeLockRef.current = await navigator.wakeLock.request('screen').catch(() => null)
-    }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      if (!isCurrent()) {
+        stream.getTracks().forEach((track) => track.stop())
+        return
+      }
+      streamRef.current = stream
+      if ('wakeLock' in navigator) {
+        wakeLockRef.current = await navigator.wakeLock.request('screen').catch(() => null)
+        if (!isCurrent()) { cleanup(); return }
+      }
 
-    const ctx = new AudioContext()
-    audioCtxRef.current = ctx
-    if (ctx.state === 'suspended') await ctx.resume().catch(() => {})
+      const ctx = new AudioContext()
+      audioCtxRef.current = ctx
+      if (ctx.state === 'suspended') await ctx.resume().catch(() => {})
+      if (!isCurrent()) { cleanup(); return }
 
-    const source = ctx.createMediaStreamSource(stream)
-    const analyser = ctx.createAnalyser()
-    analyser.fftSize = 256
-    source.connect(analyser)
-    const dest = ctx.createMediaStreamDestination()
-    analyser.connect(dest)
+      const source = ctx.createMediaStreamSource(stream)
+      const analyser = ctx.createAnalyser()
+      analyser.fftSize = 256
+      source.connect(analyser)
+      const dest = ctx.createMediaStreamDestination()
+      analyser.connect(dest)
 
-    const mime = MediaRecorder.isTypeSupported(RECORDING_MIME)
-      ? RECORDING_MIME
-      : MediaRecorder.isTypeSupported(RECORDING_MIME_FALLBACK)
-        ? RECORDING_MIME_FALLBACK
-        : ''
-    const mr = new MediaRecorder(dest.stream, mime ? { mimeType: mime } : undefined)
-    mrRef.current = mr
-    mr.ondataavailable = (e) => {
-      if (e.data.size > 0) chunksRef.current.push(e.data)
-    }
-    mr.onstop = () => {
-      if (cancelledRef.current) return
-      const blob = new Blob(chunksRef.current, { type: mr.mimeType || 'audio/webm' })
-      const duration = (Date.now() - startRef.current) / 1000
-      const waveform = downsample(samplesRef.current, WAVEFORM_SAMPLES)
-      setReview({ blob, waveform, duration })
-    }
+      const mime = MediaRecorder.isTypeSupported(RECORDING_MIME)
+        ? RECORDING_MIME
+        : MediaRecorder.isTypeSupported(RECORDING_MIME_FALLBACK)
+          ? RECORDING_MIME_FALLBACK
+          : ''
+      const mr = new MediaRecorder(dest.stream, mime ? { mimeType: mime } : undefined)
+      if (!isCurrent()) { cleanup(); return }
+      mrRef.current = mr
+      mr.ondataavailable = (e) => {
+        if (isCurrent() && e.data.size > 0) chunksRef.current.push(e.data)
+      }
+      mr.onstop = () => {
+        if (!isCurrent() || cancelledRef.current) return
+        const blob = new Blob(chunksRef.current, { type: mr.mimeType || 'audio/webm' })
+        const duration = (Date.now() - startRef.current) / 1000
+        const waveform = downsample(samplesRef.current, WAVEFORM_SAMPLES)
+        setReview({ blob, waveform, duration })
+      }
 
-    mr.start(100)
-    startRef.current = Date.now()
-    setRecording(true)
-    onArm?.()
+      mr.start(100)
+      startRef.current = Date.now()
+      setRecording(true)
+      setArming(false)
 
-    timerRef.current = setInterval(() => {
-      const secs = Math.floor((Date.now() - startRef.current) / 1000)
-      setElapsed(secs)
-      // Hard cap: auto-stop before chunk memory grows unbounded (desktop tabs
-      // recording for many minutes otherwise accumulate giant in-memory blobs)
-      if (secs >= MAX_RECORDING_SECONDS) stopRef.current()
-    }, 500)
+      timerRef.current = setInterval(() => {
+        const secs = Math.floor((Date.now() - startRef.current) / 1000)
+        setElapsed(secs)
+        if (secs >= MAX_RECORDING_SECONDS) stopRef.current()
+      }, 500)
 
-    const data = new Uint8Array(analyser.frequencyBinCount)
-    const loop = () => {
-      analyser.getByteFrequencyData(data)
-      // Emphasize presence: square-root curve boosts low/mid amplitudes so
-      // normal speech visibly moves the bars
-      const avg = data.reduce((s, v) => s + v, 0) / data.length / 255
-      const boosted = Math.min(1, Math.sqrt(avg) * 1.15)
-      samplesRef.current.push(boosted)
-      setBars((prev) => [...prev.slice(1), boosted])
+      const data = new Uint8Array(analyser.frequencyBinCount)
+      const loop = () => {
+        if (!isCurrent()) return
+        analyser.getByteFrequencyData(data)
+        const avg = data.reduce((sum, value) => sum + value, 0) / data.length / 255
+        const boosted = Math.min(1, Math.sqrt(avg) * 1.15)
+        samplesRef.current.push(boosted)
+        setBars((previous) => [...previous.slice(1), boosted])
+        rafRef.current = requestAnimationFrame(loop)
+      }
       rafRef.current = requestAnimationFrame(loop)
+    } catch (err) {
+      if (!isCurrent()) return
+      cleanup()
+      setArming(false)
+      setRecording(false)
+      setMicError('Microphone unavailable — check browser permission and retry.')
+      console.error('Recorder setup failed:', err)
+      onCancel?.()
     }
-    rafRef.current = requestAnimationFrame(loop)
-  }, [onArm])
+  }, [cleanup, onCancel])
+
+  const startSafely = useCallback(() => { void start() }, [start])
 
   const stop = useCallback(() => {
     cancelAnimationFrame(rafRef.current)
@@ -154,24 +174,33 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
     const mr = mrRef.current
     if (mr && mr.state !== 'inactive') mr.stop()
     setRecording(false)
+    setArming(false)
     cleanup()
     onCancel?.()
   }, [cleanup, onCancel])
 
   useEffect(() => {
-    if (autoStart) void start()
-  }, [autoStart, start])
+    if (autoStart) startSafely()
+  }, [autoStart, startSafely])
 
   if (review) {
     return (
       <div className="irec irec--review" role="status">
         <audio controls src={URL.createObjectURL(review.blob)} aria-label="Preview recording" />
         <span>{Math.ceil(review.duration)}s ready</span>
-        <button type="button" onClick={() => onRecorded(review)}>Publish</button>
-        <button type="button" onClick={() => { setReview(null); void start() }}>Re-record</button>
+        <button type="button" onClick={() => {
+          const completed = review
+          setReview(null)
+          onRecorded(completed)
+        }}>Publish</button>
+        <button type="button" onClick={() => { setReview(null); startSafely() }}>Re-record</button>
         <button type="button" onClick={() => { setReview(null); onCancel?.() }}>Discard</button>
       </div>
     )
+  }
+
+  if (arming) {
+    return <span className="irec__idle" role="status">Opening microphone…</span>
   }
 
   if (!recording) {
@@ -179,7 +208,13 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
       <span className="irec__idle">
         <button
           className="irec__btn"
-          onClick={() => { setMicError(null); void start() }}
+          onClick={() => {
+            // Claim the shared recorder target before getUserMedia awaits, so
+            // a second section cannot arm while browser permission is pending.
+            onArm?.()
+            setMicError(null)
+            startSafely()
+          }}
           aria-label="Record a voice note"
           title="Record"
         >

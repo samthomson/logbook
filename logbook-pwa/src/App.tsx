@@ -18,7 +18,7 @@ import { loadCachedIssue } from './lib/issue-cache'
 import { fetchProfiles, type Profile } from './lib/profiles'
 import { nip19 } from 'nostr-tools'
 import type { CompassIssue, NostrEvent } from './types/nostr'
-import { loadInitialIssue } from './lib/initial-issue'
+import { loadAccessSnapshot, saveAccessSnapshot, clearAccessSnapshot } from './lib/access-cache'
 import './App.css'
 
 type AppView = 'auth' | 'timeline' | 'issue-picker' | 'admin'
@@ -49,6 +49,35 @@ export default function App() {
   const [timelineCapabilityRequest, setTimelineCapabilityRequest] = useState<number | null>(null)
   const [adminCapabilityRequests] = useState(createLatestRequestGuard)
   const [adminCapabilityRequest, setAdminCapabilityRequest] = useState<number | null>(null)
+  const accessGrantRef = useRef({ issueNumber: null as number | null, pubkey: null as string | null, canRecord: false, canAdmin: false })
+
+  const applyAccess = useCallback((
+    issueNumber: number,
+    pubkey: string,
+    allowed: Set<string>,
+    admins: Set<string>,
+    degraded: boolean,
+  ) => {
+    const normalized = pubkey.toLowerCase()
+    const canRecord = allowed.has(normalized)
+    const canAdmin = admins.has(normalized)
+    const previous = accessGrantRef.current
+    const sameContext = previous.issueNumber === issueNumber && previous.pubkey === normalized
+
+    if (!sameContext || previous.canRecord !== canRecord) {
+      timelineCapabilityRequests.invalidate()
+      setTimelineCapabilityRequest(canRecord ? timelineCapabilityRequests.begin() : null)
+    }
+    if (!sameContext || previous.canAdmin !== canAdmin) {
+      adminCapabilityRequests.invalidate()
+      setAdminCapabilityRequest(canAdmin ? adminCapabilityRequests.begin() : null)
+    }
+    accessGrantRef.current = { issueNumber, pubkey: normalized, canRecord, canAdmin }
+    setContributorPubkeys(allowed)
+    setIsWhitelisted(canRecord)
+    setIsAdmin(canAdmin)
+    setAccessDegraded(degraded)
+  }, [adminCapabilityRequests, timelineCapabilityRequests])
 
   const clearAccess = useCallback(() => {
     accessRequests.invalidate()
@@ -62,53 +91,76 @@ export default function App() {
     setIsAdmin(false)
     setContributorPubkeys(new Set())
     setAccessDegraded(false)
+    accessGrantRef.current = { issueNumber: null, pubkey: null, canRecord: false, canAdmin: false }
   }, [accessRequests, adminCapabilityRequests, manifestWriteRequests, timelineCapabilityRequests, whitelistWriteRequests])
 
   /** Single access-control fetch — canRecord + isAdmin derive from the same
-   *  call, so the two gates can never race or disagree. */
+   *  verified response. A cache may restore recorder UI, but never a write or
+   *  admin capability; recordings made while offline remain local drafts. */
   const loadAccess = useCallback(async (issueNumber: number, pubkey: string) => {
+    const request = accessRequests.begin()
+    const normalizedPubkey = pubkey.toLowerCase()
+    const isCompass = normalizedPubkey === COMPASS_PUBKEY.toLowerCase()
+    const isBootstrapAdmin = isCompass || ADMIN_PUBKEYS.some((admin) => admin.toLowerCase() === normalizedPubkey)
+    const cached = loadAccessSnapshot(sessionStorage, issueNumber, pubkey)
+
+    // Revoke every prior remote-write capability before refresh. Cached access
+    // is only a same-tab UX hint and cannot authorize publication or admin work.
+    manifestWriteRequests.invalidate()
+    whitelistWriteRequests.invalidate()
     timelineCapabilityRequests.invalidate()
     adminCapabilityRequests.invalidate()
     setTimelineCapabilityRequest(null)
     setAdminCapabilityRequest(null)
-    const request = accessRequests.begin()
-    const isCompass = pubkey.toLowerCase() === COMPASS_PUBKEY.toLowerCase()
-    const isBootstrapAdmin = isCompass || ADMIN_PUBKEYS.some((admin) => admin.toLowerCase() === pubkey.toLowerCase())
+    accessGrantRef.current = { issueNumber, pubkey: normalizedPubkey, canRecord: false, canAdmin: false }
+    setIsAdmin(false)
+    if (cached) {
+      setContributorPubkeys(cached.allowed)
+      setIsWhitelisted(cached.allowed.has(normalizedPubkey))
+      setAccessDegraded(true)
+    } else {
+      setContributorPubkeys(new Set())
+      setIsWhitelisted(false)
+      setAccessDegraded(false)
+    }
+
+    const applyBootstrapRepairAccess = () => {
+      const allowed = new Set([COMPASS_PUBKEY, ...ADMIN_PUBKEYS, normalizedPubkey])
+      const admins = new Set([COMPASS_PUBKEY, ...ADMIN_PUBKEYS, normalizedPubkey])
+      applyAccess(issueNumber, pubkey, allowed, admins, true)
+    }
+
     try {
-      const access = await fetchAccessLists(issueNumber)
+      const access = await fetchAccessLists(issueNumber, undefined, { forceRefresh: true })
       if (!accessRequests.isCurrent(request)) return
-      manifestWriteRequests.invalidate()
-      whitelistWriteRequests.invalidate()
+      if (access.degraded) {
+        if (isBootstrapAdmin) applyBootstrapRepairAccess()
+        else setAccessDegraded(true)
+        return
+      }
       // Admin review must use the same merged set that grants recording,
       // including admins who are allowed to contribute without a separate
       // contributor-list entry.
       const allowed = new Set([...access.contributors, ...access.admins])
       allowed.add(COMPASS_PUBKEY)
-      const canRecord = isBootstrapAdmin || allowed.has(pubkey.toLowerCase())
-      const canAdmin = isBootstrapAdmin || access.admins.has(pubkey.toLowerCase())
-      setTimelineCapabilityRequest(canRecord ? timelineCapabilityRequests.begin() : null)
-      setAdminCapabilityRequest(canAdmin ? adminCapabilityRequests.begin() : null)
-      setContributorPubkeys(allowed)
-      setIsWhitelisted(canRecord)
-      setIsAdmin(canAdmin)
-      setAccessDegraded(access.degraded)
+      if (isBootstrapAdmin) allowed.add(normalizedPubkey)
+      const admins = new Set(access.admins)
+      if (isBootstrapAdmin) admins.add(normalizedPubkey)
+      applyAccess(issueNumber, pubkey, allowed, admins, false)
+      saveAccessSnapshot(sessionStorage, { issueNumber, pubkey, allowed, admins })
     } catch {
       if (!accessRequests.isCurrent(request)) return
-      manifestWriteRequests.invalidate()
-      whitelistWriteRequests.invalidate()
-      // Total failure — fail closed on record, but never lock out bootstrap
-      // admins (they need the UI that fixes the list). fetchAccessLists
-      // already encodes this; a throw here means something truly unexpected.
-      // The Compass identity must retain the repair path even when every
-      // whitelist relay is down; otherwise it cannot restore access.
-      setTimelineCapabilityRequest(isBootstrapAdmin ? timelineCapabilityRequests.begin() : null)
-      setAdminCapabilityRequest(isBootstrapAdmin ? adminCapabilityRequests.begin() : null)
-      setIsWhitelisted(isBootstrapAdmin)
-      setIsAdmin(isBootstrapAdmin)
-      setContributorPubkeys(isBootstrapAdmin ? new Set([COMPASS_PUBKEY, ...ADMIN_PUBKEYS]) : new Set())
-      setAccessDegraded(true)
+      if (isBootstrapAdmin) applyBootstrapRepairAccess()
+      else setAccessDegraded(true)
     }
-  }, [accessRequests, adminCapabilityRequests, manifestWriteRequests, timelineCapabilityRequests, whitelistWriteRequests])
+  }, [
+    accessRequests,
+    adminCapabilityRequests,
+    applyAccess,
+    manifestWriteRequests,
+    timelineCapabilityRequests,
+    whitelistWriteRequests,
+  ])
 
   useEffect(() => {
     const { supported, message } = checkRecordingSupport(IOS_RECORDING_MIN_VERSION)
@@ -155,41 +207,62 @@ export default function App() {
     return () => authRequests.invalidate()
   }, [authRequests])
 
-  // Public reading never depends on a signer. Resolve the selected/latest issue
-  // once on mount so losing an auth session cannot hide already-published content.
+  // Public reading never depends on a signer. Render the last verified snapshot
+  // first, then refresh it from relays without putting a returning PWA behind a
+  // network spinner. A saved issue needs only one d-tag lookup on the critical
+  // path; the newer-episode check runs independently.
   useEffect(() => {
     const request = issueRequests.begin()
     setIssueLoading(true)
     setIssueError(null)
 
     const savedIssueNumber = readSelectedIssueNumber(localStorage)
-    const issueRequest = loadInitialIssue(savedIssueNumber, {
-      loadSaved: (issueNumber) => fetchIssueByDTag(`newsletter-${issueNumber}`),
-      loadPreferredLatest: () => fetchLatestIssueWithSegments().then((populated) => populated ?? fetchLatestIssue()),
-      issueNumberOf: extractIssueNumber,
-    })
+    const preferredPromise = fetchLatestIssueWithSegments().then((populated) => populated ?? fetchLatestIssue())
+    // A saved issue can resolve before the background newer-episode lookup.
+    // Attach rejection handling immediately so a fast relay failure cannot
+    // surface as an unhandled promise before that background branch is read.
+    void preferredPromise.catch(() => {})
+    const selectedPromise = savedIssueNumber === null
+      ? preferredPromise
+      : fetchIssueByDTag(`newsletter-${savedIssueNumber}`).then((saved) => saved ?? preferredPromise)
 
-    issueRequest
-      .then(({ selected, newer }) => {
+    void (async () => {
+      const cached = await loadCachedIssue(savedIssueNumber ?? undefined).catch(() => null)
+      if (!issueRequests.isCurrent(request)) return
+      if (cached) {
+        setIssue(cached.issue)
+        setCachedSegments(cached.segments)
+        setNewerIssueEvent(null)
+        setIssueLoading(false)
+      }
+
+      try {
+        const selected = await selectedPromise
         if (!issueRequests.isCurrent(request)) return
-        setCachedSegments([])
-        setIssue(selected ? parseIssue(selected) : null)
-        setNewerIssueEvent(newer)
-      })
-      .catch(async (err: unknown) => {
-        const cached = await loadCachedIssue<CompassIssue, [string, NostrEvent[]][]>().catch(() => null)
-        if (!issueRequests.isCurrent(request)) return
-        if (cached) {
-          setIssue(cached.issue)
-          setCachedSegments(cached.segments)
-          setNewerIssueEvent(null)
+        if (!selected) {
+          if (!cached) setIssue(null)
           return
         }
-        setIssueError(err instanceof Error ? err.message : String(err))
-      })
-      .finally(() => {
+        const parsed = parseIssue(selected)
+        const sameCachedIssue = cached?.issue.issueNumber === parsed.issueNumber
+        setCachedSegments(sameCachedIssue ? cached.segments : [])
+        setIssue(parsed)
+        if (savedIssueNumber !== null) {
+          void preferredPromise.then((latest) => {
+            if (!issueRequests.isCurrent(request) || !latest) return
+            setNewerIssueEvent(extractIssueNumber(latest) > parsed.issueNumber ? latest : null)
+          }).catch(() => {})
+        } else {
+          setNewerIssueEvent(null)
+        }
+      } catch (err: unknown) {
+        if (issueRequests.isCurrent(request) && !cached) {
+          setIssueError(err instanceof Error ? err.message : String(err))
+        }
+      } finally {
         if (issueRequests.isCurrent(request)) setIssueLoading(false)
-      })
+      }
+    })()
     return () => issueRequests.invalidate()
   }, [issueRequests])
 
@@ -203,6 +276,19 @@ export default function App() {
     void loadAccess(issue.issueNumber, auth.pubkey)
     return () => accessRequests.invalidate()
   }, [auth, issue, loadAccess, clearAccess, accessRequests])
+
+  useEffect(() => {
+    if (!auth || !issue) return
+    const refreshAccess = () => {
+      if (document.visibilityState === 'visible') void loadAccess(issue.issueNumber, auth.pubkey)
+    }
+    document.addEventListener('visibilitychange', refreshAccess)
+    window.addEventListener('pageshow', refreshAccess)
+    return () => {
+      document.removeEventListener('visibilitychange', refreshAccess)
+      window.removeEventListener('pageshow', refreshAccess)
+    }
+  }, [auth, issue, loadAccess])
 
   const handleSelectIssue = (event: NostrEvent) => {
     authRequests.invalidate()
@@ -311,6 +397,7 @@ export default function App() {
               clearAccess()
               localStorage.removeItem(AUTH_SESSION_KEY)
               sessionStorage.removeItem(AUTH_SESSION_KEY)
+              clearAccessSnapshot(sessionStorage)
               setAuth(null)
               setView('timeline')
             }}
