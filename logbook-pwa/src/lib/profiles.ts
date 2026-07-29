@@ -63,27 +63,39 @@ export async function fetchProfile(pubkey: string): Promise<Profile | null> {
 
 /** Batch-fetch profiles for many pubkeys at once (one relay query). */
 export async function fetchProfiles(pubkeys: string[]): Promise<Map<string, Profile>> {
-  const unique = [...new Set(pubkeys)].filter((pk) => !cache.has(pk))
-  if (unique.length) {
-    try {
-      const events = await getPool().querySync(DEFAULT_RELAYS, {
-        kinds: [0],
-        authors: unique,
-      })
+  const requested = [...new Set(pubkeys)]
+  const missing = requested.filter((pk) => !cache.has(pk) && !pending.has(pk))
+  if (missing.length) {
+    const batch = getPool().querySync(DEFAULT_RELAYS, {
+      kinds: [0],
+      authors: missing,
+    }).then((events) => {
       const byAuthor = new Map<string, NostrEvent>()
       for (const e of events) {
         const prev = byAuthor.get(e.pubkey)
         if (!prev || e.created_at > prev.created_at) byAuthor.set(e.pubkey, e)
       }
-      for (const pk of unique) {
-        cache.set(pk, parseProfileEvent(pk, byAuthor.get(pk) ?? null))
-      }
-    } catch {
-      for (const pk of unique) if (!cache.has(pk)) cache.set(pk, null)
+      for (const pk of missing) cache.set(pk, parseProfileEvent(pk, byAuthor.get(pk) ?? null))
+    }).catch(() => {
+      for (const pk of missing) if (!cache.has(pk)) cache.set(pk, null)
+    })
+
+    // Claim every pubkey synchronously, before another mounted excerpt can
+    // launch an overlapping relay query during the same React effect flush.
+    for (const pk of missing) {
+      const request = batch
+        .then(() => cache.get(pk) ?? null)
+        .finally(() => pending.delete(pk))
+      pending.set(pk, request)
     }
   }
+
+  await Promise.all(requested.flatMap((pk) => {
+    const request = pending.get(pk)
+    return request ? [request] : []
+  }))
   const out = new Map<string, Profile>()
-  for (const pk of new Set(pubkeys)) {
+  for (const pk of requested) {
     const p = cache.get(pk)
     if (p) out.set(pk, p)
   }

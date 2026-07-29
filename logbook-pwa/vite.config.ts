@@ -10,7 +10,10 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
+      includeManifestIcons: false,
+      strategies: 'injectManifest',
+      srcDir: 'pwa',
+      filename: 'sw.ts',
       manifest: {
         id: 'logbook',
         name: 'Logbook',
@@ -49,26 +52,16 @@ export default defineConfig({
           },
         ],
       },
-      workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-        navigateFallback: 'index.html',
-        // index.html must always come from network so new deploys take effect
-        // (nsite gateways also cache, but SW revalidate wins when online)
-        navigateFallbackDenylist: [/^\/assets\//],
-        runtimeCaching: [
-          {
-            // Audio blobs: cache-first (immutable content-addressed by sha256)
-            urlPattern: /^https:\/\/.*\.(webm|mp3|wav|ogg|m4a)(\?.*)?$/i,
-            handler: 'CacheFirst',
-            options: { cacheName: 'audio', expiration: { maxEntries: 200 } },
-          },
-          {
-            // HTML navigations: network-first so deploys propagate; fall back
-            // to precached shell offline
-            urlPattern: ({ request }: { request: Request }) => request.mode === 'navigate',
-            handler: 'NetworkFirst',
-            options: { cacheName: 'html' },
-          },
+      injectManifest: {
+        // Keep the public reader shell offline, but do not make first install
+        // compete with sign-in/admin chunks and large install artwork.
+        globPatterns: [
+          'index.html',
+          'registerSW.js',
+          'manifest.webmanifest',
+          'favicon.svg',
+          'pwa-192x192.png',
+          'assets/index-*.{js,css}',
         ],
       },
     }),

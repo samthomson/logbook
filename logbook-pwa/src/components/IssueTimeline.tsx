@@ -24,7 +24,7 @@ import { fetchSegmentsForIssue, parseSegment, publishSegment, fetchTranscripts, 
 import { fetchManifest } from '../lib/manifest'
 import { orderTimelineSegments } from '../lib/timeline-order'
 import { saveCachedIssue } from '../lib/issue-cache'
-import { extractMentionedNpubs } from './SectionExcerpt'
+import { extractMentionedNpubs } from '../lib/mentions'
 import { uploadBlob } from '../lib/blossom'
 import { collectEpisodeNotes } from '../lib/community-notes'
 import { computeSeedOrder } from '../lib/ordering'
@@ -584,7 +584,7 @@ export default function IssueTimeline({
               })}
             </span>
           </h1>
-          {leadProse && <SectionExcerpt section={{ id: '__lead', title: '', items: [{ title: '', body: leadProse }] }} />}
+          {leadProse && <SectionExcerpt section={{ id: '__lead', title: '', items: [{ title: '', body: leadProse }] }} profiles={profiles} />}
         </header>
         {publishError && (
           <div className="timeline__publish-error" role="alert">{publishError}</div>
@@ -622,7 +622,7 @@ export default function IssueTimeline({
               return (
                 <section key={target.id} className="timeline__section">
                   {target.item && (
-                    <SectionExcerpt section={{ id: target.id, title: target.title, items: [target.item] }} />
+                    <SectionExcerpt section={{ id: target.id, title: target.title, items: [target.item] }} profiles={profiles} />
                   )}
 
                   {(state?.order.length ?? 0) > 0 && (

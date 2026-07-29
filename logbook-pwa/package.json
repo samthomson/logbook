@@ -5,16 +5,18 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && npm run test:performance",
     "lint": "oxlint",
     "test": "npm run test:unit && npm run test:browser",
     "test:unit": "vitest run",
-    "test:browser": "npm run test:public-shell && npm run test:playback && npm run test:admin-layout && npm run test:concurrent-recording && npm run test:resume-cache",
+    "test:browser": "npm run test:public-shell && npm run test:playback && npm run test:admin-layout && npm run test:concurrent-recording && npm run test:resume-cache && npm run test:navigation-cache",
     "test:public-shell": "node scripts/public-shell-qa.mjs",
     "test:playback": "node scripts/playback-qa.mjs",
     "test:admin-layout": "node scripts/admin-layout-qa.mjs",
     "test:concurrent-recording": "node scripts/concurrent-recording-qa.mjs",
     "test:resume-cache": "node scripts/resume-cache-qa.mjs",
+    "test:navigation-cache": "node scripts/navigation-cache-qa.mjs",
+    "test:performance": "node scripts/performance-budget.mjs",
     "preview": "vite preview"
   },
   "engines": {
@@ -45,7 +47,12 @@
     "typescript": "~6.0.2",
     "vite": "^8.1.1",
     "vite-plugin-pwa": "^1.3.0",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "workbox-core": "^7.4.1",
+    "workbox-expiration": "^7.4.1",
+    "workbox-precaching": "^7.4.1",
+    "workbox-routing": "^7.4.1",
+    "workbox-strategies": "^7.4.1"
   },
   "allowScripts": {
     "puppeteer@25.3.0": true

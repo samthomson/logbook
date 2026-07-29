@@ -6,28 +6,17 @@
  * examples, which are left verbatim).
  */
 
-import { useEffect, useMemo, useState } from 'react'
 import { nip19 } from 'nostr-tools'
 import type { IssueSection } from '../types/nostr'
-import { fetchProfiles, type Profile } from '../lib/profiles'
+import type { Profile } from '../lib/profiles'
 
 interface Props {
   section: IssueSection
+  profiles?: Map<string, Profile>
 }
 
-/** Split markdown into code and non-code spans (``` fenced + `inline`). */
-function splitCodeSpans(text: string): { text: string; code: boolean }[] {
-  const parts: { text: string; code: boolean }[] = []
-  const fence = /```[\s\S]*?```|`[^`\n]*`/g
-  let last = 0
-  for (const m of text.matchAll(fence)) {
-    if (m.index > last) parts.push({ text: text.slice(last, m.index), code: false })
-    parts.push({ text: m[0], code: true })
-    last = m.index + m[0].length
-  }
-  if (last < text.length) parts.push({ text: text.slice(last), code: false })
-  return parts
-}
+const EMPTY_PROFILES = new Map<string, Profile>()
+
 
 /** Very small markdown-to-text: strip emphasis/links/images for excerpt view. */
 function md(text: string): string {
@@ -46,20 +35,6 @@ function paragraphs(text: string): string[] {
     .filter(Boolean)
 }
 
-/** Extract npubs from nostr:npub1… mentions in non-code text. Exported for batch prefetch. */
-export function extractMentionedNpubs(text: string): string[] {
-  const out: string[] = []
-  for (const span of splitCodeSpans(text)) {
-    if (span.code) continue
-    for (const m of span.text.matchAll(/nostr:npub1[02-9ac-hj-np-z]+/g)) {
-      try {
-        const decoded = nip19.decode(m[0].slice(6))
-        if (decoded.type === 'npub') out.push(decoded.data as string)
-      } catch { /* ignore malformed */ }
-    }
-  }
-  return [...new Set(out)]
-}
 
 /** Replace nostr:npub mentions with display names where known. */
 function renderWithProfiles(text: string, profiles: Map<string, Profile>): string {
@@ -75,27 +50,12 @@ function renderWithProfiles(text: string, profiles: Map<string, Profile>): strin
   })
 }
 
-export default function SectionExcerpt({ section }: Props) {
+export default function SectionExcerpt({ section, profiles = EMPTY_PROFILES }: Props) {
   const leadItems = section.items.filter((it) => !it.title)
   const named = section.items.filter((it) => it.title)
   const lead = leadItems.map((it) => it.body).join('\n\n').trim()
 
   const hasContent = lead || named.some((it) => it.body.trim())
-  const fullText = [lead, ...named.map((it) => it.body)].join('\n\n')
-
-  const npubs = useMemo(() => extractMentionedNpubs(fullText), [fullText])
-  const [profiles, setProfiles] = useState<Map<string, Profile>>(new Map())
-  useEffect(() => {
-    if (!npubs.length) return
-    let alive = true
-    fetchProfiles(npubs).then((map) => {
-      if (alive) setProfiles(map)
-    })
-    return () => {
-      alive = false
-    }
-  }, [npubs])
-
   if (!hasContent) return null
 
   // Always fully expanded — no read-more toggle (per product direction:

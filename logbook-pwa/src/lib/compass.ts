@@ -8,6 +8,7 @@ import { hasReasonableEventTimestamp, latestReasonableEventTimestamp } from './e
 import { getPool } from './pool'
 const ISSUE_CACHE_TTL_MS = 5 * 60 * 1000
 const ISSUE_QUERY_MAX_WAIT_MS = 1_800
+const INITIAL_ISSUE_SCAN_LIMIT = 12
 const issueLists = new Map<string, { expiresAt: number; events: NostrEvent[] }>()
 const issueRequests = new Map<string, Promise<NostrEvent[]>>()
 
@@ -102,9 +103,31 @@ export function selectCompassIssues(events: readonly NostrEvent[]): NostrEvent[]
 export async function fetchLatestIssueWithSegments(
   relays: string[] = DEFAULT_RELAYS,
 ): Promise<NostrEvent | null> {
-  const issues = await fetchAllIssues(relays)
-  if (!issues.length) return null
+  // Startup only needs a recent window. Loading the complete episode picker
+  // here made SimplePool verify every historical issue before first content.
+  const recent = await getPool().querySync(relays, {
+    kinds: [KINDS.COMPASS_ISSUE],
+    authors: [COMPASS_PUBKEY],
+    until: latestReasonableEventTimestamp(),
+    limit: INITIAL_ISSUE_SCAN_LIMIT,
+  }, { maxWait: ISSUE_QUERY_MAX_WAIT_MS })
+  const issues = selectCompassIssues(filterVerified(recent))
+  const populated = await findLatestPopulatedIssue(issues, relays)
+  if (populated) return populated
 
+  // Preserve historical-note discovery if an unusually long run of new
+  // newsletters has no audio. The expensive inventory scan is a fallback,
+  // never part of the normal startup path.
+  const recentIds = new Set(issues.map((event) => event.id))
+  const olderIssues = (await fetchAllIssues(relays)).filter((event) => !recentIds.has(event.id))
+  return findLatestPopulatedIssue(olderIssues, relays)
+}
+
+async function findLatestPopulatedIssue(
+  issues: NostrEvent[],
+  relays: string[],
+): Promise<NostrEvent | null> {
+  if (!issues.length) return null
   const issueIds = issues
     .map((event) => extractIssueNumber(event))
     .filter((number) => number > 0)
