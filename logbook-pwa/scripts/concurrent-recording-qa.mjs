@@ -58,6 +58,7 @@ const modules = new Map([
   ['segment', `
     export async function fetchSegmentsForIssue(){return new Map()}
     export async function fetchTranscripts(){return new Map()}
+    export function mergeSegmentEventGroups(base){return new Map(base)}
     export function parseSegment(){return null}
     export function selectTrustedSegmentEvents(){return []}
     export async function publishSegment(){throw new Error('unexpected publish')}

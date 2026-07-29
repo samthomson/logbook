@@ -89,6 +89,7 @@ const fixturePlugin = {
       export async function fetchSegmentsForIssue() {
         return new Map([[${JSON.stringify(sectionId)}, segments.map((segment) => segment.event)]])
       }
+      export function mergeSegmentEventGroups(base) { return new Map(base) }
       export function parseSegment(event) { return segments.find((segment) => segment.event.id === event.id) ?? null }
       export async function fetchTranscripts() { return new Map() }
       export function selectTrustedSegmentEvents(events) { return events }

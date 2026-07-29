@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { finalizeEvent, generateSecretKey } from 'nostr-tools'
 import { publishToRelays } from './relay'
-import { parseSegment, publishSegment, publishTranscript, selectTrustedSegmentEvents, selectTrustedTranscripts } from './segment'
+import { mergeSegmentEventGroups, parseSegment, publishSegment, publishTranscript, selectTrustedSegmentEvents, selectTrustedTranscripts } from './segment'
 import type { NostrEvent, NostrSigner } from '../types/nostr'
 
 vi.mock('./relay', async (importOriginal) => {
@@ -49,6 +49,93 @@ describe('selectTrustedSegmentEvents', () => {
       content: event.content,
     }, key)
     expect(selectTrustedSegmentEvents([mismatched], 'logbook-31', SERVERS)).toEqual([])
+  })
+})
+
+describe('parseSegment relay-data bounds', () => {
+  it('rejects malformed audio objects without throwing', () => {
+    const event = { ...segment(), content: JSON.stringify({ audio: null, isIntro: false }) }
+
+    expect(() => parseSegment(event)).not.toThrow()
+    expect(parseSegment(event)).toBeNull()
+  })
+
+  it('rejects non-string segment content without throwing', () => {
+    const event = { ...segment(), content: null as unknown as string }
+    expect(() => parseSegment(event)).not.toThrow()
+    expect(parseSegment(event)).toBeNull()
+  })
+
+  it('rejects waveforms beyond the public relay-data work limit', () => {
+    const waveform = Array.from({ length: 2_049 }, (_, index) => index % 256)
+    const event = {
+      ...segment(),
+      content: JSON.stringify({
+        audio: {
+          url: `https://blossom.example/${HASH}`,
+          sha256: HASH,
+          mime: 'audio/webm',
+          duration: 2,
+          waveform,
+        },
+        isIntro: false,
+      }),
+    }
+
+    expect(parseSegment(event)).toBeNull()
+  })
+
+  it('rejects segment content beyond the public relay-data size limit', () => {
+    const event = {
+      ...segment(),
+      content: JSON.stringify({
+        audio: {
+          url: `https://blossom.example/${HASH}`,
+          sha256: HASH,
+          mime: 'audio/webm',
+          duration: 2,
+          waveform: [],
+        },
+        isIntro: false,
+        padding: 'x'.repeat(70_000),
+      }),
+    }
+
+    expect(parseSegment(event)).toBeNull()
+  })
+
+  it('downsamples accepted legacy waveforms to the render budget', () => {
+    const waveform = Array.from({ length: 1_000 }, (_, index) => index % 256)
+    const event = {
+      ...segment(),
+      content: JSON.stringify({
+        audio: {
+          url: `https://blossom.example/${HASH}`,
+          sha256: HASH,
+          mime: 'audio/webm',
+          duration: 2,
+          waveform,
+        },
+        isIntro: false,
+      }),
+    }
+
+    const parsed = parseSegment(event)
+    expect(parsed?.audio.waveform).toHaveLength(100)
+    expect(parsed?.audio.waveform.every((sample) => sample >= 0 && sample <= 1)).toBe(true)
+  })
+})
+
+describe('mergeSegmentEventGroups', () => {
+  it('preserves live arrivals while deduplicating a completed query snapshot', () => {
+    const queried = segment()
+    const live = segment()
+    const merged = mergeSegmentEventGroups(
+      new Map([['sec-one-31', [queried]]]),
+      [live, queried],
+    )
+
+    expect(merged.get('sec-one-31')?.map((event) => event.id)).toEqual([queried.id, live.id])
   })
 })
 

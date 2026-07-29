@@ -1,6 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { finalizeEvent, generateSecretKey } from 'nostr-tools'
-import { filterVerified } from './relay'
+const publish = vi.hoisted(() => vi.fn())
+
+vi.mock('./pool', () => ({
+  getPool: () => ({ publish }),
+}))
+
+import { filterVerified, publishToRelays } from './relay'
 import { rememberRelayVerifiedEvent, wasRelayVerifiedEvent } from './verified-event-cache'
 import relaySource from './relay.ts?raw'
 
@@ -47,5 +53,40 @@ describe('filterVerified', () => {
 
   it('rejects malformed event encoding', () => {
     expect(filterVerified([{ id: 'z', pubkey: 'not-a-key', sig: 'not-a-signature' }])).toEqual([])
+  })
+})
+
+describe('publishToRelays durability', () => {
+  it('waits for two acknowledgements when multiple relays are configured', async () => {
+    let acceptFirst!: () => void
+    let acceptSecond!: () => void
+    publish.mockReturnValueOnce([
+      new Promise<void>((resolve) => { acceptFirst = resolve }),
+      new Promise<void>((resolve) => { acceptSecond = resolve }),
+      new Promise<void>(() => {}),
+    ])
+    const event = finalizeEvent({ kind: 1, created_at: 4, tags: [], content: 'durable' }, generateSecretKey())
+    let settled = false
+    const result = publishToRelays(event, ['wss://one.test', 'wss://two.test', 'wss://three.test'])
+      .then(() => { settled = true })
+
+    acceptFirst()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(settled).toBe(false)
+    acceptSecond()
+    await result
+    expect(settled).toBe(true)
+  })
+
+  it('rejects when a two-relay acknowledgement can no longer be reached', async () => {
+    publish.mockReturnValueOnce([
+      Promise.resolve(),
+      Promise.reject(new Error('offline')),
+      Promise.reject(new Error('blocked')),
+    ])
+    const event = finalizeEvent({ kind: 1, created_at: 5, tags: [], content: 'partial' }, generateSecretKey())
+
+    await expect(publishToRelays(event, ['wss://one.test', 'wss://two.test', 'wss://three.test']))
+      .rejects.toThrow(/only 1 of 2 required relays accepted/i)
   })
 })

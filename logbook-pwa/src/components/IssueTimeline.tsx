@@ -20,7 +20,7 @@ import type {
   NostrSigner,
   NostrEvent,
 } from '../types/nostr'
-import { fetchSegmentsForIssue, parseSegment, publishSegment, fetchTranscripts, selectTrustedSegmentEvents } from '../lib/segment'
+import { fetchSegmentsForIssue, mergeSegmentEventGroups, parseSegment, publishSegment, fetchTranscripts, selectTrustedSegmentEvents } from '../lib/segment'
 import { fetchManifest } from '../lib/manifest'
 import { orderTimelineSegments } from '../lib/timeline-order'
 import { saveCachedIssue } from '../lib/issue-cache'
@@ -107,8 +107,19 @@ export default function IssueTimeline({
   const [newSegmentIds, setNewSegmentIds] = useState<Set<string>>(new Set())
   const [profiles, setProfiles] = useState<Map<string, Profile>>(new Map())
   const [transcripts, setTranscripts] = useState<Map<string, string>>(new Map())
+  const [refreshGeneration, setRefreshGeneration] = useState(0)
   const knownIdsRef = useRef<Set<string>>(new Set())
+  const groupedEventsRef = useRef<Map<string, NostrEvent[]>>(new Map())
+  const cacheWriteRef = useRef<Promise<void>>(Promise.resolve())
   const mountedAtRef = useRef<number>(Math.floor(Date.now() / 1000))
+  const loadedIssueRef = useRef<number | null>(null)
+
+  const queueCacheWrite = useCallback((snapshotIssue: CompassIssue, grouped: [string, NostrEvent[]][]) => {
+    const snapshot = grouped.map(([sectionId, events]) => [sectionId, [...events]] as [string, NostrEvent[]])
+    cacheWriteRef.current = cacheWriteRef.current
+      .then(() => saveCachedIssue(snapshotIssue, snapshot))
+      .catch((error) => console.warn('Unable to cache public timeline:', error))
+  }, [])
 
   const groups = useMemo(() => recordingSections(issue), [issue])
   const allTargets = useMemo(() => groups.flatMap((g) => g.targets), [groups])
@@ -129,11 +140,24 @@ export default function IssueTimeline({
   useEffect(() => {
     let mounted = true
     const cachedGrouped = new Map(cachedSegments)
-    // Persist the parsed newsletter immediately. If the OS kills the PWA while
-    // relay segments are still loading, the next launch can still render the
-    // selected episode instead of returning to a blank spinner.
-    void saveCachedIssue(issue, cachedSegments).catch((error) => console.warn('Unable to cache public timeline:', error))
-    setSections(() => {
+    const refreshingSameIssue = loadedIssueRef.current === issue.issueNumber
+    loadedIssueRef.current = issue.issueNumber
+    if (!refreshingSameIssue) {
+      knownIdsRef.current.clear()
+      groupedEventsRef.current = new Map(cachedSegments.map(([sectionId, events]) => [sectionId, [...events]]))
+      for (const events of groupedEventsRef.current.values()) {
+        for (const event of events) knownIdsRef.current.add(event.id)
+      }
+    }
+    // Persist the parsed newsletter immediately on issue changes. A retry must
+    // not overwrite a fresher relay snapshot with the original cached props.
+    if (!refreshingSameIssue) {
+      queueCacheWrite(issue, cachedSegments)
+    }
+    setSections((current) => {
+      if (refreshingSameIssue && current.size > 0) {
+        return new Map([...current].map(([id, state]) => [id, { ...state, loading: true, error: null }]))
+      }
       const next = new Map<string, SectionState>()
       for (const t of allTargets) {
         const cached = (cachedGrouped.get(t.id) ?? []).flatMap((event) => {
@@ -148,13 +172,15 @@ export default function IssueTimeline({
     Promise.all([fetchSegmentsForIssue(`${ISSUE_PREFIX}-${issue.issueNumber}`), fetchManifest(issue.issueNumber).catch(() => null)])
       .then(([grouped, manifest]) => {
         if (!mounted) return
+        const mergedGrouped = mergeSegmentEventGroups(grouped, [...groupedEventsRef.current.values()].flat())
+        groupedEventsRef.current = mergedGrouped
         const allParsed: Segment[] = []
         const orphaned: Segment[] = []
         setSections(() => {
           const next = new Map<string, SectionState>()
           const knownIds = new Set(allTargets.map((t) => t.id))
           for (const t of allTargets) {
-            const events = grouped.get(t.id) ?? []
+            const events = mergedGrouped.get(t.id) ?? []
             const parsed = events.flatMap((e) => {
               const s = parseSegment(e)
               return s ? [s] : []
@@ -175,7 +201,7 @@ export default function IssueTimeline({
           }
           // Segments whose section tag no longer matches any item (old ID
           // formats) — surface them under the first group so nothing is lost
-          for (const [secId, events] of grouped) {
+          for (const [secId, events] of mergedGrouped) {
             if (knownIds.has(secId)) continue
             for (const e of events) {
               const s = parseSegment(e)
@@ -195,7 +221,7 @@ export default function IssueTimeline({
           }
           return next
         })
-        void saveCachedIssue(issue, [...grouped.entries()]).catch((error) => console.warn('Unable to cache public timeline:', error))
+        queueCacheWrite(issue, [...mergedGrouped.entries()])
         if (allParsed.length) {
           fetchProfiles(allParsed.map((s) => s.event.pubkey)).then((map) => {
             if (!mounted) return
@@ -228,7 +254,7 @@ export default function IssueTimeline({
       })
 
     return () => { mounted = false }
-  }, [allTargets, cachedSegments, issue])
+  }, [allTargets, cachedSegments, issue, queueCacheWrite, refreshGeneration])
 
   // Live subscription
   useEffect(() => {
@@ -241,11 +267,14 @@ export default function IssueTimeline({
       { kinds: [KINDS.SEGMENT], '#t': [issueId], since: mountedAtRef.current } as Filter,
       {
         onevent(event: NostrEvent) {
+          if (loadedIssueRef.current !== issue.issueNumber) return
           const trustedEvent = selectTrustedSegmentEvents([event], issueId, BLOSSOM_SERVERS)[0]
           if (!trustedEvent || knownIdsRef.current.has(trustedEvent.id)) return
           knownIdsRef.current.add(trustedEvent.id)
           const seg = parseSegment(trustedEvent)
           if (!seg) return
+          groupedEventsRef.current = mergeSegmentEventGroups(groupedEventsRef.current, [trustedEvent])
+          queueCacheWrite(issue, [...groupedEventsRef.current.entries()])
           const destId = targetIds.has(seg.sectionId) ? seg.sectionId : allTargets[0]?.id
           if (!destId) return
           setSections((prev) => {
@@ -265,7 +294,7 @@ export default function IssueTimeline({
       },
     )
     return () => sub.close()
-  }, [allTargets, issue.issueNumber])
+  }, [allTargets, issue, queueCacheWrite])
 
   const handleReply = useCallback((segment: Segment) => {
     // Resolve the section where this segment is actually displayed — relay
@@ -548,6 +577,14 @@ export default function IssueTimeline({
     () => collectEpisodeNotes([...sections.values()].map((state) => state.segments)),
     [sections],
   )
+  const relayError = useMemo(
+    () => [...sections.values()].find((state) => state.error)?.error ?? null,
+    [sections],
+  )
+  const hasAvailableSegments = useMemo(
+    () => [...sections.values()].some((state) => state.segments.length > 0),
+    [sections],
+  )
 
   const queue = useMemo(() => {
     const out: Segment[] = []
@@ -588,6 +625,22 @@ export default function IssueTimeline({
         </header>
         {publishError && (
           <div className="timeline__publish-error" role="alert">{publishError}</div>
+        )}
+        {relayError && (
+          <div className="notice notice--warning notice--episode" role="status">
+            <span>
+              {hasAvailableSegments
+                ? 'Showing saved voice notes — relays unavailable.'
+                : 'Voice notes unavailable — relays could not be reached.'}
+            </span>
+            <button
+              type="button"
+              className="btn btn--ghost btn--small"
+              onClick={() => setRefreshGeneration((generation) => generation + 1)}
+            >
+              Retry
+            </button>
+          </div>
         )}
         {episodeNotes.length > 0 && (
           <section className="timeline__group timeline__community" aria-label="Voice notes in this episode">

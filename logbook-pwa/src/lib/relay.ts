@@ -3,10 +3,9 @@
  *
  * `Promise.any(pool.publish(...))` resolves on the first relay that accepts,
  * but if ALL relays reject it throws an AggregateError with no useful message
- * and no record of which relays failed. `publishToRelays` resolves as soon as
- * the first relay accepts (fast path preserved) and, only if every relay
- * rejects, throws a descriptive error listing each relay's rejection reason —
- * so publish failures are diagnosable instead of opaque.
+ * and no record of which relays failed. `publishToRelays` requires two relay
+ * acknowledgements when redundancy is configured, so a single transient relay
+ * cannot make the client discard its recoverable draft prematurely.
  */
 import type { NostrEvent } from '../types/nostr'
 import { getPool } from './pool'
@@ -15,28 +14,41 @@ import { schnorr } from '@noble/curves/secp256k1.js'
 import { hexToBytes } from '@noble/hashes/utils.js'
 import { wasRelayVerifiedEvent } from './verified-event-cache'
 
-/** Publish an event; resolve on first relay ack, throw a rich error if all fail. */
+/** Publish an event; require redundant acknowledgement when possible. */
 export async function publishToRelays(event: NostrEvent, relays: string[]): Promise<void> {
   if (relays.length === 0) throw new Error('No relays configured')
   const pool = getPool()
   const promises = pool.publish(relays, event)
 
+  const requiredAcks = Math.min(2, promises.length)
+  if (requiredAcks === 0) throw new Error('No relay publish requests were created')
+
   return new Promise<void>((resolve, reject) => {
     const failures: string[] = []
+    let accepted = 0
+    let completed = 0
     let settled = false
     promises.forEach((p, i) => {
       Promise.resolve(p)
         .then(() => {
-          if (!settled) {
+          if (settled) return
+          accepted += 1
+          completed += 1
+          if (accepted >= requiredAcks) {
             settled = true
             resolve()
           }
         })
         .catch((reason: unknown) => {
+          if (settled) return
+          completed += 1
           failures.push(`${relays[i]}: ${reason instanceof Error ? reason.message : String(reason)}`)
-          if (!settled && failures.length === promises.length) {
+          const maximumPossibleAcks = accepted + promises.length - completed
+          if (maximumPossibleAcks < requiredAcks) {
             settled = true
-            reject(new Error(`All relays rejected the event:\n${failures.join('\n')}`))
+            reject(new Error(
+              `Only ${accepted} of ${requiredAcks} required relays accepted the event:\n${failures.join('\n')}`,
+            ))
           }
         })
     })

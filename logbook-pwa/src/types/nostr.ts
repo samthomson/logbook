@@ -138,18 +138,27 @@ export function isManifestEvent(event: NostrEvent): boolean {
   return event.kind === KINDS.MANIFEST
 }
 
-export function parseSegmentContent(raw: string): SegmentContent | null {
+const MAX_SEGMENT_CONTENT_CHARS = 65_536
+const MAX_SEGMENT_WAVEFORM_SAMPLES = 2_048
+
+export function parseSegmentContent(raw: unknown): SegmentContent | null {
+  if (typeof raw !== 'string' || raw.length > MAX_SEGMENT_CONTENT_CHARS) return null
   try {
     const parsed = JSON.parse(raw) as unknown
+    if (typeof parsed !== 'object' || parsed === null) return null
+    const value = parsed as Record<string, unknown>
+    if (typeof value.audio !== 'object' || value.audio === null || typeof value.isIntro !== 'boolean') return null
+    const audio = value.audio as Record<string, unknown>
     if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      'audio' in parsed &&
-      'isIntro' in parsed
-    ) {
-      return parsed as SegmentContent
-    }
-    return null
+      typeof audio.url !== 'string'
+      || typeof audio.sha256 !== 'string'
+      || typeof audio.mime !== 'string'
+      || typeof audio.duration !== 'number'
+      || !Number.isFinite(audio.duration)
+      || !Array.isArray(audio.waveform)
+      || audio.waveform.length > MAX_SEGMENT_WAVEFORM_SAMPLES
+    ) return null
+    return value as unknown as SegmentContent
   } catch {
     return null
   }

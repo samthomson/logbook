@@ -6,7 +6,7 @@ import { getPool } from './pool'
  * Also handles companion transcript events (kind 1111).
  */
 
-import { BLOSSOM_SERVERS, COMPASS_PUBKEY, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from '../config'
+import { BLOSSOM_SERVERS, COMPASS_PUBKEY, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX, WAVEFORM_SAMPLES } from '../config'
 import type {
   NostrEvent,
   NostrSigner,
@@ -286,6 +286,24 @@ export function selectTrustedTranscripts(
  * Parse a raw kind 4200 NostrEvent into a typed Segment.
  * Returns null if the event is malformed.
  */
+export function mergeSegmentEventGroups(
+  base: ReadonlyMap<string, NostrEvent[]>,
+  additions: Iterable<NostrEvent>,
+): Map<string, NostrEvent[]> {
+  const merged = new Map<string, NostrEvent[]>(
+    [...base].map(([sectionId, events]) => [sectionId, [...events]]),
+  )
+  const seen = new Set([...merged.values()].flatMap((events) => events.map((event) => event.id)))
+  for (const event of additions) {
+    if (seen.has(event.id)) continue
+    const sectionId = getTag(event, 'section')
+    if (!sectionId) continue
+    merged.set(sectionId, [...(merged.get(sectionId) ?? []), event])
+    seen.add(event.id)
+  }
+  return merged
+}
+
 export function parseSegment(event: NostrEvent): Segment | null {
   const content = parseSegmentContent(event.content)
   if (!content) return null
@@ -297,16 +315,25 @@ export function parseSegment(event: NostrEvent): Segment | null {
   // Normalize waveform to 0–1 range. SPEC.md says 0–255; this client writes
   // 0–1. Defensively downscale anything that looks like the 0–255 scale and
   // clamp every sample so out-of-range relay data can't break layout.
-  if (Array.isArray(content.audio.waveform)) {
-    const max = Math.max(...content.audio.waveform.map((v) => Number(v) || 0), 0)
-    const scale = max > 2 ? 255 : 1
-    content.audio.waveform = content.audio.waveform.map((v) => {
-      const n = (Number(v) || 0) / scale
-      return Math.min(1, Math.max(0, n))
-    })
-  } else {
-    content.audio.waveform = []
+  const waveform = content.audio.waveform
+  let usesLegacyScale = false
+  for (const sample of waveform) {
+    const value = Number(sample)
+    if (Number.isFinite(value) && value > 2) {
+      usesLegacyScale = true
+      break
+    }
   }
+  const scale = usesLegacyScale ? 255 : 1
+  const sampleCount = Math.min(waveform.length, WAVEFORM_SAMPLES)
+  content.audio.waveform = Array.from({ length: sampleCount }, (_, index) => {
+    const sourceIndex = sampleCount === waveform.length || sampleCount <= 1
+      ? index
+      : Math.floor(index * (waveform.length - 1) / (sampleCount - 1))
+    const value = Number(waveform[sourceIndex])
+    const normalized = (Number.isFinite(value) ? value : 0) / scale
+    return Math.min(1, Math.max(0, normalized))
+  })
 
   return {
     event,
