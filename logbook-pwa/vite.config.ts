@@ -53,8 +53,8 @@ export default defineConfig({
         ],
       },
       injectManifest: {
-        // Keep the public reader shell offline, but do not make first install
-        // compete with sign-in/admin chunks and large install artwork.
+        // Keep the public reader shell and saved NIP-46 restoration offline.
+        // Interactive sign-in/admin UI and large install artwork remain deferred.
         globPatterns: [
           'index.html',
           'registerSW.js',
@@ -62,6 +62,7 @@ export default defineConfig({
           'favicon.svg',
           'pwa-192x192.png',
           'assets/index-*.{js,css}',
+          'assets/auth-*.js',
         ],
       },
     }),

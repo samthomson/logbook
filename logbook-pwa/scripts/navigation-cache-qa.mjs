@@ -3,6 +3,7 @@ import { cp, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { extname, join, normalize } from 'node:path'
+import { NostrConnectSigner } from 'applesauce-signers/signers/nostr-connect-signer'
 import puppeteer from 'puppeteer'
 
 const mime = {
@@ -21,6 +22,12 @@ await cp(join(root, 'dist'), fixture, { recursive: true })
 const indexPath = join(fixture, 'index.html')
 const originalIndex = await readFile(indexPath, 'utf8')
 const withVersion = (version) => originalIndex.replace('</head>', `<meta name="qa-version" content="${version}"></head>`)
+const accountPubkey = '1'.repeat(64)
+const offlineSession = NostrConnectSigner.createNbunksec({
+  remote: '3'.repeat(64),
+  clientKey: '2'.repeat(64),
+  relays: ['wss://offline.invalid'],
+})
 await writeFile(indexPath, withVersion('v1'))
 
 const server = createServer(async (request, response) => {
@@ -42,6 +49,7 @@ const server = createServer(async (request, response) => {
 })
 
 let browser
+let serverClosed = false
 try {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   const address = server.address()
@@ -79,9 +87,29 @@ try {
     throw new Error(`Controlled offline navigation did not retain the latest shell: ${offlineVersion}`)
   }
   await page.setOfflineMode(false)
-  console.log('Navigation cache QA passed: fresh offline v1, online v2, runtime-cache offline v2')
+
+  const authLoads = await page.evaluate(() => performance.getEntriesByType('resource')
+    .map((entry) => entry.name)
+    .filter((name) => /\/assets\/auth-[^/]+\.js(?:\?|$)/.test(name)))
+  if (authLoads.length > 0) throw new Error(`Auth code loaded before restoration: ${authLoads.join(', ')}`)
+
+  await page.evaluate((session, pubkey) => {
+    sessionStorage.setItem('logbook_auth', JSON.stringify({ method: 'amber', session, pubkey }))
+  }, offlineSession, accountPubkey)
+  await new Promise((resolve) => server.close(resolve))
+  serverClosed = true
+  await page.setOfflineMode(true)
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  try {
+    await page.waitForSelector('button[aria-label="Log out"]', { timeout: 5_000 })
+  } catch {
+    const alert = await page.$eval('[role="alert"]', (element) => element.textContent).catch(() => 'no alert')
+    throw new Error(`Saved Amber session did not restore offline: ${alert}`)
+  }
+  await page.setOfflineMode(false)
+  console.log('Navigation cache QA passed: fresh offline v1, online v2, runtime-cache offline v2, offline Amber restore')
 } finally {
   await browser?.close().catch(() => {})
-  await new Promise((resolve) => server.close(resolve))
+  if (!serverClosed) await new Promise((resolve) => server.close(resolve))
   await rm(fixture, { recursive: true, force: true })
 }

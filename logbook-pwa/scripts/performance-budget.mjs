@@ -24,6 +24,8 @@ if (!uniquePrecacheUrls.includes('index.html')) failures.push('service worker pr
 if (uniquePrecacheUrls.includes('pwa-512x512.png')) failures.push('large install artwork is eagerly precached')
 const optionalChunks = uniquePrecacheUrls.filter((url) => /assets\/(?:AdminPanel|AuthScreen)-/.test(url))
 if (optionalChunks.length) failures.push(`optional chunks are eagerly precached: ${optionalChunks.join(', ')}`)
+const authChunks = uniquePrecacheUrls.filter((url) => /assets\/auth-[^/]+\.js$/.test(url))
+if (authChunks.length !== 1) failures.push(`offline auth restoration requires one precached auth chunk; found ${authChunks.length}`)
 
 const precacheBytes = uniquePrecacheUrls.reduce((total, url) => {
   try { return total + statSync(resolve(new URL('.', dist).pathname, url)).size } catch { return total }
