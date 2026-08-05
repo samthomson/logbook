@@ -6,7 +6,7 @@
  * stops playback until the listener explicitly chooses another note.
  */
 
-import { usePlayback } from '../lib/playback'
+import { usePlayback } from '../lib/playback-context'
 import type { Segment } from '../types/nostr'
 import { formatDuration } from '../lib/utils'
 import { useState } from 'react'

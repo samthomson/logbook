@@ -23,9 +23,7 @@
  */
 
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -33,22 +31,7 @@ import {
   type ReactNode,
 } from 'react'
 import type { Segment } from '../types/nostr'
-
-export interface PlaybackState {
-  currentId: string | null
-  playing: boolean
-  currentTime: number
-  duration: number
-  loading: boolean
-  /** True when autoplay policy blocked playback; user must tap to resume. */
-  blocked: boolean
-  play: (segmentId: string) => void
-  pause: () => void
-  toggle: (segmentId: string) => void
-  seek: (seconds: number) => void
-}
-
-const PlaybackContext = createContext<PlaybackState | null>(null)
+import { PlaybackContext, type PlaybackState } from './playback-context'
 
 interface ProviderProps {
   segments: Segment[]
@@ -255,10 +238,4 @@ export function PlaybackProvider({ segments, children }: ProviderProps) {
   )
 
   return <PlaybackContext.Provider value={value}>{children}</PlaybackContext.Provider>
-}
-
-export function usePlayback(): PlaybackState {
-  const ctx = useContext(PlaybackContext)
-  if (!ctx) throw new Error('usePlayback must be used inside <PlaybackProvider>')
-  return ctx
 }

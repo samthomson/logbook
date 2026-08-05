@@ -6,7 +6,7 @@
  * right (accent bubble), others left (surface bubble).
  */
 
-import { usePlayback } from '../lib/playback'
+import { usePlayback } from '../lib/playback-context'
 import type { Segment } from '../types/nostr'
 import type { Profile } from '../lib/profiles'
 import { formatDuration, clamp } from '../lib/utils'
