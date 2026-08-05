@@ -1,12 +1,44 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import { execFileSync } from 'node:child_process'
+
+function localReleaseId(): string {
+  if (process.env.LOGBOOK_RELEASE_ID) return process.env.LOGBOOK_RELEASE_ID
+  try {
+    const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+    const dirty = execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' }).trim()
+    return `${commit}${dirty ? '-dirty' : ''}`
+  } catch {
+    return 'development'
+  }
+}
+
+const releaseId = localReleaseId()
 
 export default defineConfig({
   // Relative base so the build works on any gateway path (nsite subdomains,
   // GitHub Pages subpaths) — absolute '/' breaks under path prefixes.
   base: './',
   plugins: [
+    {
+      name: 'logbook-release-metadata',
+      transformIndexHtml: {
+        order: 'pre',
+        handler: () => [{
+          tag: 'meta',
+          attrs: { name: 'logbook-release', content: releaseId },
+          injectTo: 'head',
+        }],
+      },
+      generateBundle() {
+        this.emitFile({
+          type: 'asset',
+          fileName: 'release.json',
+          source: `${JSON.stringify({ release: releaseId })}\n`,
+        })
+      },
+    },
     react(),
     VitePWA({
       registerType: 'autoUpdate',

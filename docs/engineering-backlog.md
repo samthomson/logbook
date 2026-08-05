@@ -14,7 +14,7 @@ This is the prioritized operating backlog for moving Logbook from a tested PWA a
 - [ ] Add an ownership file for PWA, worker, protocol, deployment, and release-sensitive paths.
 - [ ] Define severity, response-time, rollback, and incident-owner expectations.
 - [ ] Reconcile the documented release commit with the bytes currently served by `nsite.lol`.
-- [ ] Make every deployed PWA include a non-secret build/release identifier.
+- [x] Make every PWA build include a non-secret commit-bound release identifier and consistency test.
 - [ ] Archive build hashes, nsite manifest event, gateway read-back hashes, and smoke results per release.
 
 ## P0 — canonical worker and signer safety

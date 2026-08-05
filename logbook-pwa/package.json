@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && npm run test:performance",
+    "build": "tsc -b && vite build && npm run test:performance && npm run test:release-metadata",
     "lint": "oxlint",
     "test": "npm run test:unit && npm run test:browser",
     "test:unit": "vitest run",
@@ -17,6 +17,7 @@
     "test:resume-cache": "node scripts/resume-cache-qa.mjs",
     "test:navigation-cache": "node scripts/navigation-cache-qa.mjs",
     "test:performance": "node scripts/performance-budget.mjs",
+    "test:release-metadata": "node scripts/release-metadata.mjs",
     "preview": "vite preview"
   },
   "engines": {

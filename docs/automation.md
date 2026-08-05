@@ -10,7 +10,7 @@ The automated loop is:
 2. Push and pull-request validation reject regressions.
 3. CodeQL performs semantic JavaScript/TypeScript analysis.
 4. Weekly maintenance reruns the complete suite and archives dependency-drift reports.
-5. A tag or manual dispatch builds an immutable PWA release candidate with commit and SHA-256 inventory.
+5. A tag or manual dispatch builds an immutable PWA release candidate with a public commit marker and SHA-256 inventory.
 6. Production deployment remains protected until the canonical Compass signer and exact gateway-byte verification are available.
 7. Observed failures become prioritized work in `engineering-backlog.md`; fixes must add regression evidence where applicable.
 

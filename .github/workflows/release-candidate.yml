@@ -33,6 +33,8 @@ jobs:
         working-directory: scripts
         run: npm ci --no-audit --no-fund
       - name: Verify release source
+        env:
+          LOGBOOK_RELEASE_ID: ${{ github.sha }}
         run: ./tools/verify-all.sh
       - name: Create immutable release inventory
         run: |
