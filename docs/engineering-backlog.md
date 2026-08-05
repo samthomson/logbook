@@ -10,7 +10,7 @@ This is the prioritized operating backlog for moving Logbook from a tested PWA a
 - [ ] Enable dependency graph, Dependabot alerts, security updates, and grouped version updates on the mirror.
 - [ ] Enable secret scanning and push protection where the hosting plan supports them.
 - [ ] Configure a production deployment environment with required review and no self-approval.
-- [ ] Pin third-party workflow actions to reviewed commit SHAs.
+- [x] Pin third-party workflow actions to reviewed immutable commit SHAs, with Dependabot configured to update them.
 - [ ] Add an ownership file for PWA, worker, protocol, deployment, and release-sensitive paths.
 - [ ] Define severity, response-time, rollback, and incident-owner expectations.
 - [ ] Reconcile the documented release commit with the bytes currently served by `nsite.lol`.
@@ -75,7 +75,7 @@ This is the prioritized operating backlog for moving Logbook from a tested PWA a
 - [ ] Add Software Bill of Materials generation for PWA and worker releases.
 - [ ] Add artifact attestations/provenance where the deployment host supports verification.
 - [ ] Verify release deployment consumes the exact artifact produced by CI.
-- [ ] Eliminate mutable action tags after the GitHub mirror is established.
+- [x] Eliminate mutable action tags before connecting a hosted runner.
 - [ ] Add license-policy checks for production dependencies.
 - [ ] Add malicious-package and install-script review guidance.
 - [ ] Keep production dependency audits at zero high/critical findings.
