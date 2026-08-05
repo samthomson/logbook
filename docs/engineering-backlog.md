@@ -7,7 +7,7 @@ This is the prioritized operating backlog for moving Logbook from a tested PWA a
 - [x] Keep nGit as the single source of truth and run automation locally on Hermes/StartOS.
 - [ ] Add a durable local maintenance schedule with failure reporting and overlap prevention.
 - [ ] Protect local release operations with explicit approval and no self-triggered production publication.
-- [ ] Add an ownership file for PWA, worker, protocol, deployment, and release-sensitive paths.
+- [x] Add an ownership file for PWA, worker, protocol, deployment, and release-sensitive paths.
 - [ ] Define severity, response-time, rollback, and incident-owner expectations.
 - [ ] Reconcile the documented release commit with the bytes currently served by `nsite.lol`.
 - [x] Make every PWA build include a non-secret commit-bound release identifier and consistency test.
