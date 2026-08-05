@@ -27,7 +27,7 @@ Do not create two writable sources of truth. Document mirror ownership, synchron
 
 ## Deployment safety boundary
 
-`release-candidate.yml` automatically produces the deployable bytes and their hashes. It does not publish them. Production deployment needs all of the following:
+`release-candidate.yml` automatically produces the deployable bytes and their hashes. It does not publish them. After an authorized deployment, run `node tools/verify-pwa-deployment.mjs <gateway-url> <candidate-dist>` and preserve its JSON receipt. Production deployment needs all of the following:
 
 - a protected production environment and explicit approval;
 - the canonical Compass NIP-46 identity, never a substitute signer;

@@ -127,7 +127,7 @@ This is the prioritized operating backlog for moving Logbook from a tested PWA a
 - [ ] Keep Compass signing outside generic hosted runners unless its threat model is explicitly approved.
 - [ ] Produce immutable, content-addressed deployment bundles.
 - [ ] Run a post-deploy browser smoke test against the public URL.
-- [ ] Compare public HTML, JS, CSS, manifest, and service-worker hashes to the release bundle.
+- [x] Add a deploy verifier that compares public HTML, referenced JS/CSS, manifest, service worker, and release metadata to the release bundle.
 - [ ] Verify a release-specific marker before calling deployment successful.
 - [ ] Automate rollback when verification fails before propagation is accepted.
 - [ ] Preserve the last known-good PWA bundle and manifest receipt.
