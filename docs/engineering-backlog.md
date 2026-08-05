@@ -4,13 +4,9 @@ This is the prioritized operating backlog for moving Logbook from a tested PWA a
 
 ## P0 — establish the delivery system
 
-- [ ] Connect the canonical nGit repository to a hosted CI runner or an automatically synchronized GitHub mirror.
-- [ ] Decide which repository is the source of truth and document one-way mirror direction.
-- [ ] Protect `master`; require validation and CodeQL checks before merge.
-- [ ] Enable dependency graph, Dependabot alerts, security updates, and grouped version updates on the mirror.
-- [ ] Enable secret scanning and push protection where the hosting plan supports them.
-- [ ] Configure a production deployment environment with required review and no self-approval.
-- [x] Pin third-party workflow actions to reviewed immutable commit SHAs, with Dependabot configured to update them.
+- [x] Keep nGit as the single source of truth and run automation locally on Hermes/StartOS.
+- [ ] Add a durable local maintenance schedule with failure reporting and overlap prevention.
+- [ ] Protect local release operations with explicit approval and no self-triggered production publication.
 - [ ] Add an ownership file for PWA, worker, protocol, deployment, and release-sensitive paths.
 - [ ] Define severity, response-time, rollback, and incident-owner expectations.
 - [ ] Reconcile the documented release commit with the bytes currently served by `nsite.lol`.
@@ -65,17 +61,16 @@ This is the prioritized operating backlog for moving Logbook from a tested PWA a
 - [ ] Obtain explicit release approval for the first production episode.
 - [ ] Repeat the evidenced flow for production and record propagation gaps honestly.
 
-## P1 — CI quality and supply-chain security
+## P1 — local quality and supply-chain security
 
-- [x] Make `tools/verify-all.sh` the canonical local and hosted validation entry point.
-- [ ] Run CI on every push and pull request, including docs-only trust-rule changes.
-- [x] Configure scheduled weekly verification to detect ecosystem drift once a hosted runner is connected.
-- [x] Retain maintenance dependency-drift reports as artifacts once a hosted runner is connected.
-- [ ] Add lockfile-diff dependency review to pull requests.
+- [x] Make `tools/verify-all.sh` the canonical local validation entry point.
+- [ ] Run the local validation gate before every commit, push, and deployment.
+- [ ] Schedule weekly local verification to detect ecosystem drift.
+- [ ] Retain local maintenance and dependency-drift reports.
+- [ ] Add lockfile-diff dependency review to the local update process.
 - [ ] Add Software Bill of Materials generation for PWA and worker releases.
-- [ ] Add artifact attestations/provenance where the deployment host supports verification.
-- [ ] Verify release deployment consumes the exact artifact produced by CI.
-- [x] Eliminate mutable action tags before connecting a hosted runner.
+- [ ] Add local artifact provenance and signed receipts where the deployment host supports verification.
+- [ ] Verify release deployment consumes the exact locally approved artifact.
 - [ ] Add license-policy checks for production dependencies.
 - [ ] Add malicious-package and install-script review guidance.
 - [ ] Keep production dependency audits at zero high/critical findings.
@@ -122,9 +117,8 @@ This is the prioritized operating backlog for moving Logbook from a tested PWA a
 
 - [x] Separate the immutable release-candidate build from future protected deployment and verification jobs.
 - [ ] Ensure deployments are serialized per environment.
-- [ ] Prevent pull-request code from accessing production credentials.
-- [ ] Prefer short-lived identity federation over long-lived CI credentials where possible.
-- [ ] Keep Compass signing outside generic hosted runners unless its threat model is explicitly approved.
+- [ ] Prevent unreviewed repository code from accessing production credentials.
+- [ ] Keep Compass signing isolated to the authorized local NIP-46 session.
 - [ ] Produce immutable, content-addressed deployment bundles.
 - [ ] Run a post-deploy browser smoke test against the public URL.
 - [x] Add a deploy verifier that compares public HTML, referenced JS/CSS, manifest, service worker, and release metadata to the release bundle.
@@ -167,7 +161,7 @@ This is the prioritized operating backlog for moving Logbook from a tested PWA a
 ## Recurring cadence
 
 - [ ] On every change: run secret scan, tests, lint, build, audits, and diff checks.
-- [ ] Weekly: inspect scheduled CI, dependency drift, vulnerability alerts, uptime, and open P0/P1 items.
+- [ ] Weekly: inspect local maintenance results, dependency drift, vulnerabilities, uptime, and open P0/P1 items.
 - [ ] Monthly: update dependencies, review permissions/actions, restore a backup, and review operational alerts.
 - [ ] Quarterly: run staging release, restart/recovery drill, rollback drill, physical-device QA, and threat-model review.
 - [ ] Per release: approve immutable inputs, deploy once, verify public bytes/events independently, and archive evidence.

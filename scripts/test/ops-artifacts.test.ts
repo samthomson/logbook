@@ -6,12 +6,14 @@ import test from 'node:test'
 const repoRoot = resolve(import.meta.dirname, '../..')
 const read = (path: string) => readFile(resolve(repoRoot, path), 'utf8')
 
-test('CI validates both the PWA and trusted worker when either surface changes', async () => {
-  const workflow = await read('.github/workflows/logbook-pwa.yml')
-  assert.match(workflow, /- 'scripts\/\*\*'/)
-  assert.match(workflow, /scripts\/package-lock\.json/)
-  assert.match(workflow, /working-directory: scripts/)
-  assert.match(workflow, /npm run typecheck/)
+test('local verification validates both the PWA and trusted worker', async () => {
+  const verifier = await read('tools/verify-all.sh')
+  assert.match(verifier, /logbook-pwa/)
+  assert.match(verifier, /npm run test:browser/)
+  assert.match(verifier, /npm run build/)
+  assert.match(verifier, /scripts/)
+  assert.match(verifier, /npm run typecheck/)
+  assert.match(verifier, /npm audit --omit=dev --audit-level=high/)
 })
 
 test('tracked worker service is hardened, restartable, and never asks for a hot Compass nsec', async () => {
