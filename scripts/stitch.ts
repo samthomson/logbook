@@ -5,7 +5,7 @@
  * from Blossom, applies EBU R128 loudness normalisation + silence trim, then
  * stitches sections together with acrossfade and encodes to mp3 128 kbps.
  *
- * Usage (NIP-46 bunker session via COMPASS_BUNKER_DIR; same as the worker):
+ * Usage (NIP-46 via COMPASS_BUNKER_URI + COMPASS_BUNKER_CLIENT_KEY):
  *   npm run stitch -- --issue logbook-31
  *   npm run stitch -- --issue logbook-31 --dry-run
  *

@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
@@ -35,35 +34,35 @@ export function validateCompassSignature(event: SignedNostrEvent, expectedPubkey
  */
 export async function assertCompassSignerConfigured(): Promise<void> {
   try {
-    await readCompassBunker()
+    readCompassBunker()
   } catch (error) {
     throw new Error(
-      'No Compass signer configured. Provide bunker.json and client_key in ' +
-      `COMPASS_BUNKER_DIR. Cause: ${
+      'No Compass signer configured. Set COMPASS_BUNKER_URI and ' +
+      `COMPASS_BUNKER_CLIENT_KEY. Cause: ${
         error instanceof Error ? error.message : String(error)
       }`,
     )
   }
 }
 
-async function readCompassBunker(): Promise<{ bunkerUri: string; clientKey: string }> {
-  const directory = process.env.COMPASS_BUNKER_DIR ?? join(homedir(), '.config', 'compass-publish')
-  const [configRaw, clientKey] = await Promise.all([
-    readFile(join(directory, 'bunker.json'), 'utf8'),
-    readFile(join(directory, 'client_key'), 'utf8'),
-  ])
-  const parsed = JSON.parse(configRaw) as { bunker_uri?: unknown }
-  if (typeof parsed.bunker_uri !== 'string' || !parsed.bunker_uri.startsWith('bunker://')) {
-    throw new Error('Compass bunker config is invalid')
+/** NIP-46 session from env — same path locally and in Dokploy. */
+function readCompassBunker(): { bunkerUri: string; clientKey: string } {
+  const bunkerUri = process.env.COMPASS_BUNKER_URI?.trim()
+  const clientKey = process.env.COMPASS_BUNKER_CLIENT_KEY?.trim().toLowerCase()
+  if (!bunkerUri) throw new Error('COMPASS_BUNKER_URI is required')
+  if (!bunkerUri.startsWith('bunker://')) {
+    throw new Error('COMPASS_BUNKER_URI must be a bunker:// URI')
   }
-  const trimmedClientKey = clientKey.trim()
-  if (!/^[a-f0-9]{64}$/.test(trimmedClientKey)) throw new Error('Compass bunker client key is invalid')
-  return { bunkerUri: parsed.bunker_uri, clientKey: trimmedClientKey }
+  if (!clientKey) throw new Error('COMPASS_BUNKER_CLIENT_KEY is required')
+  if (!/^[0-9a-f]{64}$/.test(clientKey)) {
+    throw new Error('COMPASS_BUNKER_CLIENT_KEY must be a 64-character hex key')
+  }
+  return { bunkerUri, clientKey }
 }
 
 /** Ask the Compass NIP-46 bunker to sign one event without exposing its key. */
 export async function signWithCompassAmber(unsigned: UnsignedNostrEvent): Promise<SignedNostrEvent> {
-  const { bunkerUri, clientKey } = await readCompassBunker()
+  const { bunkerUri, clientKey } = readCompassBunker()
   const nak = process.env.NAK_BIN ?? join(homedir(), '.local', 'bin', 'nak')
   const output = await new Promise<string>((resolve, reject) => {
     const child = spawn(nak, ['event', '--connect-as', clientKey], {

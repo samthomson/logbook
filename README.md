@@ -37,17 +37,18 @@ separate operational gates; a green unit/build run is not release evidence.
 Everything runs in Docker; you do not need Node, ffmpeg, or Python on your
 machine.
 
-1. Create a burner Compass identity (`nak bunker` is fine). Put the session in
-   `.secrets/compass-publish/`: `bunker.json` with `{"bunker_uri":"bunker://..."}`
-   and `client_key` (64-char hex). Mounted read-only. Leave the bunker running.
+1. Create a burner Compass identity (`nak bunker` is fine). Leave the bunker
+   running. Put `COMPASS_BUNKER_URI` and `COMPASS_BUNKER_CLIENT_KEY` in `.env`
+   (same vars on Dokploy — no secret file mounts).
 
 2. `cp .env.example .env` — set `COMPASS_PUBKEY`, `ADMIN_PUBKEYS`, `RELAYS`
-   (Logbook write/query), `DISCOVERY_RELAYS` (kind 0 / NIP-05, read-only), and
-   `BLOSSOM_SERVERS`. Same names in the PWA and worker. No defaults: missing
-   values fail at startup.
+   (Logbook write/query), `DISCOVERY_RELAYS` (kind 0 / NIP-05, read-only),
+   `BLOSSOM_SERVERS`, and the bunker vars above. Same names everywhere. No
+   defaults: missing values fail at startup.
 
-3. `docker compose --profile dev up --build` — PWA on `localhost:5180` with hot
-   reload. Use `--profile prod` for the built bundle behind nginx on `:8080`.
+3. Worker: `docker compose up --build`. Local PWA too:
+   `docker compose -f compose.yml -f compose.dev.yml --profile dev up --build`
+   (PWA on `localhost:$PWA_DEV_PORT`). Dokploy only needs `compose.yml` (worker).
 
 4. Seed a fake newsletter + whitelist (bunker must be running):
 

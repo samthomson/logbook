@@ -6,7 +6,8 @@ These files provision the long-running Logbook watcher on a trusted Linux host. 
 
 1. Check out the repository at `/opt/logbook` and run `npm ci --no-audit --no-fund` in `scripts/`. The worker executes TypeScript with `tsx`, so do not omit dev dependencies from this source checkout.
 2. Create the `logbook` system account and `/etc/logbook/logbook.env` from `logbook.env.example`.
-3. Authenticate the Compass signer outside Hermes so `/home/logbook/.config/compass-publish/bunker.json` and `client_key` exist with mode `0600` and owner `logbook:logbook`.
+3. Set `COMPASS_BUNKER_URI` and `COMPASS_BUNKER_CLIENT_KEY` in the environment
+   (NIP-46 session for the Compass identity). Same variables in Docker/Dokploy.
 4. Install `logbook-worker.service` into `/etc/systemd/system/`, run `systemctl daemon-reload`, then enable/start it.
 5. Verify `systemctl status logbook-worker` and inspect the durable release-stage ledger before treating any episode as published.
 

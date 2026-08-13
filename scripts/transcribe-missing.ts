@@ -10,7 +10,7 @@
  * a transcript right after each segment); this is the backstop for clients
  * that closed before finishing, or unsupported browsers.
  *
- * Usage (NIP-46 bunker session via COMPASS_BUNKER_DIR; same as the worker):
+ * Usage (NIP-46 via COMPASS_BUNKER_URI + COMPASS_BUNKER_CLIENT_KEY):
  *   npm run transcribe-missing -- [--hours 48] [--model /path/ggml.bin]
  *
  * Requirements: whisper-cli (whisper.cpp) in PATH, plus a model file

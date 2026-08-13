@@ -44,8 +44,11 @@ test('container worker reproduces the systemd sandbox and pins an ffmpeg the sti
   assert.match(compose, /read_only: true/)
   assert.match(compose, /cap_drop: \[ALL\]/)
   assert.match(compose, /no-new-privileges:true/)
-  // The signer session is consumed, never rewritten.
-  assert.match(compose, /compass-publish:ro/)
+  // Signer session from env vars (Dokploy / .env), not a file mount or baked secret.
+  assert.match(compose, /COMPASS_BUNKER_URI: \$\{COMPASS_BUNKER_URI\}/)
+  assert.match(compose, /COMPASS_BUNKER_CLIENT_KEY: \$\{COMPASS_BUNKER_CLIENT_KEY\}/)
+  assert.doesNotMatch(compose, /COMPASS_BUNKER_DIR/)
+  assert.doesNotMatch(compose, /compass-publish/)
   // Untrusted audio is downloaded into scratch space, which must not be executable.
   assert.match(compose, /- \/tmp:noexec/)
   // No key material in the tracked file.

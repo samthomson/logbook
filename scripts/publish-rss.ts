@@ -4,7 +4,7 @@
  * Reads the stitched episode from AUDIO_DIR, reads the manifest from relay,
  * and writes a Podcasting 2.0 compliant RSS feed to RSS_PATH.
  *
- * Usage (NIP-46 bunker session via COMPASS_BUNKER_DIR; same as the worker):
+ * Usage (NIP-46 via COMPASS_BUNKER_URI + COMPASS_BUNKER_CLIENT_KEY):
  *   npm run rss -- --issue logbook-31
  *
  * After writing the RSS file, also publishes a kind 1 note from the Compass
