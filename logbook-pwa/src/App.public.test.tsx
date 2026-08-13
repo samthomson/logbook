@@ -43,7 +43,7 @@ describe('public application shell', () => {
     const html = renderToStaticMarkup(<App />)
 
     expect(html).toContain('Loading issue…')
-    expect(html).toContain('Sign in to record')
+    expect(html).toContain('Log in')
     expect(html).not.toContain('Advanced options')
   })
 
@@ -77,7 +77,7 @@ describe('public application shell', () => {
       />,
     )
 
-    expect(html).toContain('Sign in to resume')
+    expect(html).toContain('Log in to resume')
     expect(html.match(/disabled=""/g)).toHaveLength(2)
     expect(html).toContain('Discard')
   })

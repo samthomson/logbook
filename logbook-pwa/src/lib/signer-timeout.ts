@@ -1,6 +1,9 @@
 export class SignerTimeoutError extends Error {
   constructor(operation: string, timeoutMs: number) {
-    super(`${operation} did not respond within ${Math.ceil(timeoutMs / 1000)} seconds. Reopen Amber and resume the saved upload.`)
+    super(
+      `${operation} did not respond within ${Math.ceil(timeoutMs / 1000)} seconds. ` +
+      'Unlock your signer (extension or Amber) and try again.',
+    )
     this.name = 'SignerTimeoutError'
   }
 }

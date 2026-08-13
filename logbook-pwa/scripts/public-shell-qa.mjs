@@ -4,6 +4,10 @@ import { createServer } from 'vite'
 
 const widths = [320, 360, 390]
 const root = fileURLToPath(new URL('..', import.meta.url))
+process.env.COMPASS_PUBKEY ??= 'a'.repeat(64)
+process.env.RELAYS ??= 'wss://relay.test'
+process.env.DISCOVERY_RELAYS ??= 'wss://discovery.test'
+process.env.BLOSSOM_SERVERS ??= 'https://blossom.test'
 const fixtureEvent = {
   id: '1'.repeat(64),
   pubkey: '2'.repeat(64),

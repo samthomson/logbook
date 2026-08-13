@@ -1,0 +1,81 @@
+# Local stack. Copy .env.example → .env first.
+# Profiles: `dev` (Vite HMR) or `prod` (nginx bundle). Worker always starts.
+# Signing is NIP-46 bunker only.
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  restart: on-failure
+
+services:
+  worker:
+    <<: *hardening
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile
+    user: "1001:1001"
+    env_file: .env
+    environment:
+      # Host path in .env; container always mounts the session here.
+      COMPASS_BUNKER_DIR: /run/secrets/compass-publish
+      LOGBOOK_STATIC_DIR: /var/www/logbook
+      LOGBOOK_AUDIO_DIR: /var/www/logbook/audio
+    volumes:
+      - ${COMPASS_BUNKER_DIR}:/run/secrets/compass-publish:ro
+      - logbook-static:/var/www/logbook
+      - logbook-state:/var/lib/logbook
+      - logbook-cache:/var/cache/logbook
+    tmpfs:
+      - /tmp:noexec,mode=1777
+      # phonemizer needs an executable scratch dir for libespeak-ng.
+      - /run/kokoro:exec,mode=0700,uid=1001,gid=1001
+
+  pwa-dev:
+    <<: *hardening
+    profiles: [dev]
+    read_only: false
+    build:
+      context: .
+      dockerfile: logbook-pwa/Dockerfile
+      target: deps
+    user: "node"
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+    env_file: .env
+    ports:
+      - "${PWA_DEV_PORT}:5173"
+    volumes:
+      - ./logbook-pwa/src:/app/src
+      - ./logbook-pwa/index.html:/app/index.html
+      - ./logbook-pwa/vite.config.ts:/app/vite.config.ts
+      - ./logbook-pwa/public:/app/public
+      - ./logbook-pwa/pwa:/app/pwa
+    tmpfs:
+      - /tmp:mode=1777
+      - /app/node_modules/.vite:mode=1777,uid=1000,gid=1000
+      - /app/node_modules/.vite-temp:mode=1777,uid=1000,gid=1000
+
+  pwa:
+    <<: *hardening
+    profiles: [prod]
+    build:
+      context: .
+      dockerfile: logbook-pwa/Dockerfile
+      # Vite inlines these at build time — same names as .env.
+      args:
+        COMPASS_PUBKEY: ${COMPASS_PUBKEY}
+        ADMIN_PUBKEYS: ${ADMIN_PUBKEYS}
+        RELAYS: ${RELAYS}
+        DISCOVERY_RELAYS: ${DISCOVERY_RELAYS}
+        BLOSSOM_SERVERS: ${BLOSSOM_SERVERS}
+    ports:
+      - "${PWA_PORT}:8080"
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+
+volumes:
+  logbook-static:
+  logbook-state:
+  logbook-cache:

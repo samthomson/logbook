@@ -34,7 +34,7 @@ export default function UploadBubble({ draft, stage, publishing, canResume, canD
         {!publishing && (
           <div className="bubble__upload-actions">
             <button type="button" onClick={onResume} disabled={!canResume}>
-              {canResume ? 'Resume upload' : 'Sign in to resume'}
+              {canResume ? 'Resume upload' : 'Log in to resume'}
             </button>
             <button type="button" onClick={onDiscard} disabled={!canDiscard}>Discard</button>
           </div>

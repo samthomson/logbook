@@ -27,6 +27,33 @@ test('tracked worker service is hardened, restartable, and never asks for a hot 
   assert.doesNotMatch(service, /COMPASS_NSEC/)
 })
 
+test('container worker reproduces the systemd sandbox and pins an ffmpeg the stitcher can use', async () => {
+  const compose = await read('compose.yml')
+  const dockerfile = await read('scripts/Dockerfile')
+
+  // Bookworm's ffmpeg 5.1 silently empties every episode, so the base image is
+  // the guarantee that the stitcher runs on a version whose silenceremove works.
+  assert.match(dockerfile, /^ARG NODE_IMAGE=node:[\d.]+-trixie-slim$/m)
+  // Every stage must share that base so the copied venv links against the same
+  // Python minor version the runtime provides.
+  assert.doesNotMatch(dockerfile, /^FROM (?!\$\{NODE_IMAGE\})/m)
+  assert.match(dockerfile, /USER logbook/)
+  // nak sits on the signing path; an unverified download would be a supply-chain hole.
+  assert.match(dockerfile, /sha256sum -c -/)
+
+  assert.match(compose, /read_only: true/)
+  assert.match(compose, /cap_drop: \[ALL\]/)
+  assert.match(compose, /no-new-privileges:true/)
+  // The signer session is consumed, never rewritten.
+  assert.match(compose, /compass-publish:ro/)
+  // Untrusted audio is downloaded into scratch space, which must not be executable.
+  assert.match(compose, /- \/tmp:noexec/)
+  // No key material in the tracked file.
+  assert.doesNotMatch(compose, /COMPASS_NSEC/)
+  assert.doesNotMatch(compose, /nsec1[0-9a-z]{20,}/)
+  assert.doesNotMatch(compose, /[0-9a-f]{64}/)
+})
+
 test('nsyte config is authoritative and build-only tooling is not a production dependency', async () => {
   const config = JSON.parse(await read('logbook-pwa/.nsite/config.json')) as {
     relays?: unknown[]

@@ -5,9 +5,9 @@
  * from Blossom, applies EBU R128 loudness normalisation + silence trim, then
  * stitches sections together with acrossfade and encodes to mp3 128 kbps.
  *
- * Usage:
- *   COMPASS_NSEC=nsec1... node --loader ts-node/esm stitch.ts --issue logbook-31
- *   COMPASS_NSEC=nsec1... node --loader ts-node/esm stitch.ts --issue logbook-31 --dry-run
+ * Usage (NIP-46 bunker session via COMPASS_BUNKER_DIR; same as the worker):
+ *   npm run stitch -- --issue logbook-31
+ *   npm run stitch -- --issue logbook-31 --dry-run
  *
  * Requirements: ffmpeg must be in PATH.
  */
@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os'
 import fetch from 'node-fetch'
 import {
   COMPASS_PUBKEY,
-  DEFAULT_RELAYS,
+  RELAYS,
   KINDS,
   AUDIO_DIR,
   BLOSSOM_SERVERS,
@@ -109,7 +109,7 @@ async function downloadBlob(url: string, destPath: string, expectedSha256: strin
 // ── relay helpers ─────────────────────────────────────────────────────────────
 
 async function fetchManifest(issueId: string, pool: SimplePool): Promise<{ manifest: ManifestContent; event: ManifestEvent }> {
-  const events = await pool.querySync(DEFAULT_RELAYS, {
+  const events = await pool.querySync(RELAYS, {
     kinds: [KINDS.MANIFEST],
     authors: [COMPASS_PUBKEY],
     '#d': [issueId],
@@ -149,7 +149,7 @@ async function fetchRequiredChapterIds(
     // deterministic; the fetched newsletter is still signature checked.
   }
 
-  const candidates = await pool.querySync(DEFAULT_RELAYS, {
+  const candidates = await pool.querySync(RELAYS, {
     kinds: [KINDS.COMPASS_ISSUE],
     authors: [COMPASS_PUBKEY],
     '#d': [...new Set([identifier, String(issueNumber), issueId])],
@@ -171,7 +171,7 @@ async function fetchSegments(
 ): Promise<Map<string, Segment>> {
   if (!segmentIds.length) return new Map()
 
-  const events = await pool.querySync(DEFAULT_RELAYS, {
+  const events = await pool.querySync(RELAYS, {
     kinds: [KINDS.SEGMENT],
     ids: segmentIds,
   })
@@ -228,7 +228,7 @@ async function main(): Promise<void> {
   })
   if (stitchState === 'already-published') {
     console.log('[stitch] Episode already published. Use --force to re-stitch.')
-    pool.close(DEFAULT_RELAYS)
+    pool.close(RELAYS)
     return
   }
 
@@ -241,7 +241,7 @@ async function main(): Promise<void> {
   )
 
   const segments = await fetchSegments(allSegmentIds, pool)
-  pool.close(DEFAULT_RELAYS)
+  pool.close(RELAYS)
   assertLockedSegmentsPresent(activeSections, segments)
 
   if (dryRun) {
@@ -420,12 +420,12 @@ async function main(): Promise<void> {
           tags: madeTheCutReactionTags(segId, segments.get(segId)!.pubkey),
           content: '🎙️',
         })
-        await Promise.any(reactPool.publish(DEFAULT_RELAYS, reaction))
+        await Promise.any(reactPool.publish(RELAYS, reaction))
       } catch {
         // fire-and-forget, don't block on reaction failures
       }
     }
-    reactPool.close(DEFAULT_RELAYS)
+    reactPool.close(RELAYS)
     console.log(`[stitch] Reactions published.`)
   }
 }

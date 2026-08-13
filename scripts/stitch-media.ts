@@ -7,10 +7,35 @@ export interface StitchAudioOptions {
   crossfadeDuration?: number
 }
 
+/**
+ * The stitcher's trimSilence pass relies on ffmpeg 7's reworked silenceremove.
+ * Under ffmpeg 5 and 6 the same filter discards every clip and the episode
+ * encodes to an empty MP3 — a silent corruption that only surfaces once the
+ * audio is published, so the version is checked before any work starts.
+ */
+export const MIN_FFMPEG_MAJOR = 7
+
+export function parseFfmpegMajor(versionOutput: string): number | null {
+  const match = versionOutput.match(/ffmpeg version n?(\d+)\./)
+  return match ? Number(match[1]) : null
+}
+
 export function requireFfmpeg(): void {
   const result = spawnSync('ffmpeg', ['-version'], { encoding: 'utf8' })
   if (result.error || result.status !== 0) {
     throw new Error('ffmpeg not found in PATH. Install it: apt install ffmpeg')
+  }
+  const major = parseFfmpegMajor(result.stdout ?? '')
+  if (major === null) {
+    throw new Error(
+      `Could not determine ffmpeg version from:\n${(result.stdout ?? '').split('\n')[0]}`,
+    )
+  }
+  if (major < MIN_FFMPEG_MAJOR) {
+    throw new Error(
+      `ffmpeg ${major} is too old: the stitcher requires ffmpeg ${MIN_FFMPEG_MAJOR} or newer, ` +
+      'because older silenceremove discards whole clips and yields an empty episode.',
+    )
   }
 }
 

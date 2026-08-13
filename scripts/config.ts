@@ -1,55 +1,47 @@
 /**
- * VPS script configuration.
- * Secrets come from environment variables — never hardcoded.
+ * VPS script configuration. Required env vars — same names as root `.env` / PWA.
  */
 
-export const COMPASS_PUBKEY =
-  // Production Compass key — authors the weekly kind 30023 newsletters (#26+)
-  // and all Logbook manifests/reactions/announcements.
-  // (Old test key baa11ea0… was retired after logbook-1 smoke testing.)
-  '775954f7314112489a4a29ec692b72386fd60bcceb0308d423101ea979c57a80'
+import { requirePubkey, requireUrlList } from './config-env.ts'
 
-export const DEFAULT_RELAYS = [
-  'wss://nos.lol',
-  'wss://relay.damus.io',
-  'wss://relay.primal.net',
-]
+export const COMPASS_PUBKEY = requirePubkey(
+  process.env.COMPASS_PUBKEY,
+  'COMPASS_PUBKEY',
+)
 
-export const BLOSSOM_SERVERS = [
-  'https://blossom.band',       // primary: byte-range + CORS confirmed
-  'https://blossom.ditto.pub',  // mirror 1: Cloudflare-backed, Content-Range exposed
-  'https://blossom.oxtr.dev',   // mirror 2: BUD-01+BUD-04 confirmed
-]
+/** Single relay list for all worker Nostr I/O. */
+export const RELAYS = requireUrlList(
+  process.env.RELAYS,
+  'RELAYS',
+  'ws',
+)
+
+export const BLOSSOM_SERVERS = requireUrlList(
+  process.env.BLOSSOM_SERVERS,
+  'BLOSSOM_SERVERS',
+  'http',
+)
 
 export const KINDS = {
   COMPASS_ISSUE: 30023,
   SEGMENT: 4200,
   MANIFEST: 34200,
+  WHITELIST: 34201,
   BLOSSOM_AUTH: 24242,
   TRANSCRIPT: 1111,
   REACTION: 7,
 } as const
 
 export const ISSUE_PREFIX = 'logbook'
+export const D_STANDING = `${ISSUE_PREFIX}-wl-standing`
+export const D_ADMINS = `${ISSUE_PREFIX}-wl-admins`
 
-export async function loadPrivateKey(): Promise<Uint8Array> {
-  const nsec = process.env.COMPASS_NSEC
-  if (!nsec) throw new Error('COMPASS_NSEC environment variable is not set')
-  const { nip19, getPublicKey } = await import('nostr-tools')
-  const decoded = nip19.decode(nsec)
-  if (decoded.type !== 'nsec') throw new Error('COMPASS_NSEC must be an nsec bech32 string')
-  const privateKey = decoded.data as Uint8Array
-  if (getPublicKey(privateKey) !== COMPASS_PUBKEY) {
-    throw new Error('COMPASS_NSEC does not match the configured Compass pubkey')
-  }
-  return privateKey
-}
-
-// Paths for VPS static files
 export const STATIC_DIR = process.env.LOGBOOK_STATIC_DIR ?? '/var/www/logbook'
 export const RSS_PATH = `${STATIC_DIR}/feed.xml`
 export const AUDIO_DIR = process.env.LOGBOOK_AUDIO_DIR ?? `${STATIC_DIR}/audio`
 
-// Public base URL used in RSS/announcements — episodes are Blossom URLs,
-// but the feed itself and the site live here.
-export const BASE_URL = process.env.LOGBOOK_BASE_URL ?? 'https://podcast.nostrcompass.org'
+export const BASE_URL = (() => {
+  const raw = process.env.LOGBOOK_BASE_URL?.trim()
+  if (!raw) throw new Error('LOGBOOK_BASE_URL is required')
+  return raw.replace(/\/$/, '')
+})()

@@ -3,11 +3,19 @@ import puppeteer from 'puppeteer'
 import { createServer } from 'vite'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
+// Pin the harness to its own identity so it exercises the configured Compass
+// key rather than whichever deployment the build defaults to.
+const compassPubkey = 'c'.repeat(64)
+process.env.COMPASS_PUBKEY = compassPubkey
 const pubkey = '3c457108865e05d95ce3848aa0bc51cd64f984c5c61689a3d49809ab71fa1d64'
+process.env.ADMIN_PUBKEYS = pubkey
+process.env.RELAYS = 'wss://relay.test'
+process.env.DISCOVERY_RELAYS = 'wss://discovery.test'
+process.env.BLOSSOM_SERVERS = 'https://blossom.test'
 const sectionId = 'sec-lead-stories-public-chapter-32'
 const secondSectionId = 'sec-lead-stories-second-chapter-32'
 const fixtureEvent = {
-  id: '1'.repeat(64), pubkey: '775954f7314112489a4a29ec692b72386fd60bcceb0308d423101ea979c57a80',
+  id: '1'.repeat(64), pubkey: compassPubkey,
   created_at: 1_700_000_000, kind: 30_023, tags: [['d', 'newsletter-32']],
   content: '## Lead stories\n### Public chapter\nDeterministic content', sig: '2'.repeat(128),
 }

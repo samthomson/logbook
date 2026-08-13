@@ -6,7 +6,7 @@ import { getPool } from './pool'
  * The client re-verifies event.pubkey === COMPASS_PUBKEY on receipt.
  */
 
-import { COMPASS_PUBKEY, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from '../config'
+import { COMPASS_PUBKEY, RELAYS, KINDS, ISSUE_PREFIX } from '../config'
 import type {
   NostrEvent,
   IssueManifest,
@@ -25,7 +25,7 @@ import { assertEventSignedByExpected, assertSignerStillExpected } from './signer
 /** Fetch the manifest for a given issue number. Returns null if not found. */
 export async function fetchManifest(
   issueNumber: number,
-  relays: string[] = DEFAULT_RELAYS,
+  relays: string[] = RELAYS,
 ): Promise<IssueManifest | null> {
   const issueId = `${ISSUE_PREFIX}-${issueNumber}`
   const pool = getPool()
@@ -48,7 +48,7 @@ export async function fetchManifest(
 
 /** Fetch all available manifests for the issue picker. */
 export async function fetchAllManifests(
-  relays: string[] = DEFAULT_RELAYS,
+  relays: string[] = RELAYS,
 ): Promise<IssueManifest[]> {
   const pool = getPool()
 
@@ -73,14 +73,14 @@ export async function updateManifest(
   issueNumber: number,
   content: ManifestContent,
   signer: NostrSigner,
-  relays: string[] = DEFAULT_RELAYS,
+  relays: string[] = RELAYS,
   previousEventId: string | null = null,
   previousCreatedAt: number | null = null,
   assertActive?: () => void,
 ): Promise<NostrEvent> {
   if (relays.length === 0) throw new Error('No relays configured')
   assertActive?.()
-  const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Amber identity request')
+  const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Signer identity request')
   assertActive?.()
 
   // Only Compass pubkey should publish manifests
@@ -97,7 +97,7 @@ export async function updateManifest(
   }
 
   assertActive?.()
-  const event = await withSignerTimeout(signer.signEvent(unsigned), 'Amber manifest signing')
+  const event = await withSignerTimeout(signer.signEvent(unsigned), 'Signer manifest signing')
   assertActive?.()
   assertEventSignedByExpected(event, COMPASS_PUBKEY)
   await assertSignerStillExpected(signer, COMPASS_PUBKEY, assertActive)

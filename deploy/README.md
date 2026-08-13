@@ -12,6 +12,14 @@ These files provision the long-running Logbook watcher on a trusted Linux host. 
 
 The service's writable scope is limited to `/var/www/logbook`, `/var/lib/logbook`, and `/var/cache/logbook`. Publication must remain idempotent: a restart resumes incomplete stages; it must not recreate a successful Nostr or feed stage.
 
+### Host requirements
+
+`ffmpeg` must be version 7 or newer. Older builds accept the stitcher's `silenceremove` arguments but discard every clip, producing an empty episode rather than an error — Debian 12 ships 5.1 and is therefore unsuitable without a backport. `requireFfmpeg()` refuses to start a stitch on an older build, so this surfaces as a failed run rather than published silence.
+
+## Container deployment
+
+`compose.yml` at the repository root builds and runs the same worker with an image-pinned ffmpeg 7, Node, `nak`, and TTS runtime, and reproduces this unit's sandbox: unprivileged `logbook` user, read-only root filesystem, all capabilities dropped, `no-new-privileges`, and an explicit set of writable volumes. Use it for local work, staging, and any host where pinning the toolchain matters more than matching the distro. The root `README.md` covers first-run setup.
+
 ## PWA deployment
 
 The authoritative nsyte configuration is `logbook-pwa/.nsite/config.json`. Build with `npm run build`, then deploy from `logbook-pwa/` with the existing authorized signer using `nsyte deploy dist --sync`. A successful upload is not release proof: verify a gateway whose HTML references the exact local bundle, compare the served bundle SHA-256 with `dist/assets`, and confirm a marker from the shipped change before sharing a URL.

@@ -1,7 +1,7 @@
 /**
  * Shared Blossom upload (BUD-01) for VPS scripts.
  * Uploads to the primary server, mirrors to the rest, returns the descriptor.
- * Auth: kind 24242 event per BUD-01 spec, signed by COMPASS_NSEC.
+ * Auth: kind 24242 event per BUD-01 spec, signed via the Compass NIP-46 bunker.
  */
 
 import { finalizeEvent } from 'nostr-tools'

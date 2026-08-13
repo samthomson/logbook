@@ -186,7 +186,12 @@ export default function App() {
           setView('timeline')
         })
         .catch(() => {
-          if (authRequests.isCurrent(request)) setRestoreError(failure)
+          if (!authRequests.isCurrent(request)) return
+          // Drop a stuck marker so the next reload does not hang on the same prompt.
+          localStorage.removeItem(AUTH_SESSION_KEY)
+          sessionStorage.removeItem(AUTH_SESSION_KEY)
+          setRestoreError(failure)
+          setView('auth')
         })
         .finally(() => {
           if (authRequests.isCurrent(request)) setRestoringAuth(false)
@@ -198,11 +203,14 @@ export default function App() {
       .then(({ connectWindowNostr, restoreSession }) => {
         if (!authRequests.isCurrent(request)) return
         if (saved.method === 'extension' && typeof window !== 'undefined' && 'nostr' in window) {
-          restore(connectWindowNostr(), 'Your browser signer could not restore this session.')
+          restore(
+            withSignerTimeout(connectWindowNostr(), 'Browser extension login', 30_000),
+            'Your browser extension did not respond. Unlock it and try Log in again.',
+          )
         } else if ((saved.method === 'amber' || saved.method === 'bunker') && saved.session) {
           restore(
-            withSignerTimeout(restoreSession(saved.session, saved.method, saved.pubkey), 'Amber session restoration'),
-            'Amber could not restore this session. Reopen Amber, then sign in again.',
+            withSignerTimeout(restoreSession(saved.session, saved.method, saved.pubkey), 'Signer session restoration'),
+            'Could not restore your signer session. Sign in again.',
           )
         } else {
           setRestoringAuth(false)
@@ -424,20 +432,46 @@ export default function App() {
               setView('auth')
             }}
           >
-            Sign in to record
+            Log in
           </button>
         )}
       </header>
 
       <div className="app-body">
         {restoringAuth && (
-          <div className="notice notice--warning" role="status">Restoring your Amber session…</div>
+          <div className="notice notice--warning" role="status">
+            <span>Restoring your login — approve in your extension if prompted…</span>
+            <button
+              className="btn btn--ghost btn--small"
+              onClick={() => {
+                authRequests.invalidate()
+                localStorage.removeItem(AUTH_SESSION_KEY)
+                sessionStorage.removeItem(AUTH_SESSION_KEY)
+                setRestoringAuth(false)
+                setRestoreError(null)
+                setView('auth')
+              }}
+            >
+              Cancel
+            </button>
+          </div>
         )}
         {restoreError && (
-          <div className="notice notice--error" role="alert">{restoreError}</div>
+          <div className="notice notice--error" role="alert">
+            {restoreError}
+            <button
+              className="btn btn--ghost btn--small"
+              onClick={() => {
+                setRestoreError(null)
+                setView('auth')
+              }}
+            >
+              Log in again
+            </button>
+          </div>
         )}
-        {view === 'auth' && !auth && (
-          <Suspense fallback={<div className="app-loading"><div className="spinner" aria-label="Loading sign-in" /></div>}>
+        {view === 'auth' && !auth && !restoringAuth && (
+          <Suspense fallback={<div className="app-loading"><div className="spinner" aria-label="Loading login" /></div>}>
             <AuthScreen onAuth={handleAuth} authRequests={authRequests} />
           </Suspense>
         )}

@@ -6,7 +6,7 @@ import { getPool } from './pool'
  * Also handles companion transcript events (kind 1111).
  */
 
-import { BLOSSOM_SERVERS, COMPASS_PUBKEY, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from '../config'
+import { BLOSSOM_SERVERS, COMPASS_PUBKEY, RELAYS, KINDS, ISSUE_PREFIX } from '../config'
 import type {
   NostrEvent,
   NostrSigner,
@@ -54,14 +54,14 @@ export async function publishSegment(params: PublishSegmentParams): Promise<Nost
     issueNumber,
     respondingTo,
     isIntro = false,
-    relays = DEFAULT_RELAYS,
+    relays = RELAYS,
     assertActive,
   } = params
 
   if (relays.length === 0) throw new Error('No relays configured')
   assertActive?.()
   const issueId = `${ISSUE_PREFIX}-${issueNumber}`
-  const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Amber identity request')
+  const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Signer identity request')
   assertActive?.()
   assertExpectedSignerPubkey(pubkey, expectedPubkey)
 
@@ -98,7 +98,7 @@ export async function publishSegment(params: PublishSegmentParams): Promise<Nost
   }
 
   assertActive?.()
-  const event = await withSignerTimeout(signer.signEvent(unsigned), 'Amber segment signing')
+  const event = await withSignerTimeout(signer.signEvent(unsigned), 'Signer segment signing')
   assertActive?.()
   assertEventSignedByExpected(event, expectedPubkey)
   await assertSignerStillExpected(signer, expectedPubkey, assertActive)
@@ -116,12 +116,12 @@ export async function publishTranscript(
   transcript: string,
   signer: NostrSigner,
   expectedPubkey: string,
-  relays: string[] = DEFAULT_RELAYS,
+  relays: string[] = RELAYS,
   assertActive?: () => void,
 ): Promise<NostrEvent> {
   if (relays.length === 0) throw new Error('No relays configured')
   assertActive?.()
-  const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Amber identity request')
+  const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Signer identity request')
   assertActive?.()
   assertExpectedSignerPubkey(pubkey, expectedPubkey)
 
@@ -140,7 +140,7 @@ export async function publishTranscript(
   }
 
   assertActive?.()
-  const event = await withSignerTimeout(signer.signEvent(unsigned), 'Amber transcript signing')
+  const event = await withSignerTimeout(signer.signEvent(unsigned), 'Signer transcript signing')
   assertActive?.()
   assertEventSignedByExpected(event, expectedPubkey)
   await assertSignerStillExpected(signer, expectedPubkey, assertActive)
@@ -156,7 +156,7 @@ export async function publishTranscript(
  */
 export async function fetchSegmentsForIssue(
   issueId: string,
-  relays: string[] = DEFAULT_RELAYS,
+  relays: string[] = RELAYS,
 ): Promise<Map<string, NostrEvent[]>> {
   const pool = getPool()
   const events = await pool.querySync(relays, {
@@ -188,7 +188,7 @@ export async function fetchSegmentsForIssue(
 export async function fetchSegmentsForSection(
   sectionId: string,
   issueId: string,
-  relays: string[] = DEFAULT_RELAYS,
+  relays: string[] = RELAYS,
 ): Promise<NostrEvent[]> {
   const pool = getPool()
   const events = await pool.querySync(relays, {
@@ -207,7 +207,7 @@ export async function fetchSegmentsForSection(
  */
 export async function fetchTranscripts(
   segments: Segment[],
-  relays: string[] = DEFAULT_RELAYS,
+  relays: string[] = RELAYS,
 ): Promise<Map<string, TranscriptEvent>> {
   if (!segments.length) return new Map()
   const segmentIds = segments.map((segment) => segment.event.id)
@@ -365,7 +365,7 @@ export function selectTrustedSegmentEvents(
  */
 export async function fetchSegmentsByIds(
   ids: string[],
-  relays: string[] = DEFAULT_RELAYS,
+  relays: string[] = RELAYS,
 ): Promise<NostrEvent[]> {
   if (!ids.length) return []
   const pool = getPool()

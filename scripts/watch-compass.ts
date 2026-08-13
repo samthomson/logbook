@@ -4,8 +4,12 @@ import { nip19 } from 'nostr-tools'
 import { spawnSync } from 'node:child_process'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { COMPASS_PUBKEY, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from './config.ts'
-import { createCompassAmberSigner, type CompassSigner } from './amber-signer.ts'
+import { COMPASS_PUBKEY, RELAYS, KINDS, ISSUE_PREFIX } from './config.ts'
+import {
+  assertCompassSignerConfigured,
+  createCompassAmberSigner,
+  type CompassSigner,
+} from './amber-signer.ts'
 import { requiredChapterTargets } from './issue-targets.ts'
 import { missingManifestIssueIds } from './watch-state.ts'
 import { runWatcherCycle } from './watch-runner.ts'
@@ -108,9 +112,9 @@ async function createManifest(event: NostrEvent, signer: CompassSigner): Promise
   const signed = await signer.signEvent(template)
   const pool = new SimplePool()
   try {
-    await Promise.any(pool.publish(DEFAULT_RELAYS, signed))
+    await Promise.any(pool.publish(RELAYS, signed))
   } finally {
-    pool.close(DEFAULT_RELAYS)
+    pool.close(RELAYS)
   }
   console.log(`[watch-compass] Published manifest for issue ${issueId}`)
 }
@@ -121,13 +125,13 @@ async function pollCuttingManifests(completedRevisionIds: Set<string>): Promise<
   const fetchManifests = async (): Promise<NostrEvent[]> => {
     const pool = new SimplePool()
     try {
-      return await pool.querySync(DEFAULT_RELAYS, {
+      return await pool.querySync(RELAYS, {
         kinds: [KINDS.MANIFEST],
         authors: [COMPASS_PUBKEY],
         limit: 20,
       })
     } finally {
-      pool.close(DEFAULT_RELAYS)
+      pool.close(RELAYS)
     }
   }
   const __dir = dirname(fileURLToPath(import.meta.url))
@@ -165,6 +169,9 @@ async function pollCuttingManifests(completedRevisionIds: Set<string>): Promise<
 
 // ── watcher ──────────────────────────────────────────────────────────────────
 
+/** Bound relay reads so an unreachable relay surfaces instead of hanging forever. */
+const RELAY_QUERY_TIMEOUT_MS = 15_000
+
 async function poll(signer: CompassSigner, seen: Set<string>): Promise<void> {
   const pool = new SimplePool()
   const filter: Filter = {
@@ -173,8 +180,8 @@ async function poll(signer: CompassSigner, seen: Set<string>): Promise<void> {
     limit: 5,
   }
 
-  const events = await pool.querySync(DEFAULT_RELAYS, filter)
-  pool.close(DEFAULT_RELAYS)
+  const events = await pool.querySync(RELAYS, filter, { maxWait: RELAY_QUERY_TIMEOUT_MS })
+  pool.close(RELAYS)
 
   for (const event of events) {
     if (event.pubkey !== COMPASS_PUBKEY || !verifyNostrEvent(event)) {
@@ -189,6 +196,14 @@ async function poll(signer: CompassSigner, seen: Set<string>): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // Report what this instance is pointed at and prove a signer is reachable
+  // before the first relay query. Without this the worker can sit silent
+  // indefinitely against an unreachable relay, looking healthy while doing
+  // nothing.
+  await assertCompassSignerConfigured()
+  console.log(`[watch-compass] Compass ${COMPASS_PUBKEY.slice(0, 12)}… signing via NIP-46 bunker`)
+  console.log(`[watch-compass] Relays: ${RELAYS.join(', ')}`)
+
   const signer = createCompassAmberSigner()
   const seen = new Set<string>()
 
@@ -198,10 +213,14 @@ async function main(): Promise<void> {
   const pool = new SimplePool()
   const filter: Filter = { kinds: [KINDS.COMPASS_ISSUE], authors: [COMPASS_PUBKEY], limit: 50 }
   const [existing, manifests] = await Promise.all([
-    pool.querySync(DEFAULT_RELAYS, filter),
-    pool.querySync(DEFAULT_RELAYS, { kinds: [KINDS.MANIFEST], authors: [COMPASS_PUBKEY], limit: 50 }),
+    pool.querySync(RELAYS, filter, { maxWait: RELAY_QUERY_TIMEOUT_MS }),
+    pool.querySync(
+      RELAYS,
+      { kinds: [KINDS.MANIFEST], authors: [COMPASS_PUBKEY], limit: 50 },
+      { maxWait: RELAY_QUERY_TIMEOUT_MS },
+    ),
   ])
-  pool.close(DEFAULT_RELAYS)
+  pool.close(RELAYS)
   const validIssues = existing.filter((event) => event.pubkey === COMPASS_PUBKEY && verifyNostrEvent(event))
   const validManifests = manifests.filter((event) => event.pubkey === COMPASS_PUBKEY && verifyNostrEvent(event))
   const issueById = new Map(validIssues.map((event) => [event.id, event]))

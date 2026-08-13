@@ -20,7 +20,7 @@ import { PasswordSigner } from 'applesauce-signers/signers/password-signer'
 import { Observable } from 'rxjs'
 import { nip19 } from 'nostr-tools'
 import type { NostrSigner, NostrEvent } from '../types/nostr'
-import { DEFAULT_RELAYS, KINDS } from '../config'
+import { RELAYS, KINDS } from '../config'
 import { getPool } from './pool'
 
 export type AuthMethod = 'amber' | 'bunker' | 'extension' | 'nsec' | 'none'
@@ -93,7 +93,7 @@ export interface AmberConnectHandle {
 
 export function startAmberConnect(): AmberConnectHandle {
   wireNip46Transport()
-  const signer = new NostrConnectSigner({ relays: DEFAULT_RELAYS })
+  const signer = new NostrConnectSigner({ relays: RELAYS })
 
   const uri = signer.getNostrConnectURI({
     name: 'Logbook',

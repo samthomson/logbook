@@ -1,5 +1,36 @@
 # Logbook — Agent Instructions & TODO
 
+## Communication rules (read first)
+
+- Answer the question that was asked, then stop. No preamble, no recap.
+- Default to a few sentences. Prose, not headed sections, unless asked.
+- Never narrate your own debugging. Fixing a bug you introduced is not a finding
+  and does not go in the summary. Report only what changes what the user does.
+- State the outcome first. Cut anything that does not change their next action.
+- Do not infer context from unrelated things on the machine (other containers,
+  processes, files). Ask or check; never assume they belong to this project.
+
+## Coding philosophy — work or fail (mandatory)
+
+Never plan to fail. Code has one intended path: it works, or it hard-errors so
+the operator can fix the root cause. Do not add "backup" options, silent
+fallbacks, secondary lists, or soft defaults that paper over misconfiguration.
+
+- Two relay roles, two names, both required (no silent defaults):
+  - `RELAYS` — Logbook write/query (segments, manifests, whitelists, publish).
+  - `DISCOVERY_RELAYS` — read-only discovery (kind 0 profiles, NIP-05 hints).
+  Same names in `.env`, PWA, and worker. Never rename with `VITE_` / `LOGBOOK_`.
+- Required identity and endpoints are required: unset or invalid → throw at
+  load. Do not substitute production Compass keys or Blossom mirrors when env
+  is blank.
+- Deny-lists (e.g. refuse seeding against the real Compass pubkey) are fine;
+  that is refusing a dangerous operation, not a config backup.
+- Browser capability checks (e.g. MediaRecorder mime support) are not "backup
+  systems" — they detect what the runtime can do. Config and infrastructure
+  must not get the same treatment.
+- If something is broken, catch it and fix it. Do not ship a second path that
+  "usually works instead."
+
 This file is the executable handoff for the next agent(s). Read `.planning/PROJECT.md`,
 `.planning/REQUIREMENTS.md`, `.planning/ROADMAP.md`, and `PLAN.md` for full context before
 starting any phase. The design in `PLAN.md` is locked; do not re-debate architecture.
@@ -113,7 +144,7 @@ React + Vite + TypeScript, Nostr (nostr-tools), Blossom (BUD-01/BUD-04), transfo
 
 **Goal:** VPS auto-creates draft manifests on new Compass issues; security model enforced.
 
-- [ ] **VPS-SETUP**: Node.js or Python script on VPS; reads `COMPASS_NSEC` (or uses NIP-46 to sign) from env. Never commit the key.
+- [ ] **VPS-SETUP**: Node.js or Python script on VPS; signs via NIP-46 bunker only (same path in every environment). Never put a hot nsec on the host.
 - [ ] **CRON-01**: `scripts/watch-compass.ts` — polls relay every 10 minutes for new kind 30023 from compassPubkey; on detection, calls `createManifest(event)`
 - [ ] **CRON-02**: `createManifest(event)` — parses sections, builds kind 34200 content per PLAN.md §1, signs with Compass npub, publishes to relays
 - [ ] **CRON-03**: `createManifest` also runs `dm-outreach.ts` to generate `whitelist-{issueId}.json` and commits/pushes it to the repo so GitHub Pages picks it up (or uploads to VPS static path)

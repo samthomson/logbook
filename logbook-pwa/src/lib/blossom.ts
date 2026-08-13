@@ -151,7 +151,7 @@ async function uploadToPrimary(
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       assertActive?.()
-      onProgress?.(`Awaiting Amber signature for ${new URL(serverUrl).host}`)
+      onProgress?.(`Awaiting signer approval for ${new URL(serverUrl).host}`)
       const authEvent = await makeBlossomAuth(sha256, 'upload', signer, expectedPubkey, assertActive)
       assertActive?.()
       await assertSignerStillExpected(signer, expectedPubkey, assertActive)
@@ -281,7 +281,7 @@ async function makeBlossomAuth(
 ): Promise<NostrEvent> {
   assertActive?.()
   const expiration = now() + AUTH_EXPIRY_SECONDS
-  const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Amber identity request')
+  const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Signer identity request')
   assertActive?.()
   assertExpectedSignerPubkey(pubkey, expectedPubkey)
   const unsigned = {
@@ -296,7 +296,7 @@ async function makeBlossomAuth(
     pubkey,
   }
   assertActive?.()
-  const event = await withSignerTimeout(signer.signEvent(unsigned), 'Amber Blossom authorization')
+  const event = await withSignerTimeout(signer.signEvent(unsigned), 'Signer Blossom authorization')
   assertActive?.()
   assertEventSignedByExpected(event, expectedPubkey)
   return event

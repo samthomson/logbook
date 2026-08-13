@@ -33,7 +33,7 @@ import { fetchProfiles, type Profile } from '../lib/profiles'
 import { getPool } from '../lib/pool'
 import { deleteDraft, draftBelongsTo, listDrafts, saveDraft, selectDraftsForPrincipal, type RecordingDraft } from '../lib/drafts'
 import type { Filter } from 'nostr-tools'
-import { BLOSSOM_SERVERS, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from '../config'
+import { BLOSSOM_SERVERS, RELAYS, KINDS, ISSUE_PREFIX } from '../config'
 import type { LatestRequestGuard } from '../lib/latest-request'
 import { formatDuration } from '../lib/utils'
 
@@ -237,7 +237,7 @@ export default function IssueTimeline({
     const issueId = `${ISSUE_PREFIX}-${issue.issueNumber}`
     const targetIds = new Set(allTargets.map((t) => t.id))
     const sub = pool.subscribeMany(
-      DEFAULT_RELAYS,
+      RELAYS,
       { kinds: [KINDS.SEGMENT], '#t': [issueId], since: mountedAtRef.current } as Filter,
       {
         onevent(event: NostrEvent) {
@@ -574,16 +574,17 @@ export default function IssueTimeline({
 
   return (
     <PlaybackProvider segments={queue}>
-      <main className="timeline timeline--dense">
+      <main className="timeline">
         <header className="timeline__issue-head">
+          <p className="timeline__issue-kicker">Issue</p>
           <h1 className="timeline__issue-title">
             Compass #{issue.issueNumber}
-            <span className="timeline__issue-date">
-              {new Date(issue.event.created_at * 1000).toLocaleDateString([], {
-                month: 'short', day: 'numeric', year: 'numeric',
-              })}
-            </span>
           </h1>
+          <p className="timeline__issue-date">
+            {new Date(issue.event.created_at * 1000).toLocaleDateString([], {
+              month: 'short', day: 'numeric', year: 'numeric',
+            })}
+          </p>
           {leadProse && <SectionExcerpt section={{ id: '__lead', title: '', items: [{ title: '', body: leadProse }] }} profiles={profiles} />}
         </header>
         {publishError && (
@@ -594,7 +595,7 @@ export default function IssueTimeline({
             <h2 className="timeline__group-title">Voice notes in this episode · {episodeNotes.length}</h2>
             <div className="timeline__community-links">
               {episodeNotes.map((seg, index) => {
-                const author = profiles.get(seg.event.pubkey)?.name ?? seg.event.pubkey.slice(0, 8)
+                const author = profiles.get(seg.event.pubkey)?.name?.trim() || 'Contributor'
                 const duration = formatDuration(seg.audio.duration)
                 return (
                   <a

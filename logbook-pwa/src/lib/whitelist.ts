@@ -34,7 +34,7 @@
  */
 
 import { nip19 } from 'nostr-tools'
-import { COMPASS_PUBKEY, DEFAULT_RELAYS, KINDS, D_STANDING, D_ADMINS, D_ISSUE_WL, ADMIN_PUBKEYS, ISSUE_PREFIX } from '../config'
+import { COMPASS_PUBKEY, RELAYS, KINDS, D_STANDING, D_ADMINS, D_ISSUE_WL, ADMIN_PUBKEYS, ISSUE_PREFIX } from '../config'
 import type { NostrEvent, NostrSigner } from '../types/nostr'
 import { getPool } from './pool'
 import { filterVerified, publishToRelays } from './relay'
@@ -69,7 +69,7 @@ const eventCache = new Map<string, NostrEvent | null>()
 /** Fetch one whitelist event by d-tag. Returns null when absent/invalid. */
 async function fetchWhitelistEvent(
   dTag: string,
-  relays: string[] = DEFAULT_RELAYS,
+  relays: string[] = RELAYS,
   forceRefresh = false,
 ): Promise<NostrEvent | null> {
   if (!forceRefresh && eventCache.has(dTag)) return eventCache.get(dTag) ?? null
@@ -127,7 +127,7 @@ function parseEntries(event: NostrEvent, field: 'contributors' | 'admins'): Whit
  */
 export async function fetchAccessLists(
   issueNumber: number,
-  relays: string[] = DEFAULT_RELAYS,
+  relays: string[] = RELAYS,
   options: { forceRefresh?: boolean } = {},
 ): Promise<AccessLists> {
   const issueDTag = D_ISSUE_WL(issueNumber)
@@ -192,12 +192,12 @@ export async function publishWhitelist(
   dTag: string,
   entries: WhitelistEntry[],
   signer: NostrSigner,
-  relays: string[] = DEFAULT_RELAYS,
+  relays: string[] = RELAYS,
   assertActive?: () => void,
 ): Promise<NostrEvent> {
   if (relays.length === 0) throw new Error('No relays configured')
   assertActive?.()
-  const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Amber identity request')
+  const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Signer identity request')
   assertActive?.()
   if (pubkey !== COMPASS_PUBKEY) {
     throw new Error(
@@ -223,7 +223,7 @@ export async function publishWhitelist(
     pubkey,
   }
   assertActive?.()
-  const event = await withSignerTimeout(signer.signEvent(unsigned), 'Amber whitelist signing')
+  const event = await withSignerTimeout(signer.signEvent(unsigned), 'Signer whitelist signing')
   assertActive?.()
   assertEventSignedByExpected(event, COMPASS_PUBKEY)
   await assertSignerStillExpected(signer, COMPASS_PUBKEY, assertActive)
@@ -237,7 +237,7 @@ export async function publishWhitelist(
 /** Fetch current entries for one d-tag (for the admin editor). */
 export async function fetchWhitelistEntries(
   dTag: string,
-  relays: string[] = DEFAULT_RELAYS,
+  relays: string[] = RELAYS,
 ): Promise<WhitelistEntry[]> {
   const ev = await fetchWhitelistEvent(dTag, relays)
   if (!ev) return []

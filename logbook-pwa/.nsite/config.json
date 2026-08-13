@@ -1,0 +1,19 @@
+{
+  "$schema": "https://nsyte.run/schemas/config.schema.json",
+  "title": "Logbook",
+  "description": "Async voice podcast for Nostr Compass",
+  "relays": [
+    "wss://nos.lol",
+    "wss://relay.damus.io",
+    "wss://relay.primal.net"
+  ],
+  "servers": [
+    "https://blossom.ditto.pub",
+    "https://blossom.band",
+    "https://blossom.oxtr.dev"
+  ],
+  "gatewayHostnames": [
+    "nsite.lol"
+  ],
+  "fallback": "/index.html"
+}

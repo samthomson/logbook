@@ -4,8 +4,8 @@
  * Reads the stitched episode from AUDIO_DIR, reads the manifest from relay,
  * and writes a Podcasting 2.0 compliant RSS feed to RSS_PATH.
  *
- * Usage:
- *   COMPASS_NSEC=nsec1... node --loader ts-node/esm publish-rss.ts --issue logbook-31
+ * Usage (NIP-46 bunker session via COMPASS_BUNKER_DIR; same as the worker):
+ *   npm run rss -- --issue logbook-31
  *
  * After writing the RSS file, also publishes a kind 1 note from the Compass
  * npub pointing to the episode URL.
@@ -18,7 +18,7 @@ import { join, basename, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   COMPASS_PUBKEY,
-  DEFAULT_RELAYS,
+  RELAYS,
   KINDS,
   AUDIO_DIR,
   RSS_PATH,
@@ -170,7 +170,7 @@ function formatDuration(seconds: number): string {
 // ── relay helpers ─────────────────────────────────────────────────────────────
 
 async function fetchManifest(issueId: string, pool: SimplePool): Promise<{ manifest: ManifestContent; event: ManifestEvent }> {
-  const events = await pool.querySync(DEFAULT_RELAYS, {
+  const events = await pool.querySync(RELAYS, {
     kinds: [KINDS.MANIFEST],
     authors: [COMPASS_PUBKEY],
     '#d': [issueId],
@@ -296,7 +296,7 @@ async function publishAnnouncement(
     content,
   })
 
-  await Promise.allSettled(DEFAULT_RELAYS.map((r) => pool.publish([r], event)))
+  await Promise.allSettled(RELAYS.map((r) => pool.publish([r], event)))
   console.log(`[publish-rss] Published kind 1 announcement: ${event.id}`)
 }
 
@@ -333,7 +333,7 @@ async function publishManifestStatus(
     ],
     content: JSON.stringify(updated),
   })
-  await Promise.any(pool.publish(DEFAULT_RELAYS, event))
+  await Promise.any(pool.publish(RELAYS, event))
   console.log(`[publish-rss] Manifest ${issueId} marked published`)
 }
 
@@ -375,7 +375,7 @@ async function publishPodstrEpisode(
     tags,
     content: `<p>${ep.description}</p>`,
   })
-  await Promise.any(pool.publish(DEFAULT_RELAYS, event))
+  await Promise.any(pool.publish(RELAYS, event))
   console.log(`[publish-rss] Published podstr episode event: ${event.id}`)
 }
 
@@ -448,12 +448,12 @@ async function main(): Promise<void> {
   // Collect contributor pubkeys + transcripts from relay
   const segmentEvents =
     run.segmentIds.length > 0
-      ? await pool.querySync(DEFAULT_RELAYS, { kinds: [KINDS.SEGMENT], ids: run.segmentIds })
+      ? await pool.querySync(RELAYS, { kinds: [KINDS.SEGMENT], ids: run.segmentIds })
       : []
   // Companion transcripts (kind 1111 with e-tag → segment) for podcast:transcript
   const transcriptEvents =
     run.segmentIds.length > 0
-      ? await pool.querySync(DEFAULT_RELAYS, { kinds: [KINDS.TRANSCRIPT], '#e': run.segmentIds, limit: 200 })
+      ? await pool.querySync(RELAYS, { kinds: [KINDS.TRANSCRIPT], '#e': run.segmentIds, limit: 200 })
       : []
   const { participantPubkeys, transcriptBySegment } = selectTrustedReleaseMetadata(
     run.segmentIds,
@@ -540,7 +540,7 @@ async function main(): Promise<void> {
     },
   })
 
-  pool.close(DEFAULT_RELAYS)
+  pool.close(RELAYS)
   console.log('[publish-rss] Done.')
 }
 

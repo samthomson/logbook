@@ -5,6 +5,10 @@ import { createServer } from 'vite'
 const widths = [320, 360, 390]
 const segmentIds = [1, 2, 3].map((value) => value.toString(16).padStart(64, '0'))
 const root = fileURLToPath(new URL('..', import.meta.url))
+process.env.COMPASS_PUBKEY ??= 'a'.repeat(64)
+process.env.RELAYS ??= 'wss://relay.test'
+process.env.DISCOVERY_RELAYS ??= 'wss://discovery.test'
+process.env.BLOSSOM_SERVERS ??= 'https://blossom.test'
 const server = await createServer({
   root,
   logLevel: 'error',

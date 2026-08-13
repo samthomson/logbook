@@ -186,15 +186,27 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
   if (review) {
     return (
       <div className="irec irec--review" role="status">
-        <audio controls src={URL.createObjectURL(review.blob)} aria-label="Preview recording" />
-        <span>{Math.ceil(review.duration)}s ready</span>
-        <button type="button" onClick={() => {
-          const completed = review
-          setReview(null)
-          onRecorded(completed)
-        }}>Publish</button>
-        <button type="button" onClick={() => { setReview(null); startSafely() }}>Re-record</button>
-        <button type="button" onClick={() => { setReview(null); onCancel?.() }}>Discard</button>
+        <audio className="irec__preview" controls src={URL.createObjectURL(review.blob)} aria-label="Preview recording" />
+        <span className="irec__ready">{Math.ceil(review.duration)}s ready</span>
+        <div className="irec__actions">
+          <button
+            type="button"
+            className="btn btn--primary btn--small"
+            onClick={() => {
+              const completed = review
+              setReview(null)
+              onRecorded(completed)
+            }}
+          >
+            Publish
+          </button>
+          <button type="button" className="btn btn--ghost btn--small" onClick={() => { setReview(null); startSafely() }}>
+            Re-record
+          </button>
+          <button type="button" className="btn btn--ghost btn--small" onClick={() => { setReview(null); onCancel?.() }}>
+            Discard
+          </button>
+        </div>
       </div>
     )
   }

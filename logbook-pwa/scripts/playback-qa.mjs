@@ -3,6 +3,10 @@ import puppeteer from 'puppeteer'
 import { createServer } from 'vite'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
+process.env.COMPASS_PUBKEY ??= 'a'.repeat(64)
+process.env.RELAYS ??= 'wss://relay.test'
+process.env.DISCOVERY_RELAYS ??= 'wss://discovery.test'
+process.env.BLOSSOM_SERVERS ??= 'https://blossom.test'
 const sectionId = 'sec-lead-stories-public-chapter-32'
 const issueEvent = {
   id: '1'.repeat(64),

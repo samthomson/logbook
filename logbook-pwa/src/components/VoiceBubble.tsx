@@ -51,8 +51,11 @@ export default function VoiceBubble({
     setDragFrac(null)
   }
 
-  const name = profile?.name ?? segment.event.pubkey.slice(0, 8)
-  const initial = (profile?.name ?? segment.event.pubkey).slice(0, 2).toUpperCase()
+  const name = profile?.name?.trim() || 'Contributor'
+  // Never treat hex pubkey digits as "initials" (e.g. 2093… → "20").
+  const initial = profile?.name?.trim()
+    ? profile.name.trim().slice(0, 2).toUpperCase()
+    : null
 
   return (
     <div
@@ -62,8 +65,12 @@ export default function VoiceBubble({
       <div className="bubble__avatar" aria-hidden="true">
         {profile?.picture ? (
           <img src={profile.picture} alt="" loading="lazy" />
-        ) : (
+        ) : initial ? (
           <span>{initial}</span>
+        ) : (
+          <svg className="bubble__avatar-icon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+            <path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0 2c-4.42 0-8 2.24-8 5v1h16v-1c0-2.76-3.58-5-8-5Z" />
+          </svg>
         )}
       </div>
 
@@ -83,9 +90,14 @@ export default function VoiceBubble({
             {isCurrent && playback.loading ? (
               <span className="note-row__spinner" aria-hidden="true" />
             ) : isPlaying ? (
-              '⏸'
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                <rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor" />
+                <rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" />
+              </svg>
             ) : (
-              '▶'
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                <path d="M8 5.5v13l11-6.5-11-6.5Z" fill="currentColor" />
+              </svg>
             )}
           </button>
 

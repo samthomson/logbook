@@ -1,4 +1,4 @@
-import { COMPASS_PUBKEY, DEFAULT_RELAYS, ISSUE_PREFIX, KINDS } from '../config'
+import { COMPASS_PUBKEY, RELAYS, ISSUE_PREFIX, KINDS } from '../config'
 import type { NostrEvent, CompassIssue, IssueSection, IssueSectionItem } from '../types/nostr'
 import { slugify } from './utils'
 import { filterVerified } from './relay'
@@ -14,7 +14,7 @@ const issueRequests = new Map<string, Promise<NostrEvent[]>>()
 
 /** Fetch the most recent Compass kind 30023 long-form issue. */
 export async function fetchLatestIssue(
-  relays: string[] = DEFAULT_RELAYS,
+  relays: string[] = RELAYS,
 ): Promise<NostrEvent | null> {
   const pool = getPool()
   const events = await pool.querySync(relays, {
@@ -36,7 +36,7 @@ export async function fetchLatestIssue(
 /** Fetch a specific Compass issue by its d-tag (issue number slug). */
 export async function fetchIssueByDTag(
   dTag: string,
-  relays: string[] = DEFAULT_RELAYS,
+  relays: string[] = RELAYS,
 ): Promise<NostrEvent | null> {
   const pool = getPool()
   const events = await pool.querySync(relays, {
@@ -56,7 +56,7 @@ export async function fetchIssueByDTag(
 
 /** Fetch all available Compass issues (for the issue picker). */
 export async function fetchAllIssues(
-  relays: string[] = DEFAULT_RELAYS,
+  relays: string[] = RELAYS,
 ): Promise<NostrEvent[]> {
   const key = relays.join('\n')
   const cached = issueLists.get(key)
@@ -101,7 +101,7 @@ export function selectCompassIssues(events: readonly NostrEvent[]): NostrEvent[]
  * made existing cross-identity notes look as if authentication hid them.
  */
 export async function fetchLatestIssueWithSegments(
-  relays: string[] = DEFAULT_RELAYS,
+  relays: string[] = RELAYS,
 ): Promise<NostrEvent | null> {
   // Startup only needs a recent window. Loading the complete episode picker
   // here made SimplePool verify every historical issue before first content.

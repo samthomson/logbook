@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { AuthState } from '../lib/auth'
 import { connectBunker, connectNsec, connectWindowNostr, startAmberConnect } from '../lib/auth'
 import type { LatestRequestGuard } from '../lib/latest-request'
+import { withSignerTimeout } from '../lib/signer-timeout'
 
 export default function AuthScreen({ onAuth, authRequests }: {
   onAuth: (state: AuthState, method: string) => void
@@ -21,6 +22,14 @@ export default function AuthScreen({ onAuth, authRequests }: {
     authRequests.invalidate()
     amberCancelRef.current?.()
   }, [authRequests])
+
+  function cancelPending() {
+    authRequests.invalidate()
+    amberCancelRef.current?.()
+    amberCancelRef.current = null
+    setAmberWaiting(false)
+    setLoading(null)
+  }
 
   function handleAmber() {
     const request = authRequests.begin()
@@ -57,12 +66,17 @@ export default function AuthScreen({ onAuth, authRequests }: {
     setError(null)
     setLoading('extension')
     try {
-      const state = await connectWindowNostr()
+      const state = await withSignerTimeout(connectWindowNostr(), 'Browser extension login', 30_000)
       if (!authRequests.isCurrent(request)) return
       onAuth(state, 'extension')
     } catch (err) {
       if (!authRequests.isCurrent(request)) return
-      setError(err instanceof Error ? err.message : String(err))
+      const message = err instanceof Error ? err.message : String(err)
+      setError(
+        /did not respond|Timeout/i.test(message)
+          ? 'Your extension did not respond. Unlock it, allow this site, then try again.'
+          : message,
+      )
     } finally {
       if (authRequests.isCurrent(request)) setLoading(null)
     }
@@ -87,13 +101,14 @@ export default function AuthScreen({ onAuth, authRequests }: {
     }
   }
 
+  const waiting = amberWaiting || loading === 'extension'
+
   return (
     <div className="auth-screen auth-screen--compact">
       <div className="auth-logo">
-        <div className="auth-logo__mark" aria-hidden="true">📻</div>
         <h1 className="auth-title">Logbook</h1>
       </div>
-      <p className="auth-subtitle">Async voice podcast for Nostr Compass</p>
+      <p className="auth-subtitle">Log in with your Nostr identity to record or curate</p>
 
       <div className="auth-methods">
         {isAndroid && (
@@ -101,39 +116,53 @@ export default function AuthScreen({ onAuth, authRequests }: {
             <div className="auth-waiting" role="status">
               <div className="spinner spinner--small" aria-hidden="true" />
               <span>Approve in Amber…</span>
-              <button
-                className="btn btn--ghost btn--small"
-                onClick={() => {
-                  authRequests.invalidate()
-                  amberCancelRef.current?.()
-                  amberCancelRef.current = null
-                  setAmberWaiting(false)
-                }}
-              >
-                Cancel
-              </button>
+              <button className="btn btn--ghost btn--small" onClick={cancelPending}>Cancel</button>
             </div>
           ) : (
-            <button className="btn btn--primary auth-primary" onClick={handleAmber}>
-              Sign in with Amber
+            <button className="btn btn--primary auth-primary" onClick={handleAmber} disabled={waiting}>
+              Log in with Amber
             </button>
           )
         )}
 
         {hasExtension && (
-          <button
-            className={`btn ${isAndroid ? 'btn--ghost' : 'btn--primary auth-primary'}`}
-            onClick={handleExtension}
-            disabled={loading === 'extension'}
-          >
-            {loading === 'extension' ? 'Connecting…' : 'Sign in with extension'}
-          </button>
+          loading === 'extension' ? (
+            <div className="auth-waiting" role="status">
+              <div className="spinner spinner--small" aria-hidden="true" />
+              <div className="auth-waiting__copy">
+                <span>Waiting for your browser extension…</span>
+                <span className="auth-waiting__hint">Check for a popup, or unlock the extension</span>
+              </div>
+              <button className="btn btn--ghost btn--small" onClick={cancelPending}>Cancel</button>
+            </div>
+          ) : (
+            <>
+              <button
+                className={`btn ${isAndroid ? 'btn--ghost' : 'btn--primary auth-primary'}`}
+                onClick={handleExtension}
+                disabled={waiting}
+              >
+                Log in with extension
+              </button>
+              {!isAndroid && (
+                <p className="auth-hint">
+                  Unlock Alby / nos2x first. Clicking Log in should open its approval popup.
+                </p>
+              )}
+            </>
+          )
         )}
 
         {!isAndroid && !hasExtension && (
           <p className="auth-hint">
-            On Android? Install <a href="https://github.com/greenart7c3/Amber" target="_blank" rel="noreferrer">Amber</a> for
-            one-tap sign-in. On desktop, use a NIP-07 extension (Alby, nos2x) or the advanced options below.
+            No Nostr browser extension detected. Install Alby or nos2x, then reload this page —
+            or use Advanced options below.
+          </p>
+        )}
+
+        {isAndroid && !amberWaiting && (
+          <p className="auth-hint">
+            Amber is the usual path on Android. An extension works here too if you have one.
           </p>
         )}
 
@@ -141,6 +170,7 @@ export default function AuthScreen({ onAuth, authRequests }: {
           className="auth-toggle"
           onClick={() => setAdvanced(advanced ? null : 'bunker')}
           aria-expanded={advanced !== null}
+          disabled={waiting}
         >
           {advanced ? 'Hide advanced options' : 'Advanced options'}
         </button>
@@ -200,7 +230,7 @@ export default function AuthScreen({ onAuth, authRequests }: {
                 />
               )}
               <p className="auth-warning">
-                Key held in memory only — never stored. Prefer Amber or Bunker.
+                Key held in memory only — never stored. Prefer an extension or bunker.
               </p>
             </>
           )}
@@ -210,12 +240,12 @@ export default function AuthScreen({ onAuth, authRequests }: {
             onClick={handleAdvancedConnect}
             disabled={loading !== null || !input.trim()}
           >
-            {loading === advanced ? 'Connecting…' : 'Connect'}
+            {loading === advanced ? 'Connecting…' : 'Log in'}
           </button>
         </div>
       )}
 
-      {error && <p className="auth-error">{error}</p>}
+      {error && <p className="auth-error" role="alert">{error}</p>}
     </div>
   )
 }

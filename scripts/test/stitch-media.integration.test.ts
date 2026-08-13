@@ -4,7 +4,28 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { assertHasAudioStream, stitchAudioSections } from '../stitch-media.ts'
+import {
+  assertHasAudioStream,
+  MIN_FFMPEG_MAJOR,
+  parseFfmpegMajor,
+  stitchAudioSections,
+} from '../stitch-media.ts'
+
+test('ffmpeg version detection rejects builds whose silenceremove would empty the episode', () => {
+  assert.equal(
+    parseFfmpegMajor('ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026'),
+    7,
+  )
+  assert.equal(parseFfmpegMajor('ffmpeg version 5.1.9-0+deb12u1 Copyright (c)'), 5)
+  assert.equal(parseFfmpegMajor('ffmpeg version 8.0.1 Copyright (c) 2000-2025'), 8)
+  // Source builds report a leading n, as in `ffmpeg version n6.0`.
+  assert.equal(parseFfmpegMajor('ffmpeg version n6.0 Copyright (c)'), 6)
+  assert.equal(parseFfmpegMajor('some other tool version 1.2'), null)
+
+  // The boundary this guard exists to enforce, verified against real output.
+  assert.ok(parseFfmpegMajor('ffmpeg version 5.1.9-0+deb12u1 Copyright')! < MIN_FFMPEG_MAJOR)
+  assert.ok(parseFfmpegMajor('ffmpeg version 7.1.5-0+deb13u1 Copyright')! >= MIN_FFMPEG_MAJOR)
+})
 
 function run(command: string, args: string[]): string {
   const result = spawnSync(command, args, { encoding: 'utf8' })

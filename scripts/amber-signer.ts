@@ -29,6 +29,23 @@ export function validateCompassSignature(event: SignedNostrEvent, expectedPubkey
   return event
 }
 
+/**
+ * Fail before the watcher starts polling rather than at the first event it needs
+ * to sign, which could be days later.
+ */
+export async function assertCompassSignerConfigured(): Promise<void> {
+  try {
+    await readCompassBunker()
+  } catch (error) {
+    throw new Error(
+      'No Compass signer configured. Provide bunker.json and client_key in ' +
+      `COMPASS_BUNKER_DIR. Cause: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    )
+  }
+}
+
 async function readCompassBunker(): Promise<{ bunkerUri: string; clientKey: string }> {
   const directory = process.env.COMPASS_BUNKER_DIR ?? join(homedir(), '.config', 'compass-publish')
   const [configRaw, clientKey] = await Promise.all([
@@ -44,7 +61,7 @@ async function readCompassBunker(): Promise<{ bunkerUri: string; clientKey: stri
   return { bunkerUri: parsed.bunker_uri, clientKey: trimmedClientKey }
 }
 
-/** Ask the existing Compass Amber/NIP-46 bunker to sign one event without exposing its key. */
+/** Ask the Compass NIP-46 bunker to sign one event without exposing its key. */
 export async function signWithCompassAmber(unsigned: UnsignedNostrEvent): Promise<SignedNostrEvent> {
   const { bunkerUri, clientKey } = await readCompassBunker()
   const nak = process.env.NAK_BIN ?? join(homedir(), '.local', 'bin', 'nak')
@@ -70,8 +87,8 @@ export async function signWithCompassAmber(unsigned: UnsignedNostrEvent): Promis
 }
 
 /**
- * Use the existing Compass Amber/NIP-46 session for every signing operation.
- * Construction is side-effect free; Amber is contacted only by signEvent().
+ * Use the Compass NIP-46 session for every signing operation.
+ * Construction is side-effect free; the bunker is contacted only by signEvent().
  */
 export function createCompassAmberSigner(): CompassSigner {
   return { signEvent: signWithCompassAmber }

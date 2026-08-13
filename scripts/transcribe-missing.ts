@@ -10,8 +10,8 @@
  * a transcript right after each segment); this is the backstop for clients
  * that closed before finishing, or unsupported browsers.
  *
- * Usage:
- *   COMPASS_NSEC=nsec1... npx tsx transcribe-missing.ts [--hours 48] [--model /path/ggml.bin]
+ * Usage (NIP-46 bunker session via COMPASS_BUNKER_DIR; same as the worker):
+ *   npm run transcribe-missing -- [--hours 48] [--model /path/ggml.bin]
  *
  * Requirements: whisper-cli (whisper.cpp) in PATH, plus a model file
  * (default: ./models/ggml-base.en.bin relative to this script).
@@ -26,7 +26,7 @@ import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import {
   COMPASS_PUBKEY,
-  DEFAULT_RELAYS,
+  RELAYS,
   KINDS,
   BLOSSOM_SERVERS,
 } from './config.ts'
@@ -116,17 +116,17 @@ async function main(): Promise<void> {
   const since = Math.floor(Date.now() / 1000) - hours * 3600
 
   console.log(`[transcribe-missing] Looking for segments in the last ${hours}h…`)
-  const segments = await pool.querySync(DEFAULT_RELAYS, {
+  const segments = await pool.querySync(RELAYS, {
     kinds: [KINDS.SEGMENT],
     since,
     limit: 500,
   })
   console.log(`[transcribe-missing] ${segments.length} segments`)
 
-  if (!segments.length) { pool.close(DEFAULT_RELAYS); return }
+  if (!segments.length) { pool.close(RELAYS); return }
 
   const segIds = segments.map((s) => s.id)
-  const transcripts = await pool.querySync(DEFAULT_RELAYS, {
+  const transcripts = await pool.querySync(RELAYS, {
     kinds: [KINDS.TRANSCRIPT],
     '#e': segIds,
     limit: 1000,
@@ -174,7 +174,7 @@ async function main(): Promise<void> {
           content: text,
         },
       )
-      await Promise.any(pool.publish(DEFAULT_RELAYS, event))
+      await Promise.any(pool.publish(RELAYS, event))
       done++
       console.log(`  ${seg.id.slice(0, 8)}: transcript published (${text.length} chars)`)
     } catch (err) {
@@ -183,7 +183,7 @@ async function main(): Promise<void> {
   }
 
   rmSync(workDir, { recursive: true, force: true })
-  pool.close(DEFAULT_RELAYS)
+  pool.close(RELAYS)
   console.log(`[transcribe-missing] Done: ${done}/${missing.length} transcribed`)
 }
 
