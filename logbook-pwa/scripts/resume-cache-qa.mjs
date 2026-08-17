@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url'
 import puppeteer from 'puppeteer'
 import { createServer } from 'vite'
+import { episodeHref } from './qa-episode.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 // Pin the harness to its own identity so it exercises the configured Compass
@@ -34,9 +35,15 @@ const modules = new Map([
     export async function fetchAllIssues(){return new Promise(()=>{})}
     export function extractIssueNumber(){return 32}
     export function parseIssue(){throw new Error('network issue must not replace cache')}
+    export function issueAddress(){return 'naddr1qa'}
   `],
   ['whitelist', `
     export async function fetchAccessLists(){globalThis.__qaAccessRequests=(globalThis.__qaAccessRequests||0)+1;return new Promise(()=>{})}
+    export async function fetchProducerPubkeys(){return new Set()}
+    export async function fetchWhitelistEntries(){return []}
+    export async function publishWhitelist(){throw new Error('no writes')}
+    export function extractMentionedPubkeys(){return []}
+    export function normalizeToHex(value){return value}
   `],
   ['segment', `
     export async function fetchSegmentsForIssue(){throw new Error('relay offline')}
@@ -45,8 +52,16 @@ const modules = new Map([
     export function selectTrustedSegmentEvents(){return []}
     export async function publishSegment(){throw new Error('unexpected publish')}
   `],
-  ['manifest', `export async function fetchManifest(){throw new Error('relay offline')}`],
-  ['profiles', `export async function fetchProfiles(){return new Map()}`],
+  ['manifest', `
+    export async function fetchManifest(){throw new Error('relay offline')}
+    export function subscribeManifest(){return ()=>{}}
+    export function subscribeManifests(){return ()=>{}}
+    export async function fetchAllManifests(){return []}
+    export async function updateManifest(){throw new Error('no writes')}
+    export function buildInitialManifest(){return {episodeStatus:'draft',publishedRss:null,issueRef:'',sections:[]}}
+  `],
+  ['profiles', `export async function fetchProfiles(){return new Map()}
+    export function authorLabel(profile,pubkey){return profile?.name||pubkey.slice(0,8)}`],
   ['pool', `export function getPool(){return {subscribeMany(){return {close(){}}}}}`],
   ['blossom', `
     globalThis.__qaUploadCalls=0
@@ -78,6 +93,7 @@ try {
       state='running'; createMediaStreamSource(){return {connect(){}}}
       createAnalyser(){return {fftSize:256,frequencyBinCount:128,connect(){},getByteFrequencyData(data){data.fill(20)}}}
       createMediaStreamDestination(){return {stream}}; async resume(){}; async close(){}
+      async decodeAudioData(){return {numberOfChannels:1,getChannelData(){return new Float32Array([0.25,0.4,0.1])}}}
     }
     class FakeMediaRecorder {
       static isTypeSupported(){return true}; state='inactive'; mimeType='audio/webm'
@@ -87,7 +103,7 @@ try {
     Object.defineProperty(window,'AudioContext',{configurable:true,value:FakeAudioContext})
     Object.defineProperty(window,'MediaRecorder',{configurable:true,value:FakeMediaRecorder})
   },pubkey)
-  const url=`http://127.0.0.1:${address.port}/`
+  const url=episodeHref(`http://127.0.0.1:${address.port}/`,32)
   await page.goto(url,{waitUntil:'domcontentloaded'})
   await page.evaluate(({owner,issue,segmentEvent,sectionId})=>{
     localStorage.setItem('logbook_auth',JSON.stringify({method:'extension'}))
@@ -106,7 +122,7 @@ try {
   await page.click('[aria-label="Stop and keep recording"]')
   await page.waitForSelector('.irec--review')
   await page.evaluate(()=>[...document.querySelectorAll('button')].find((button)=>button.textContent?.trim()==='Publish')?.click())
-  await page.waitForFunction(()=>document.body.textContent?.includes('Recording saved locally'))
+  await page.waitForFunction(()=>document.body.textContent?.includes('Recording saved on this device'))
   await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true})))
   await page.waitForFunction(()=>globalThis.__qaAccessRequests>=2,{timeout:1500})
   const result=await page.evaluate(()=>({

@@ -36,22 +36,32 @@ jobs:
           key: ${{ runner.os }}-puppeteer-25.3.0
       - run: npm ci --no-audit --no-fund
       - run: npm run test:unit
-      - run: npm run test:browser
+      - run: npm run test:public-shell && npm run test:playback && npm run test:concurrent-recording && npm run test:resume-cache
       - run: npm run lint
       - run: npm run build
+        env:
+          COMPASS_PUBKEY: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          RELAYS: wss://relay.test
+          DISCOVERY_RELAYS: wss://discovery.test
+          BLOSSOM_SERVERS: https://blossom.test
+      - run: npm run test:navigation-cache
 
   validate-worker:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: scripts
+    # Same image as scripts/Dockerfile: Trixie's ffmpeg 7.1, not Ubuntu's 6.x,
+    # whose silenceremove would empty a stitch and fail requireFfmpeg.
+    container: node:22.22.0-trixie-slim
     steps:
+      - run: apt-get update && apt-get install --no-install-recommends -y git ffmpeg ca-certificates
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '22.22.0'
           cache: npm
           cache-dependency-path: scripts/package-lock.json
       - run: npm ci --no-audit --no-fund
+        working-directory: scripts
       - run: npm run typecheck
+        working-directory: scripts
       - run: npm test
+        working-directory: scripts

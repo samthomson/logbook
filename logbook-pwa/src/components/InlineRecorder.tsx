@@ -251,6 +251,7 @@ export default function InlineRecorder({
       <div className="irec__idle">
         <button
           className="irec__add"
+          aria-label="Record a voice note"
           onClick={() => {
             // Claim the shared recorder target before getUserMedia awaits, so
             // a second section cannot arm while browser permission is pending.

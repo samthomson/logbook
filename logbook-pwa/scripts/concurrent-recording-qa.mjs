@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url'
 import puppeteer from 'puppeteer'
 import { createServer } from 'vite'
+import { episodeHref } from './qa-episode.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 // Pin the harness to its own identity so it exercises the configured Compass
@@ -56,12 +57,13 @@ const modules = new Map([
   ['compass', `
     const event=${JSON.stringify(fixtureEvent)}; const issue=${JSON.stringify(fixtureIssue)};
     const secondEvent=${JSON.stringify(secondIssueEvent)}; const secondIssue=${JSON.stringify(secondIssue)};
-    export async function fetchIssueByDTag(){return event}
+    export async function fetchIssueByDTag(dTag){return dTag==='newsletter-33'?secondEvent:event}
     export async function fetchLatestIssue(){return event}
     export async function fetchLatestIssueWithSegments(){return event}
     export async function fetchAllIssues(){return [secondEvent,event]}
     export function extractIssueNumber(value){return value.id===secondEvent.id?33:32}
     export function parseIssue(value){return value.id===secondEvent.id?secondIssue:issue}
+    export function issueAddress(){return 'naddr1qa'}
   `],
   ['segment', `
     export async function fetchSegmentsForIssue(){return new Map()}
@@ -70,12 +72,25 @@ const modules = new Map([
     export function selectTrustedSegmentEvents(){return []}
     export async function publishSegment(){throw new Error('unexpected publish')}
   `],
-  ['manifest', `export async function fetchManifest(){return null}`],
-  ['profiles', `export async function fetchProfiles(){return new Map()}`],
-  ['whitelist', `
-    export async function fetchAccessLists(){return {contributors:new Set(),admins:new Set(),sources:new Map(),degraded:false,adminsFromBootstrap:false}}
+  ['manifest', `
+    export async function fetchManifest(){return null}
+    export function subscribeManifest(){return ()=>{}}
+    export function subscribeManifests(){return ()=>{}}
+    export async function fetchAllManifests(){return []}
+    export async function updateManifest(){throw new Error('no writes')}
+    export function buildInitialManifest(){return {episodeStatus:'draft',publishedRss:null,issueRef:'',sections:[]}}
   `],
-  ['pool', `export function getPool(){return {subscribeMany(){return {close(){}}}}}`],
+  ['profiles', `export async function fetchProfiles(){return new Map()}
+    export function authorLabel(profile,pubkey){return profile?.name||pubkey.slice(0,8)}`],
+  ['whitelist', `
+    export async function fetchProducerPubkeys(){return new Set([${JSON.stringify(pubkey.toLowerCase())}])}
+    export async function fetchAccessLists(){return {contributors:new Set([${JSON.stringify(pubkey.toLowerCase())}]),admins:new Set([${JSON.stringify(pubkey.toLowerCase())}]),sources:new Map(),degraded:false,adminsFromBootstrap:false}}
+    export async function fetchWhitelistEntries(){return []}
+    export async function publishWhitelist(){throw new Error('no writes')}
+    export function extractMentionedPubkeys(){return []}
+    export function normalizeToHex(value){return value}
+  `],
+  ['pool', `export function getPool(){return {subscribeMany(){return {close(){}}},querySync(){return Promise.resolve([])},publish(){return []}}}`],
   ['blossom', `
     const attempts=[]
     globalThis.__qaUploads=attempts
@@ -99,7 +114,7 @@ try {
   await server.listen()
   const address = server.httpServer?.address()
   if (!address || typeof address === 'string') throw new Error('Vite QA server did not expose a port')
-  const appUrl = `http://127.0.0.1:${address.port}/`
+  const appUrl = episodeHref(`http://127.0.0.1:${address.port}/`, 32, compassPubkey)
   browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-gpu'] })
   const page = await browser.newPage()
   page.on('pageerror', (error) => console.error('PAGEERROR', error.message))
@@ -122,6 +137,9 @@ try {
       createMediaStreamSource() { return { connect() {} } }
       createAnalyser() { return { fftSize: 256, frequencyBinCount: 128, connect() {}, getByteFrequencyData(data) { data.fill(20) } } }
       createMediaStreamDestination() { return { stream } }
+      async decodeAudioData() {
+        return { numberOfChannels: 1, getChannelData() { return new Float32Array([0.25, 0.4, 0.1]) } }
+      }
       async resume() {}
       async close() {}
     }
@@ -141,7 +159,6 @@ try {
     Object.defineProperty(window, 'MediaRecorder', { configurable: true, value: FakeMediaRecorder })
   }, pubkey)
   await page.goto(appUrl, { waitUntil: 'domcontentloaded' })
-  await page.waitForSelector('.timeline__issue-title')
   await page.evaluate(async ({ ownerPubkey, targetId }) => {
     const db = await new Promise((resolve, reject) => {
       const request = indexedDB.open('logbook-recording-drafts', 1)
@@ -165,12 +182,12 @@ try {
     db.close()
   }, { ownerPubkey: pubkey, targetId: sectionId })
   await page.reload({ waitUntil: 'domcontentloaded' })
-  await page.waitForSelector('.timeline__issue-title')
   await page.waitForSelector('.app-login')
-  await clickButton(page, 'Sign in to record')
+  await clickButton(page, 'Log in')
   await page.waitForSelector('.auth-screen')
-  await clickButton(page, 'Sign in with extension')
+  await clickButton(page, 'Log in with extension')
   await page.waitForSelector('.app-identity')
+  await page.waitForSelector('.timeline__issue-title')
   await page.waitForFunction(() => document.querySelectorAll('.bubble--upload').length > 0)
 
   const before = await page.evaluate(() => ({
@@ -189,10 +206,12 @@ try {
   // settles late it must not clear B's stage or active marker.
   await clickButton(page, 'Log out')
   await page.waitForSelector('.app-login')
-  await clickButton(page, 'Sign in to record')
+  await clickButton(page, 'Log in')
   await page.waitForSelector('.auth-screen')
-  await clickButton(page, 'Sign in with extension')
+  await clickButton(page, 'Log in with extension')
   await page.waitForSelector('.app-identity')
+  await page.goto(appUrl, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('.timeline__issue-title')
   await page.waitForFunction(() => document.querySelectorAll('.bubble--upload').length === 2)
   await clickButton(page, 'Resume upload')
   await page.waitForFunction(() => window.__qaUploads?.length === 2)
@@ -245,6 +264,7 @@ try {
   await page.waitForSelector('.timeline__issue-title')
   await page.waitForSelector('.app-identity')
   await page.waitForFunction(() => document.querySelectorAll('.bubble--upload').length > 0)
+  await page.waitForSelector('[aria-label="Record a voice note"]')
   const restored = await page.evaluate(() => ({
     pending: document.querySelectorAll('.bubble--upload').length,
     recorders: document.querySelectorAll('[aria-label="Record a voice note"]').length,
@@ -255,7 +275,7 @@ try {
   await page.evaluate(() => { globalThis.__qaDeferMedia = true })
   await page.click('[aria-label="Record a voice note"]')
   await page.waitForSelector('.irec__idle[role="status"]')
-  await clickButton(page, 'Episodes')
+  await clickButton(page, 'All episodes')
   await page.waitForSelector('.issue-picker__item')
   await page.click('.issue-picker__item')
   await page.waitForFunction(() => document.querySelector('.timeline__issue-title')?.textContent?.includes('33'))

@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url'
 import puppeteer from 'puppeteer'
 import { createServer } from 'vite'
+import { episodeHref, publishedManifestSource } from './qa-episode.mjs'
 
 const widths = [320, 360, 390]
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -28,13 +29,16 @@ const fixtureIssue = {
   }],
 }
 const fixtureModuleId = '\0public-compass-fixture'
+const manifestModuleId = '\0public-manifest-fixture'
 const publicCompassFixture = {
   name: 'public-compass-fixture',
   enforce: 'pre',
-  resolveId(source, importer) {
-    if (source.endsWith('/lib/compass') && importer?.includes('/src/App.tsx')) return fixtureModuleId
+  resolveId(source) {
+    if (source.endsWith('/lib/compass')) return fixtureModuleId
+    if (source.endsWith('/lib/manifest')) return manifestModuleId
   },
   load(id) {
+    if (id === manifestModuleId) return publishedManifestSource
     if (id !== fixtureModuleId) return
     return `
       const event = ${JSON.stringify(fixtureEvent)}
@@ -42,8 +46,10 @@ const publicCompassFixture = {
       export async function fetchIssueByDTag() { return event }
       export async function fetchLatestIssue() { return event }
       export async function fetchLatestIssueWithSegments() { return event }
+      export async function fetchAllIssues() { return [event] }
       export function extractIssueNumber() { return 32 }
       export function parseIssue() { return issue }
+      export function issueAddress() { return 'naddr1qa' }
     `
   },
 }
@@ -58,7 +64,7 @@ try {
   await server.listen()
   const address = server.httpServer?.address()
   if (!address || typeof address === 'string') throw new Error('Vite QA server did not expose a port')
-  const appUrl = `http://127.0.0.1:${address.port}/`
+  const appUrl = episodeHref(`http://127.0.0.1:${address.port}/`, 32)
   browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-gpu'] })
   const page = await browser.newPage()
   const failures = []
@@ -90,7 +96,7 @@ try {
       }
     })
     if (layout.authScreen) failures.push(`${width}px: anonymous readers were forced into the auth screen`)
-    if (layout.loginText !== 'Sign in to record') failures.push(`${width}px: explicit recording sign-in action missing`)
+    if (layout.loginText !== 'Log in') failures.push(`${width}px: explicit recording sign-in action missing`)
     if (!layout.issueText?.includes('Compass #32') || !layout.publicContent) failures.push(`${width}px: deterministic public issue content did not load ${JSON.stringify(layout)}`)
     if (layout.recorderCount || layout.adminCount) failures.push(`${width}px: anonymous shell exposed write/admin controls ${JSON.stringify(layout)}`)
     if (layout.docScrollWidth > width || layout.bodyScrollWidth > width || layout.offenders.length) {
