@@ -85,6 +85,7 @@ describe('public application shell', () => {
         draft={fixtureDraft}
         stage={null}
         publishing={false}
+        error={null}
         canResume={false}
         canDiscard={false}
         onResume={() => undefined}

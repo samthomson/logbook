@@ -432,9 +432,16 @@ export default function App() {
         {auth ? (
           <>
             <span className="app-identity" title={auth.pubkey}>
-              {identityProfile?.picture && <img src={identityProfile.picture} alt="" />}
-              <span className="app-identity__name">
-                {identityProfile?.name ?? nip19.npubEncode(auth.pubkey).slice(0, 16) + '…'}
+              <span className="app-identity__avatar" aria-hidden="true">
+                {identityProfile?.picture ? (
+                  <img src={identityProfile.picture} alt="" loading="lazy" />
+                ) : (
+                  <span>{(identityProfile?.name ?? auth.pubkey).slice(0, 2).toUpperCase()}</span>
+                )}
+              </span>
+              <span className="app-identity__text">
+                <code>{nip19.npubEncode(auth.pubkey).slice(0, 16)}…</code>
+                {identityProfile?.name && <strong>{identityProfile.name}</strong>}
               </span>
             </span>
             {isProducerKey || isAdmin ? (

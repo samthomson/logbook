@@ -106,7 +106,7 @@ export default function IssueTimeline({
   publishCapabilityRef.current = { issueNumber: issue.issueNumber, myPubkey, recordingEnabled, signer }
   const [sections, setSections] = useState<Map<string, SectionState>>(new Map())
   const [recordTarget, setRecordTarget] = useState<RecordTarget | null>(null)
-  const [publishError, setPublishError] = useState<string | null>(null)
+  const [draftErrors, setDraftErrors] = useState<Map<string, string>>(new Map())
   const [pendingDrafts, setPendingDrafts] = useState<RecordingDraft[]>([])
   const [publishingDraftIds, setPublishingDraftIds] = useState<Set<string>>(new Set())
   const [uploadStages, setUploadStages] = useState<Map<string, string>>(new Map())
@@ -281,16 +281,28 @@ export default function IssueTimeline({
   const pendingRef = useRef<Map<string, PendingTake>>(new Map())
   const activePublishAttemptsRef = useRef<Map<string, symbol>>(new Map())
 
+  const setDraftError = useCallback((draftId: string, message: string | null) => {
+    setDraftErrors((current) => {
+      const next = new Map(current)
+      if (message) next.set(draftId, message)
+      else next.delete(draftId)
+      return next
+    })
+  }, [])
+
+  const canResumeDraft = useCallback((draft: RecordingDraft) => (
+    recordingEnabled
+    && draftBelongsTo(draft, myPubkey)
+    && capabilityRequest !== null
+    && capabilityRequests.isCurrent(capabilityRequest)
+  ), [capabilityRequest, capabilityRequests, myPubkey, recordingEnabled])
+
   useEffect(() => {
-    const activePublishAttempts = activePublishAttemptsRef.current
-    activePublishAttempts.clear()
+    activePublishAttemptsRef.current.clear()
     setPublishingDraftIds(new Set())
     setUploadStages(new Map())
-    setPublishError(null)
-    // Recorder targets belong to one issue/identity capability. Never carry a
-    // hidden or active target across issue, signer, or authorization changes.
     setRecordTarget(null)
-    return () => { activePublishAttempts.clear() }
+    return () => { activePublishAttemptsRef.current.clear() }
   }, [issue.issueNumber, myPubkey, recordingEnabled, signer])
 
   const handleRecorded = useCallback(
@@ -327,7 +339,10 @@ export default function IssueTimeline({
         })
         setPendingDrafts((current) => [draft, ...current.filter((item) => item.id !== draftId)])
         await saveDraft(draft).catch((error) => console.warn('Unable to persist recording draft:', error))
-        setPublishError('Recording saved locally. Retry after contributor access finishes refreshing.')
+        setDraftError(
+          draftId,
+          'Recording saved on this device. Resume once contributor access finishes refreshing.',
+        )
         return
       }
 
@@ -354,6 +369,12 @@ export default function IssueTimeline({
       if (!isPublishingActive()) {
         if (activePublishAttemptsRef.current.get(draftId) === attemptToken) {
           activePublishAttemptsRef.current.delete(draftId)
+        }
+        if (hasVerifiedCapability) {
+          setDraftError(
+            draftId,
+            'Upload could not start — contributor access is still refreshing. Try again in a moment.',
+          )
         }
         return
       }
@@ -395,7 +416,7 @@ export default function IssueTimeline({
       try {
         assertPublishingActive()
         setPublishingDraftIds((current) => new Set([...current, draftId]))
-        setPublishError(null)
+        setDraftError(draftId, null)
         setStage('Preparing upload')
         await persistDraft(resumablePending?.descriptor ?? null)
         assertPublishingActive()
@@ -438,6 +459,7 @@ export default function IssueTimeline({
         // after this point must re-check capability before touching UI again.
         pendingRef.current.delete(draftId)
         setPendingDrafts((current) => current.filter((item) => item.id !== draftId))
+        setDraftError(draftId, null)
         await deleteDraft(draftId).catch((error) => console.warn('Unable to remove published recording draft:', error))
         if (!isPublishingActive()) return
         const newSeg = parseSegment(event)
@@ -461,12 +483,13 @@ export default function IssueTimeline({
           }, 3000)
         }
       } catch (err) {
-        if (isPublishingActive()) {
-          // Keep the pending recording + descriptor so a current contributor can
-          // retry without re-recording or re-uploading. Stale sessions stay silent.
+        if (pendingRef.current.has(draftId)) {
           console.error('Publish failed:', err)
           const msg = err instanceof Error ? err.message : String(err)
-          setPublishError(`Publish failed — recording NOT lost, resume the saved upload to retry. (${msg.slice(0, 160)})`)
+          setDraftError(
+            draftId,
+            `Upload failed — recording saved on this device. (${msg.slice(0, 160)})`,
+          )
         }
       } finally {
         // A revoked attempt may settle after the same draft was restored and
@@ -487,8 +510,34 @@ export default function IssueTimeline({
         }
       }
     },
-    [capabilityRequest, capabilityRequests, issue.issueNumber, myPubkey, recordingEnabled, signer],
+    [capabilityRequest, capabilityRequests, issue.issueNumber, myPubkey, recordingEnabled, setDraftError, signer],
   )
+
+  const retryPendingDraft = useCallback((draftId: string) => {
+    if (activePublishAttemptsRef.current.has(draftId)) return
+    const draft = pendingDrafts.find((item) => item.id === draftId)
+    const pending = pendingRef.current.get(draftId)
+    if (!draft || !pending || !draftBelongsTo(draft, myPubkey)) return
+    if (!canResumeDraft(draft)) {
+      setDraftError(
+        draftId,
+        'Contributor access is still refreshing — wait a moment, then try again.',
+      )
+      return
+    }
+    if (!draft.blob || draft.blob.size < 100) {
+      setDraftError(draftId, 'Recording data is missing on this device — discard and re-record.')
+      return
+    }
+    const result = { blob: draft.blob, duration: draft.duration, waveform: draft.waveform }
+    pendingRef.current.set(draftId, {
+      ...pending,
+      result,
+      descriptor: draft.descriptor,
+    })
+    setDraftError(draftId, null)
+    void handleRecorded(result, pending.target, draftId)
+  }, [canResumeDraft, handleRecorded, myPubkey, pendingDrafts, setDraftError])
 
   // Restore every take owned by this principal. They are never published
   // automatically; each remains durable and independently resumable.
@@ -518,12 +567,6 @@ export default function IssueTimeline({
     return () => { alive = false }
   }, [issue.issueNumber, myPubkey])
 
-  const retryPendingDraft = useCallback((draftId: string) => {
-    const pending = pendingRef.current.get(draftId)
-    if (!pending || pending.ownerPubkey !== myPubkey || activePublishAttemptsRef.current.has(draftId)) return
-    void handleRecorded(pending.result, pending.target, draftId)
-  }, [handleRecorded, myPubkey])
-
   const discardPendingDraft = useCallback((draftId: string) => {
     const draft = pendingDrafts.find((item) => item.id === draftId)
     if (
@@ -535,8 +578,9 @@ export default function IssueTimeline({
     ) return
     pendingRef.current.delete(draftId)
     setPendingDrafts((current) => current.filter((item) => item.id !== draftId))
+    setDraftError(draftId, null)
     void deleteDraft(draftId).catch((error) => console.warn('Unable to discard recording draft:', error))
-  }, [capabilityRequest, capabilityRequests, myPubkey, pendingDrafts])
+  }, [capabilityRequest, capabilityRequests, myPubkey, pendingDrafts, setDraftError])
 
   const allSegments = useMemo(() => {
     const map = new Map<string, Segment>()
@@ -609,9 +653,6 @@ export default function IssueTimeline({
           </p>
           {leadProse && <SectionExcerpt section={{ id: '__lead', title: '', items: [{ title: '', body: leadProse }] }} profiles={profiles} />}
         </header>
-        {publishError && (
-          <div className="timeline__publish-error" role="alert">{publishError}</div>
-        )}
         {cut.failure && producer && (
           <div className="produce__failed" role="alert">
             <strong>The audio could not be made, so the episode came back to you.</strong>
@@ -815,7 +856,8 @@ export default function IssueTimeline({
                                   draft={draft}
                                   stage={uploadStages.get(draft.id) ?? null}
                                   publishing={publishingDraftIds.has(draft.id)}
-                                  canResume={recordingEnabled && draftBelongsTo(draft, myPubkey)}
+                                  error={draftErrors.get(draft.id) ?? null}
+                                  canResume={canResumeDraft(draft)}
                                   canDiscard={recordingEnabled && draftBelongsTo(draft, myPubkey)}
                                   onResume={() => retryPendingDraft(draft.id)}
                                   onDiscard={() => discardPendingDraft(draft.id)}
@@ -835,7 +877,8 @@ export default function IssueTimeline({
                         draft={draft}
                         stage={uploadStages.get(draft.id) ?? null}
                         publishing={publishingDraftIds.has(draft.id)}
-                        canResume={recordingEnabled && draftBelongsTo(draft, myPubkey)}
+                        error={draftErrors.get(draft.id) ?? null}
+                        canResume={canResumeDraft(draft)}
                         canDiscard={recordingEnabled && draftBelongsTo(draft, myPubkey)}
                         onResume={() => retryPendingDraft(draft.id)}
                         onDiscard={() => discardPendingDraft(draft.id)}
