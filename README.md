@@ -37,3 +37,11 @@ Compass npub. Changing `COMPASS_PUBKEY` needs a rebuild; Vite inlines it.
 ## Design
 
 `PLAN.md` is the locked event schema. `AGENTS.md` is for agents, not operators.
+
+## Later
+
+- Seed issues reuse one stub outline (same H2/H3 every time). A real test is a
+  pasted Compass 30023, not another run of `seed`.
+- Tag a guest on a chapter, not only on the episode whitelist. Today an `npub`
+  in the newsletter is a suggested add for the whole issue.
+

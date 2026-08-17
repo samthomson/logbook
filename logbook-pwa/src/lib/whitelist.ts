@@ -260,12 +260,16 @@ export async function publishWhitelist(
   return event
 }
 
-/** Fetch current entries for one d-tag (for the admin editor). */
+/** Fetch current entries for one d-tag (for the editor). Contributor lists
+ *  accept Compass or a producer; the producer list is Compass-signed only. */
 export async function fetchWhitelistEntries(
   dTag: string,
   relays: string[] = RELAYS,
 ): Promise<WhitelistEntry[]> {
-  const ev = await fetchWhitelistEvent(dTag, relays)
+  const authors = dTag === D_ADMINS
+    ? [COMPASS_PUBKEY]
+    : [...await fetchProducerPubkeys(relays)]
+  const ev = await fetchWhitelistEvent(dTag, relays, false, authors)
   if (!ev) return []
   return parseEntries(ev, dTag === D_ADMINS ? 'admins' : 'contributors')
 }

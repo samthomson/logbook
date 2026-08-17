@@ -27,7 +27,7 @@ if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
 }
 
 const titleIndex = args.indexOf('--title')
-const title = titleIndex >= 0 ? args[titleIndex + 1] : `Test Compass #${issueNumber}`
+const title = titleIndex >= 0 ? args[titleIndex + 1] : `Nostr Compass #${issueNumber}`
 if (titleIndex >= 0 && !title) {
   console.error('--title requires a value')
   process.exit(1)
@@ -41,24 +41,33 @@ if (COMPASS_PUBKEY === REAL_COMPASS_PUBKEY) {
   process.exit(1)
 }
 
-// H2 becomes a chapter group, H3 a recording target within it. A group whose
-// lead prose is empty contributes no chapter of its own, so every group here
-// carries prose to keep the seeded issue's chapter list predictable.
+// Same heading grammar as a real Compass issue (NIP-23 markdown): a lede,
+// then ## sections with ### items and a paragraph of prose under each.
+// H2 lead prose must be non-empty or that group is not a recording chapter.
 const content = [
-  `## Lead stories`,
-  `The stories that opened issue ${issueNumber}, narrated as the section lead.`,
+  `Amethyst shipped calendars and on-chain zap splits. White Noise got iOS push.`,
+  `Relays and blossom servers had a quieter week. Clients kept moving.`,
   ``,
-  `### Relay operations`,
-  `What changed for relay operators this week.`,
+  `## Top stories`,
+  `The releases that opened the week.`,
   ``,
-  `### Client releases`,
-  `Notable client updates worth a comment.`,
+  `### Amethyst v1.11.0`,
+  `Calendars landed as their own timeline, not jammed into long-form. On-chain zap splits now match Lightning splits. Group replies in Marmot threads use the same parent UI as public notes.`,
   ``,
-  `## Apps & Clients`,
-  `A short lead paragraph for the apps section.`,
+  `### White Noise iOS push`,
+  `A Notification Service Extension decrypts MLS messages on the phone so iPhone users see traffic without leaving the app open. Block/unblock and add-members finally have buttons.`,
   ``,
-  `### Blossom media`,
-  `Media hosting changes across Blossom servers.`,
+  `## Relays`,
+  `What operators actually changed.`,
+  ``,
+  `### Citrine per-relay subscriptions`,
+  `Citrine stopped sharing one global filter across every upstream, so two relays with kinds:[1] no longer collide in the aggregator. Onion URLs stay off the clearnet path when Tor is off.`,
+  ``,
+  `## Clients`,
+  `Everything else worth a voice note.`,
+  ``,
+  `### Vector v0.4.0`,
+  `vector-core is one crate for desktop and Android. NIP-46 bunker login, one-click Tor, and MLS group sync over negentropy. An MCP server exposes twenty-one tools so an agent can drive the messenger.`,
   ``,
 ].join('\n')
 
