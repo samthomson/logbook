@@ -78,12 +78,21 @@ export async function uploadToBlossom(
     try {
       const res = await fetch(`${server}/upload`, {
         method: 'PUT',
-        headers: { Authorization: authHeader, 'Content-Type': mime },
+        headers: {
+          Authorization: authHeader,
+          'Content-Type': mime,
+          'Content-Length': String(data.length),
+          'X-SHA-256': sha256,
+          'X-Content-Type': mime,
+          'X-Content-Length': String(data.length),
+        },
         body: new Uint8Array(data),
         signal: AbortSignal.timeout(120_000),
       })
       if (!res.ok) {
-        errors.push(`${server}: HTTP ${res.status}`)
+        const body = await res.text().catch(() => '')
+        const detail = body.trim().slice(0, 160)
+        errors.push(`${server}: HTTP ${res.status}${detail ? ` ${detail}` : ''}`)
         continue
       }
       const descriptor = (await res.json()) as { url?: unknown; sha256?: unknown }

@@ -16,6 +16,7 @@ import { ADMIN_PUBKEYS, COMPASS_PUBKEY, IOS_RECORDING_MIN_VERSION } from './conf
 import { fetchAccessLists, fetchProducerPubkeys } from './lib/whitelist'
 import { loadCachedIssue } from './lib/issue-cache'
 import { fetchProfiles, type Profile } from './lib/profiles'
+import { avatarInitials, avatarStyle } from './lib/avatar'
 import { nip19 } from 'nostr-tools'
 import type { CompassIssue, NostrEvent } from './types/nostr'
 import { loadAccessSnapshot, saveAccessSnapshot, clearAccessSnapshot } from './lib/access-cache'
@@ -432,11 +433,15 @@ export default function App() {
         {auth ? (
           <>
             <span className="app-identity" title={auth.pubkey}>
-              <span className="app-identity__avatar" aria-hidden="true">
+              <span
+                className="app-identity__avatar"
+                style={identityProfile?.picture ? undefined : avatarStyle(auth.pubkey)}
+                aria-hidden="true"
+              >
                 {identityProfile?.picture ? (
                   <img src={identityProfile.picture} alt="" loading="lazy" />
                 ) : (
-                  <span>{(identityProfile?.name ?? auth.pubkey).slice(0, 2).toUpperCase()}</span>
+                  <span>{avatarInitials(identityProfile?.name, auth.pubkey)}</span>
                 )}
               </span>
               <span className="app-identity__text">

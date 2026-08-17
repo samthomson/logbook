@@ -683,7 +683,7 @@ html,
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  border: 1px solid var(--line);
+  border: 2px solid rgba(255, 255, 255, 0.8);
   background: var(--surface);
   color: var(--muted);
   font-size: 0.75rem;
@@ -707,11 +707,6 @@ html,
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: #fff;
-}
-
-.bubble--own .bubble__body {
-  background: #eef4ff;
-  border-color: #c9dbf8;
 }
 
 .bubble__head {

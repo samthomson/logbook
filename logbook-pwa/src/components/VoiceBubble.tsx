@@ -7,6 +7,7 @@ import { nip19 } from 'nostr-tools'
 import { usePlayback } from '../lib/playback'
 import type { Segment } from '../types/nostr'
 import { authorLabel, type Profile } from '../lib/profiles'
+import { avatarInitials, avatarStyle, noteTint } from '../lib/avatar'
 import { formatDuration, clamp } from '../lib/utils'
 import { useState } from 'react'
 
@@ -68,9 +69,9 @@ export default function VoiceBubble({
   }
 
   const name = authorLabel(profile, segment.event.pubkey)
-  const initial = profile?.name?.trim()
-    ? profile.name.trim().slice(0, 2).toUpperCase()
-    : null
+  const initials = avatarInitials(profile?.name, segment.event.pubkey)
+  const avatarColors = avatarStyle(segment.event.pubkey)
+  const tint = noteTint(segment.event.pubkey)
   const npub = profile?.name?.trim() ? nip19.npubEncode(segment.event.pubkey) : null
 
   return (
@@ -78,17 +79,13 @@ export default function VoiceBubble({
       id={`voice-note-${segment.event.id}`}
       className={`bubble ${isOwn ? 'bubble--own' : ''} ${isNew ? 'bubble--new' : ''} ${cut && !cut.inCut ? 'bubble--out' : ''}`}
     >
-      <div className="bubble__body">
+      <div className="bubble__body" style={tint}>
         <div className="bubble__head">
-          <div className="bubble__avatar" aria-hidden="true">
+          <div className="bubble__avatar" style={avatarColors} aria-hidden="true">
             {profile?.picture ? (
               <img src={profile.picture} alt="" loading="lazy" />
-            ) : initial ? (
-              <span>{initial}</span>
             ) : (
-              <svg className="bubble__avatar-icon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
-                <path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0 2c-4.42 0-8 2.24-8 5v1h16v-1c0-2.76-3.58-5-8-5Z" />
-              </svg>
+              <span>{initials}</span>
             )}
           </div>
           <div className="bubble__who">

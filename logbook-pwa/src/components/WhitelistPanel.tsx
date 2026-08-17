@@ -21,6 +21,7 @@ import {
 } from '../lib/whitelist'
 import { nip19 } from 'nostr-tools'
 import { fetchProfiles, type Profile } from '../lib/profiles'
+import { avatarInitials, avatarStyle } from '../lib/avatar'
 
 interface Props {
   issueNumber: number
@@ -324,10 +325,11 @@ function WhitelistIdentity({
 }) {
   const name = profile?.name ?? fallbackName ?? null
   const npub = `${nip19.npubEncode(pubkey).slice(0, 16)}…`
-  const initials = (name ?? pubkey.slice(0, 2)).slice(0, 2).toUpperCase()
+  const initials = avatarInitials(name, pubkey)
+  const avatarColors = profile?.picture ? undefined : avatarStyle(pubkey)
   return (
     <span className="wl-identity" title={pubkey}>
-      <span className="wl-identity__avatar" aria-hidden="true">
+      <span className="wl-identity__avatar" style={avatarColors} aria-hidden="true">
         {profile?.picture ? <img src={profile.picture} alt="" loading="lazy" /> : initials}
       </span>
       <span className="wl-identity__text">
