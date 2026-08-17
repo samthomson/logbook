@@ -14,6 +14,16 @@ import { requiredChapterTargets } from './issue-targets.ts'
 import { missingManifestIssueIds } from './watch-state.ts'
 import { runWatcherCycle } from './watch-runner.ts'
 import { verifyNostrEvent } from './segment-security.ts'
+import { fetchProducerPubkeys } from './producers.ts'
+
+async function withPool<T>(run: (pool: SimplePool) => Promise<T>): Promise<T> {
+  const pool = new SimplePool()
+  try {
+    return await run(pool)
+  } finally {
+    pool.close(RELAYS)
+  }
+}
 
 // ── types ────────────────────────────────────────────────────────────────────
 
@@ -121,13 +131,17 @@ async function createManifest(event: NostrEvent, signer: CompassSigner): Promise
 
 // ── AUTO-01: stitch trigger ──────────────────────────────────────────────────
 
-async function pollCuttingManifests(completedRevisionIds: Set<string>): Promise<void> {
+async function pollCuttingManifests(
+  completedIssueIds: Set<string>,
+  stitchedRevisions: Set<string>,
+): Promise<void> {
+  const producers = await withPool((pool) => fetchProducerPubkeys(pool))
   const fetchManifests = async (): Promise<NostrEvent[]> => {
     const pool = new SimplePool()
     try {
       return await pool.querySync(RELAYS, {
         kinds: [KINDS.MANIFEST],
-        authors: [COMPASS_PUBKEY],
+        authors: [...producers],
         limit: 20,
       })
     } finally {
@@ -135,9 +149,9 @@ async function pollCuttingManifests(completedRevisionIds: Set<string>): Promise<
     }
   }
   const __dir = dirname(fileURLToPath(import.meta.url))
-  const results = await runWatcherCycle(completedRevisionIds, {
+  const results = await runWatcherCycle(completedIssueIds, {
     fetchManifests,
-    expectedPubkey: COMPASS_PUBKEY,
+    expectedPubkey: producers,
     verify: (event) => verifyNostrEvent(event as NostrEvent),
     runStitch: (issueId) => {
       console.log(`[watch-compass] Manifest ${issueId} is cutting — triggering stitch`)
@@ -152,7 +166,7 @@ async function pollCuttingManifests(completedRevisionIds: Set<string>): Promise<
       ['tsx', 'publish-rss.ts', '--issue', issueId],
       { cwd: __dir, stdio: 'inherit', env: process.env },
     ).status ?? 1,
-  })
+  }, stitchedRevisions)
 
   for (const result of results) {
     if (result.outcome === 'stale') {
@@ -211,18 +225,23 @@ async function main(): Promise<void> {
   // already have a valid Compass-authored manifest. This fixes the historical
   // gap created when the watcher first starts after an issue has published.
   const pool = new SimplePool()
+  const bootstrapProducers = await fetchProducerPubkeys(pool)
   const filter: Filter = { kinds: [KINDS.COMPASS_ISSUE], authors: [COMPASS_PUBKEY], limit: 50 }
   const [existing, manifests] = await Promise.all([
     pool.querySync(RELAYS, filter, { maxWait: RELAY_QUERY_TIMEOUT_MS }),
     pool.querySync(
       RELAYS,
-      { kinds: [KINDS.MANIFEST], authors: [COMPASS_PUBKEY], limit: 50 },
+      { kinds: [KINDS.MANIFEST], authors: [...bootstrapProducers], limit: 50 },
       { maxWait: RELAY_QUERY_TIMEOUT_MS },
     ),
   ])
   pool.close(RELAYS)
   const validIssues = existing.filter((event) => event.pubkey === COMPASS_PUBKEY && verifyNostrEvent(event))
-  const validManifests = manifests.filter((event) => event.pubkey === COMPASS_PUBKEY && verifyNostrEvent(event))
+  // A producer-authored manifest already covers its issue: backfilling a second
+  // Compass draft would fork the episode.
+  const validManifests = manifests.filter(
+    (event) => bootstrapProducers.has(event.pubkey.toLowerCase()) && verifyNostrEvent(event),
+  )
   const issueById = new Map(validIssues.map((event) => [event.id, event]))
   const missingIds = missingManifestIssueIds(validIssues, validManifests)
   for (const id of missingIds) {
@@ -234,12 +253,16 @@ async function main(): Promise<void> {
   for (const event of validIssues) seen.add(event.id)
   console.log(`[watch-compass] Bootstrapped with ${seen.size} verified issues; backfilled ${missingIds.length} manifest(s)`)
 
-  const completedRevisionIds = new Set<string>()
+  const completedIssueIds = new Set<string>()
+  const stitchedRevisions = new Set<string>()
 
-  const INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
-  setInterval(() => poll(signer, seen).catch(console.error), INTERVAL_MS)
-  setInterval(() => pollCuttingManifests(completedRevisionIds).catch(console.error), INTERVAL_MS)
-  console.log('[watch-compass] Polling every 10 minutes…')
+  const tick = () => {
+    poll(signer, seen).catch(console.error)
+    pollCuttingManifests(completedIssueIds, stitchedRevisions).catch(console.error)
+  }
+  tick()
+  setInterval(tick, 60 * 1000)
+  console.log('[watch-compass] Polling every minute…')
 }
 
 main().catch(err => {

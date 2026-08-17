@@ -1,97 +1,102 @@
 /**
- * Seed order computation — depth-first reply-forest walk.
+ * Seed order: depth-first reply forest, intro pinned at 0.
  *
- * Per SPEC.md §3 and PLAN.md §2:
- *   - Roots = segments with no responding_to, OR whose responding_to target
- *     is outside this section's segment set.
- *   - Walk depth-first: roots in chronological order, each root's replies
- *     in chronological order, each subtree kept contiguous.
- *   - Intro segment (isIntro=true) is always moved to position 0 after walk.
- *   - Cycle-safe: responding_to always points to a pre-existing event ID.
- *
- * Example:
- *   A (t=1, root), B (t=2, replies to A), C (t=3, root), D (t=4, replies to B)
- *   Result: [A, B, D, C]
+ * A reply is a guest answering another note. The seed places it directly after
+ * its parent so the producer does not have to reconstruct that by hand. The
+ * producer's saved `order` is still what the stitcher plays.
  */
 
 import type { Segment } from '../types/nostr'
 
-/**
- * Compute the seed EDL order for a section's segments.
- * Returns an array of event IDs in playback order.
- */
 export function computeSeedOrder(segments: Segment[]): string[] {
   if (!segments.length) return []
 
-  const byId = new Map<string, Segment>()
-  for (const seg of segments) {
-    byId.set(seg.event.id, seg)
-  }
-
-  const sectionIds = new Set(segments.map((s) => s.event.id))
-
-  // Build reply map: parentId → children (sorted by created_at)
+  const byId = new Map(segments.map((segment) => [segment.event.id, segment]))
+  const inSection = new Set(byId.keys())
   const children = new Map<string, Segment[]>()
   const roots: Segment[] = []
 
-  for (const seg of segments) {
-    const parentId = seg.respondingTo
-    if (parentId && sectionIds.has(parentId)) {
-      // This segment replies to another segment in this section
+  for (const segment of segments) {
+    const parentId = segment.respondingTo
+    if (parentId && inSection.has(parentId)) {
       const siblings = children.get(parentId) ?? []
-      siblings.push(seg)
+      siblings.push(segment)
       children.set(parentId, siblings)
     } else {
-      // Root: no responding_to, or target is outside this section
-      roots.push(seg)
+      roots.push(segment)
     }
   }
 
-  // Sort roots and each child group chronologically
-  roots.sort((a, b) => a.event.created_at - b.event.created_at)
-  for (const [, siblings] of children) {
-    siblings.sort((a, b) => a.event.created_at - b.event.created_at)
-  }
+  const byTime = (a: Segment, b: Segment) =>
+    a.event.created_at - b.event.created_at || a.event.id.localeCompare(b.event.id)
+  roots.sort(byTime)
+  for (const siblings of children.values()) siblings.sort(byTime)
 
-  // Depth-first walk
   const order: string[] = []
   const visited = new Set<string>()
-
-  function walk(seg: Segment): void {
-    if (visited.has(seg.event.id)) return
-    visited.add(seg.event.id)
-    order.push(seg.event.id)
-    for (const child of children.get(seg.event.id) ?? []) {
-      walk(child)
-    }
+  function walk(segment: Segment): void {
+    if (visited.has(segment.event.id)) return
+    visited.add(segment.event.id)
+    order.push(segment.event.id)
+    for (const child of children.get(segment.event.id) ?? []) walk(child)
   }
+  for (const root of roots) walk(root)
+  for (const segment of [...segments].sort(byTime)) walk(segment)
 
-  for (const root of roots) {
-    walk(root)
-  }
-
-  // Append any segments unreachable due to mutual-reply cycles (sorted chronologically)
-  for (const seg of [...segments].sort((a, b) => a.event.created_at - b.event.created_at)) {
-    if (!visited.has(seg.event.id)) {
-      order.push(seg.event.id)
-    }
-  }
-
-  // Pin intro to position 0 (move from wherever it landed)
-  const introIdx = order.findIndex((id) => byId.get(id)?.isIntro)
-  if (introIdx > 0) {
-    const [introId] = order.splice(introIdx, 1)
+  const introIndex = order.findIndex((id) => byId.get(id)?.isIntro)
+  if (introIndex > 0) {
+    const [introId] = order.splice(introIndex, 1)
     order.unshift(introId)
   }
-
   return order
 }
 
 /**
- * Merge a new late-arriving segment ID into an existing EDL order.
- * Late segments always append to the tail, never mid-list.
- * Returns the updated order array.
+ * Display walk: replies nest under the note they answer, even if the producer
+ * moved them in the flat cut. Sibling order follows `preferredOrder`.
  */
+export function nestDisplayOrder(
+  segments: Segment[],
+  preferredOrder: string[],
+): Array<{ id: string; depth: number }> {
+  if (!segments.length) return []
+
+  const byId = new Map(segments.map((segment) => [segment.event.id, segment]))
+  const inSection = new Set(byId.keys())
+  const rank = new Map(preferredOrder.map((id, index) => [id, index]))
+  const byRank = (a: Segment, b: Segment) =>
+    (rank.get(a.event.id) ?? Number.POSITIVE_INFINITY) - (rank.get(b.event.id) ?? Number.POSITIVE_INFINITY)
+    || a.event.created_at - b.event.created_at
+    || a.event.id.localeCompare(b.event.id)
+
+  const children = new Map<string, Segment[]>()
+  const roots: Segment[] = []
+  for (const segment of segments) {
+    const parentId = segment.respondingTo
+    if (parentId && inSection.has(parentId)) {
+      const siblings = children.get(parentId) ?? []
+      siblings.push(segment)
+      children.set(parentId, siblings)
+    } else {
+      roots.push(segment)
+    }
+  }
+  for (const siblings of children.values()) siblings.sort(byRank)
+  roots.sort(byRank)
+
+  const out: Array<{ id: string; depth: number }> = []
+  const visited = new Set<string>()
+  function walk(segment: Segment, depth: number): void {
+    if (visited.has(segment.event.id)) return
+    visited.add(segment.event.id)
+    out.push({ id: segment.event.id, depth })
+    for (const child of children.get(segment.event.id) ?? []) walk(child, Math.min(depth + 1, 4))
+  }
+  for (const root of roots) walk(root, 0)
+  for (const segment of [...segments].sort(byRank)) walk(segment, 0)
+  return out
+}
+
 export function appendLateSegment(
   currentOrder: string[],
   newSegmentId: string,
@@ -100,10 +105,6 @@ export function appendLateSegment(
   return [...currentOrder, newSegmentId]
 }
 
-/**
- * Reorder segments by moving a segment from one index to another.
- * Used for admin drag-to-reorder.
- */
 export function reorderSegments(
   order: string[],
   fromIndex: number,
@@ -119,11 +120,17 @@ export function reorderSegments(
   return result
 }
 
-/**
- * Filter an order array to remove excluded segment IDs.
- * Used by the stitcher to get the final cut list.
- */
 export function applyExclusions(order: string[], excluded: string[]): string[] {
   const excludedSet = new Set(excluded)
   return order.filter((id) => !excludedSet.has(id))
+}
+
+/** Place a reply immediately after its parent when that parent is already in the cut. */
+export function insertInCutOrder(order: string[], segment: Segment): string[] {
+  const without = order.filter((id) => id !== segment.event.id)
+  if (segment.respondingTo) {
+    const at = without.indexOf(segment.respondingTo)
+    if (at >= 0) return [...without.slice(0, at + 1), segment.event.id, ...without.slice(at + 1)]
+  }
+  return [...without, segment.event.id]
 }

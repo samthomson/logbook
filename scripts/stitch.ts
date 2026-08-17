@@ -42,9 +42,12 @@ import {
   encodeMp3,
   loudnorm,
   requireFfmpeg,
+  SilentClipError,
   trimSilence,
 } from './stitch-media.ts'
-import { createCompassAmberSigner } from './amber-signer.ts'
+import { createCompassAmberSigner, type CompassSigner } from './amber-signer.ts'
+import { fetchProducerPubkeys } from './producers.ts'
+import { draftAfterFailure, SegmentFailure } from './stitch-failure.ts'
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -109,15 +112,16 @@ async function downloadBlob(url: string, destPath: string, expectedSha256: strin
 // ── relay helpers ─────────────────────────────────────────────────────────────
 
 async function fetchManifest(issueId: string, pool: SimplePool): Promise<{ manifest: ManifestContent; event: ManifestEvent }> {
+  const producers = await fetchProducerPubkeys(pool)
   const events = await pool.querySync(RELAYS, {
     kinds: [KINDS.MANIFEST],
-    authors: [COMPASS_PUBKEY],
+    authors: [...producers],
     '#d': [issueId],
     limit: 50,
   })
 
   const event = latestVerifiedManifest(events as ManifestEvent[], issueId, {
-    expectedPubkey: COMPASS_PUBKEY,
+    expectedPubkey: producers,
     verify: (candidate) => verifyNostrEvent(candidate as never),
   })
   if (!event) throw new Error(`No verified manifest found for issue ${issueId}`)
@@ -197,6 +201,39 @@ interface Chapter {
   img?: string
 }
 
+// ── failure hand-back ─────────────────────────────────────────────────────────
+
+interface HandBack {
+  issueId: string
+  manifest: ManifestContent
+  event: ManifestEvent
+  signer: CompassSigner
+}
+
+/** Set once the run has taken a locked episode on, cleared by nothing else. */
+let handBack: HandBack | null = null
+
+async function returnEpisodeToProducer(target: HandBack, error: unknown): Promise<void> {
+  const now = Math.floor(Date.now() / 1000)
+  const content = draftAfterFailure(target.manifest, error, now)
+  const event = await target.signer.signEvent({
+    kind: KINDS.MANIFEST,
+    // Addressable event: the hand-back must win over the producer's lock.
+    created_at: Math.max(now, (target.event.created_at ?? 0) + 1),
+    tags: target.event.tags,
+    content: JSON.stringify(content),
+  })
+  const pool = new SimplePool()
+  try {
+    await Promise.any(pool.publish(RELAYS, event))
+  } finally {
+    pool.close(RELAYS)
+  }
+  console.log(
+    `[stitch] Episode ${target.issueId} handed back to the producer as a draft: ${content.lastFailure.reason}`,
+  )
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -230,6 +267,12 @@ async function main(): Promise<void> {
     console.log('[stitch] Episode already published. Use --force to re-stitch.')
     pool.close(RELAYS)
     return
+  }
+
+  // From here on the episode is locked for cutting, so a fatal error owes the
+  // producer the cut back.
+  if (manifest.episodeStatus === 'cutting' && !dryRun) {
+    handBack = { issueId, manifest, event: manifestEvent, signer }
   }
 
   // Collect all segment ids referenced in non-excluded sections.
@@ -286,7 +329,22 @@ async function main(): Promise<void> {
       await downloadBlob(seg.content.audio.url, rawPath, seg.content.audio.sha256)
       assertHasAudioStream(rawPath)
 
-      const normPath = loudnorm(rawPath, workDir)
+      let normPath: string
+      try {
+        normPath = loudnorm(rawPath, workDir)
+      } catch (error) {
+        if (error instanceof SilentClipError) {
+          // The producer reads the reason in the app, where the note itself is
+          // flagged; the ids belong in the operator's log.
+          console.error(`[stitch] Silent segment ${segId} at ${seg.content.audio.url}`)
+          throw new SegmentFailure(
+            `A voice note in “${section.title}” recorded no sound. Take it out of the cut, then publish again.`,
+            segId,
+            section.id,
+          )
+        }
+        throw error
+      }
       const trimPath = trimSilence(normPath, workDir)
       clipWavs.push(trimPath)
     }
@@ -315,8 +373,7 @@ async function main(): Promise<void> {
   }
 
   if (!sectionWavs.length) {
-    console.error('[stitch] No sections to stitch. Aborting.')
-    process.exit(1)
+    throw new Error('[stitch] No chapter produced any audio, so there is nothing to stitch.')
   }
 
   // Acrossfade sections together
@@ -430,7 +487,14 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error('[stitch] Fatal:', err)
+  if (handBack) {
+    try {
+      await returnEpisodeToProducer(handBack, err)
+    } catch (writeBack) {
+      console.error('[stitch] Could not hand the episode back to the producer:', writeBack)
+    }
+  }
   process.exit(1)
 })

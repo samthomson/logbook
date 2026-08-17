@@ -6,6 +6,7 @@ import UploadBubble from './components/UploadBubble'
 import type { CompassIssue } from './types/nostr'
 import type { RecordingDraft } from './lib/drafts'
 import { createLatestRequestGuard } from './lib/latest-request'
+import { episodeAddress } from './lib/route'
 
 const fixtureIssue: CompassIssue = {
   issueNumber: 32,
@@ -30,7 +31,7 @@ const fixtureDraft: RecordingDraft = {
   id: 'draft-1',
   issueNumber: 32,
   ownerPubkey: 'a'.repeat(64),
-  target: { sectionId: 'sec-lead-stories-public-chapter-32', respondingTo: null },
+  target: { sectionId: 'sec-lead-stories-public-chapter-32' },
   blob: new Blob(['voice'], { type: 'audio/webm' }),
   duration: 1,
   waveform: [0.5],
@@ -39,12 +40,26 @@ const fixtureDraft: RecordingDraft = {
 }
 
 describe('public application shell', () => {
-  it('starts loading the public timeline without requiring authentication', () => {
+  it('opens on the public episode index without requiring authentication', () => {
     const html = renderToStaticMarkup(<App />)
 
-    expect(html).toContain('Loading issue…')
+    expect(html).toContain('Episodes')
     expect(html).toContain('Log in')
     expect(html).not.toContain('Advanced options')
+  })
+
+  it('renders an episode route as the listening view', () => {
+    Object.defineProperty(globalThis, 'location', {
+      value: { hash: `#/episode/${episodeAddress(32)}` },
+      configurable: true,
+    })
+    try {
+      const html = renderToStaticMarkup(<App />)
+      expect(html).toContain('Loading episode…')
+      expect(html).not.toContain('Advanced options')
+    } finally {
+      Reflect.deleteProperty(globalThis, 'location')
+    }
   })
 
   it('keeps recording controls hidden when no signer is present', () => {

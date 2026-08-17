@@ -18,6 +18,7 @@ import { join } from 'path'
 import { spawnSync } from 'child_process'
 import { SimplePool } from 'nostr-tools/pool'
 import { COMPASS_PUBKEY, BLOSSOM_SERVERS, RELAYS, KINDS, ISSUE_PREFIX } from './config.ts'
+import { fetchProducerPubkeys } from './producers.ts'
 import { createCompassAmberSigner, type CompassSigner } from './amber-signer.ts'
 import { verifyNostrEvent } from './segment-security.ts'
 
@@ -221,15 +222,16 @@ async function publishIntroSegment(
 
 async function fetchManifest(issueNumber: number) {
   const pool = new SimplePool()
+  const producers = await fetchProducerPubkeys(pool)
   const dTag = `${ISSUE_PREFIX}-${issueNumber}`
   const events = await pool.querySync(RELAYS, {
     kinds: [KINDS.MANIFEST],
-    authors: [COMPASS_PUBKEY],
+    authors: [...producers],
     '#d': [dTag],
     limit: 50,
   })
   const event = events
-    .filter(e => e.pubkey === COMPASS_PUBKEY && verifyNostrEvent(e))
+    .filter(e => producers.has(e.pubkey.toLowerCase()) && verifyNostrEvent(e))
     .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))[0]
   if (!event) throw new Error(`No manifest found for issue ${issueNumber}`)
   return JSON.parse(event.content)

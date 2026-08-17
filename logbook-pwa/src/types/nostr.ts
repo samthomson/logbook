@@ -34,7 +34,7 @@ export interface Segment {
   isIntro: boolean
   sectionId: string
   issueId: string
-  respondingTo: string | null  // event ID, soft pointer only
+  respondingTo: string | null
   alt: string | null
 }
 
@@ -65,11 +65,23 @@ export interface PodcastChapter {
   contributorPubkey: string
 }
 
+/**
+ * Why the worker handed a locked episode back to the producer. Written by the
+ * stitcher, cleared the next time the producer publishes.
+ */
+export interface ManifestFailure {
+  at: number             // unix seconds the stitch run failed
+  reason: string         // one line naming what to fix, no event ids
+  segmentId?: string     // set when one recording is at fault
+  sectionId?: string
+}
+
 export interface ManifestContent {
   issueRef: string       // naddr of kind 30023 Compass issue
   episodeStatus: EpisodeStatus
   sections: ManifestSection[]
   publishedRss: PublishedRss | null
+  lastFailure?: ManifestFailure | null
 }
 
 /** A parsed kind 34200 manifest event. */

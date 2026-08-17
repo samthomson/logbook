@@ -32,7 +32,7 @@ export interface PublishSegmentParams {
   waveform: number[]
   sectionId: string
   issueNumber: number
-  respondingTo?: string   // event ID of the segment being replied to
+  respondingTo?: string
   isIntro?: boolean
   relays?: string[]
   /** Throws when the initiating auth/issue context is no longer current. */
@@ -84,10 +84,7 @@ export async function publishSegment(params: PublishSegmentParams): Promise<Nost
     ['t', issueId],
     ['alt', isIntro ? `AI intro for section: ${sectionId}` : `Voice note on: ${sectionId}`],
   ]
-
-  if (respondingTo) {
-    tags.push(['responding_to', respondingTo])
-  }
+  if (respondingTo) tags.push(['responding_to', respondingTo])
 
   const unsigned = {
     kind: KINDS.SEGMENT,
@@ -361,7 +358,7 @@ export function selectTrustedSegmentEvents(
 
 /**
  * Fetch specific segment events by their event IDs.
- * Used by AdminPanel to load ordered segments from a manifest.
+ * Used by the episode page to load ordered segments from a manifest.
  */
 export async function fetchSegmentsByIds(
   ids: string[],

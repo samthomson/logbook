@@ -37,6 +37,16 @@ describe('admin manifest invariants', () => {
     expect(canEditManifest({ ...manifest(), episodeStatus: 'published' }, COMPASS_PUBKEY)).toBe(false)
   })
 
+  it('permits a producer Compass appointed, and nobody outside that list', () => {
+    const producer = 'b'.repeat(64)
+    const producers = new Set([COMPASS_PUBKEY, producer])
+    expect(canEditManifest(manifest(), producer, producers)).toBe(true)
+    expect(canEditManifest(manifest(), producer.toUpperCase(), producers)).toBe(true)
+    expect(canEditManifest(manifest(), 'c'.repeat(64), producers)).toBe(false)
+    // A locked episode stays final even for a producer.
+    expect(canEditManifest({ ...manifest(), episodeStatus: 'cutting' }, producer, producers)).toBe(false)
+  })
+
   it('excludes a section without destroying its intro event id', () => {
     const excluded = toggleSectionExcluded(manifest(), 0)
     expect(excluded.sections[0].sectionExcluded).toBe(true)

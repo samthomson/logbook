@@ -2,13 +2,64 @@
 
 ## Communication rules (read first)
 
-- Answer the question that was asked, then stop. No preamble, no recap.
-- Default to a few sentences. Prose, not headed sections, unless asked.
-- Never narrate your own debugging. Fixing a bug you introduced is not a finding
-  and does not go in the summary. Report only what changes what the user does.
-- State the outcome first. Cut anything that does not change their next action.
+- Fewest words that carry the information. No preamble, no recap, no summary of
+  work already visible in the diff. Prose, not headed sections, unless asked.
+- Only three things earn space: the operator's next action, a direct answer to
+  what was asked, or a specific question with the trade-off of each option.
+- A found problem is reported once, in one line, with what it costs. Never
+  narrate your own debugging or a bug you introduced.
+- Exception: raise an unasked security, data-loss, or performance issue when it
+  is real and not already covered. Nothing else gets an exception.
 - Do not infer context from unrelated things on the machine (other containers,
   processes, files). Ask or check; never assume they belong to this project.
+
+## How the operator works (do not fight this)
+
+- Docker is the only local workflow. `docker compose --profile dev up --build`
+  runs the worker plus the PWA with Vite HMR, in the foreground, in the
+  operator's own terminal. Never propose `-d`, a host `npm run dev`, or a manual
+  `npm run build` "to check" — typecheck, lint, and unit tests already cover
+  that, and `--profile prod` builds the real bundle.
+- Never ask the operator to run a command whose only purpose is your own
+  verification. Run it yourself or leave it out.
+- Never commit, amend, or push. The operator does all git writes, always, even
+  when the work is finished and tests pass. Read-only git (status, diff, log) is
+  fine.
+- One compose file. One `.env`. Same variable names in `.env`, PWA, and worker.
+
+## UI/UX rules (the operator judges the app by these)
+
+- Two roles, no third. **Producer** curates and releases; **Contributor**
+  records. Compass is the podcast account nobody logs into. Do not invent extra
+  role words ("Listener", "Admin", "Reader"). No badge is better than a new one.
+- Role must not depend on the current page. Producer comes from the key (the
+  Compass-signed producer list); contributor status is per episode.
+- Labels state what *is*, never what to do: "Nothing in the cut", not "Add a
+  recording". Verbs belong on buttons.
+- A button must look like a button. Every `.btn` has a border and a background;
+  the primary action of a view is the only filled one.
+- Route structure is real and visible in the URL (hash routes: `#/`,
+  `#/episode/<naddr>`, `#/login`). Home is the episode index — no
+  episode-specific content on it, and it separates episodes being made from
+  published ones. An episode is addressed by the newsletter's naddr; an address
+  naming another author or kind resolves to home, so a URL can never widen what
+  the app loads.
+- One page per episode, no per-role pages and no tabs. The same page gains
+  controls with the viewer: a contributor gets record rows, a producer also gets
+  the in/out and ordering controls on each voice note plus the release bar at the
+  end. Never build a second view of the same episode.
+- An episode is either being made or published, never both. Once published it is
+  finished: no record rows, and the finished audio is linked from the page.
+- Show people, not keys: kind 0 name and picture from `DISCOVERY_RELAYS`, with a
+  short npub only as a last resort. Never cache a failed profile lookup.
+- Actions live where the decision is made (release actions at the end of the
+  cut), each with one line of plain guidance saying what happens next and why an
+  action is disabled.
+- No duplicated warnings. State appears once, next to the thing it describes.
+- An episode in progress is not for signed-out visitors: the index lists only
+  published episodes for them, and a direct link says "still being made". This
+  is presentation only — the events stay public, so never describe it as access
+  control.
 
 ## Coding philosophy — work or fail (mandatory)
 
@@ -91,7 +142,7 @@ React + Vite + TypeScript, Nostr (nostr-tools), Blossom (BUD-01/BUD-04), transfo
 - [ ] **PUB-05**: Segment content is `JSON.stringify({audio:{url,sha256,mime,duration,waveform}, isIntro:false})`
 - [ ] **PUB-06**: Add `["x", sha256]` tag to segment event
 - [ ] **PUB-07**: Add `["section", sectionId]` and `["issue", issueId]` tags
-- [ ] **PUB-08**: For reply segments, add `["responding_to", targetEventId]` tag
+- [x] **PUB-08**: For reply segments, add `["responding_to", targetEventId]` tag
 
 ### Playback
 
@@ -107,14 +158,14 @@ React + Vite + TypeScript, Nostr (nostr-tools), Blossom (BUD-01/BUD-04), transfo
 
 ## Phase 1: v1 MVP — Timeline & Recording UI
 
-**Goal:** Full contributor-facing timeline. Sections in newsletter order, notes in EDL seed order, reply chips, whitelist gating, PWA installable.
+**Goal:** Full contributor-facing timeline. Sections in newsletter order, notes in EDL seed order, audio replies, whitelist gating, PWA installable.
 
 ### Timeline
 
 - [ ] **TIMELINE-01**: `src/components/IssueTimeline.tsx` — renders sections in newsletter order; each section expands to show its note list
-- [ ] **TIMELINE-02**: `src/lib/ordering.ts` — `computeSeedOrder(segments: Segment[]): string[]` — depth-first reply-forest walk per PLAN.md §2. Roots = segments with no `responding_to` or whose target is outside this section. Walk: roots in chronological order, each root's replies chronological, subtree kept contiguous before moving to next root.
+- [x] **TIMELINE-02**: `src/lib/ordering.ts` — `computeSeedOrder` depth-first reply forest, intro pinned at 0. Display nests replies under the parent (`nestDisplayOrder`). The producer's saved `order` is what the stitcher plays.
 - [ ] **TIMELINE-03**: Each note card shows: contributor avatar + npub, waveform thumbnail, duration, timestamp. No transcript yet (v2).
-- [ ] **TIMELINE-04**: "In reply to" chip renders below the note card for threaded notes; clicking it scrolls to the parent note. No nested indentation.
+- [x] **TIMELINE-04**: Audio reply control on a contributor's note; the reply indents under its parent.
 - [ ] **TIMELINE-05**: Inline `<AudioPlayer>` per note; expand-to-play on tap (transcript-first rendering activates in v2)
 
 ### Whitelist
@@ -136,7 +187,7 @@ React + Vite + TypeScript, Nostr (nostr-tools), Blossom (BUD-01/BUD-04), transfo
 
 - [ ] **VERIFY-01**: Install PWA on Android; confirm timeline loads from a cached shell when offline
 - [ ] **VERIFY-02**: Whitelist gating: log in as a non-whitelisted pubkey; confirm record button is not visible
-- [ ] **VERIFY-03**: Post a reply segment; confirm "in reply to" chip appears and seed order places it correctly after parent
+- [ ] **VERIFY-03**: Post an audio reply; confirm it indents under the parent and seed order places it after the parent
 
 ---
 
@@ -148,20 +199,20 @@ React + Vite + TypeScript, Nostr (nostr-tools), Blossom (BUD-01/BUD-04), transfo
 - [ ] **CRON-01**: `scripts/watch-compass.ts` — polls relay every 10 minutes for new kind 30023 from compassPubkey; on detection, calls `createManifest(event)`
 - [ ] **CRON-02**: `createManifest(event)` — parses sections, builds kind 34200 content per PLAN.md §1, signs with Compass npub, publishes to relays
 - [ ] **CRON-03**: `createManifest` also runs `dm-outreach.ts` to generate `whitelist-{issueId}.json` and commits/pushes it to the repo so GitHub Pages picks it up (or uploads to VPS static path)
-- [ ] **SECURITY-01**: All relay queries for kind 34200 pin `authors: [compassPubkey]`; client re-verifies `event.pubkey === compassPubkey` before treating as authoritative
-- [ ] **SECURITY-02**: Write a unit test: given a spoofed kind 34200 from a different pubkey with the same d-tag, confirm the client rejects it
+- [x] **SECURITY-01**: All relay queries for kind 34200 pin `authors` to the trusted producer set (Compass + the Compass-signed producer list); client re-verifies the author against that set before treating it as authoritative
+- [x] **SECURITY-02**: Unit tests cover a spoofed kind 34200 sharing the d-tag from a pubkey outside the producer set — rejected in the PWA (`admin-state.test.ts`) and in the worker/stitch path (`watch-state.test.ts`)
 
 ---
 
 ## Phase 3: v1 MVP — Admin Mode & Curation
 
-- [ ] **ADMIN-01**: Admin mode detected via `pubkey === compassPubkey || adminKeys.includes(pubkey)`; admin keys configurable in `src/config.ts`
-- [ ] **ADMIN-02**: Drag-to-reorder uses `@dnd-kit/core`; on drop, updates manifest `order` array and publishes a new kind 34200 (addressable, replaces the previous)
-- [ ] **ADMIN-03**: Include/exclude toggle per segment: excluded segment ids stored in a separate array in manifest content; excluded segments render greyed out in admin mode, hidden in contributor view
+- [x] **ADMIN-01**: Producer mode is granted by the Compass-signed producer list (relay-verified), with `ADMIN_PUBKEYS` as the seed and offline bootstrap only
+- [x] **ADMIN-02**: Reorder on the episode page itself — "Earlier"/"Later" per voice note updates the manifest `order` array; saving publishes a new kind 34200 (addressable, replaces the previous). The intro stays pinned at position 0
+- [x] **ADMIN-03**: In/out toggle per voice note ("Put in" / "Take out"); excluded ids live in the manifest's `excluded` array. A producer sees the excluded ones greyed and labelled; contributors do not see them at all
 - [ ] **ADMIN-04**: Section-level exclude toggle: sections with no contributor segment AND not manually included are excluded from the stitcher run
-- [ ] **ADMIN-05**: Reviewed/unreviewed marker: stored in manifest content per segment id; renders as a checkbox in admin mode
+- [x] **ADMIN-05**: Reviewed marker per voice note, stored in manifest content; shown as a tag on the note
 - [ ] **ADMIN-06**: 1.5x / 2x playback speed: `audioElement.playbackRate = 1.5 | 2.0`
-- [ ] **ADMIN-07**: "Lock episode" button: confirm dialog, then publishes updated manifest with `episodeStatus: "cutting"`; button becomes "Episode locked" post-action
+- [x] **ADMIN-07**: "Publish episode" at the end of the episode page: confirm dialog, then publishes the manifest with `episodeStatus: "cutting"`; the page then reads as final and stops taking recordings
 
 ---
 
@@ -262,16 +313,18 @@ logbook-pwa/
       segment.ts            # publishSegment, publishTranscript
       manifest.ts           # fetchManifest, updateManifest, computeSeedOrder
       whitelist.ts          # fetchWhitelist
-      ordering.ts           # computeSeedOrder (depth-first reply-forest)
+      ordering.ts           # computeSeedOrder (reply forest), nestDisplayOrder
       search.ts             # MiniSearch over transcripts (v2)
     components/
       Recorder.tsx          # MediaRecorder + waveform + trim
-      AudioPlayer.tsx       # <audio> + waveform thumbnail
-      IssueTimeline.tsx     # Section list + note list
-      NoteCard.tsx          # Single segment card
+      IssueTimeline.tsx     # The episode page: chapters, notes, record rows,
+                            # and the producer's cut controls + release bar
+      VoiceBubble.tsx       # One voice note, with its cut controls for a producer
       TranscriptCard.tsx    # Transcript text + audio sync (v2)
-      IssuePicker.tsx       # Past issues list
-      AdminPanel.tsx        # Drag-to-reorder + lock episode
+      IssuePicker.tsx       # Episode index: being made / published
+    lib/
+      use-episode-cut.ts    # Manifest state behind the episode page
+      cut-rules.ts          # Pure rules: in/out, eligibility, ordering limits
     workers/
       transcribe.worker.ts  # Whisper (v2)
       voiceChanger.worker.ts # DSP (v3)
@@ -292,10 +345,28 @@ logbook-pwa/
 - Kind 4200 content is JSON (not bare URL). `x` sha256 tag is required alongside it.
 - Transcript is a companion event, NOT in the segment content (segment is immutable).
 - Manifest `order` array is the stitcher's only input for cut order. `created_at` is irrelevant for ordering.
-- Seed order algorithm: depth-first reply-forest walk (see PLAN.md §2 for the exact spec and worked example).
-- All manifest relay queries must pin `authors: [compassPubkey]` and re-verify pubkey client-side.
-- Whitelist is UI-only. Relay and Blossom access stay public.
+- Seed order algorithm: depth-first reply-forest walk (PLAN.md §2). Display
+  nests an audio reply under the note it answers. The producer's saved `order`
+  is still the stitcher's only input.
+- Two roles only: **Contributor** records; **Producer** curates and releases.
+  Compass is the podcast account, not a person who signs in. Producers are named
+  on the Compass-signed producer list (kind 34201, `d=logbook-wl-admins`), seeded
+  from `ADMIN_PUBKEYS`. Only Compass can change that list, so authority has one
+  root and no key can appoint itself.
+- All manifest relay queries must pin `authors` to that trusted producer set and
+  re-verify the author against the same set client-side. Never query unpinned.
+- Whitelist is UI-only. Relay and Blossom access stay public. It does bound the
+  cut, though: only Compass or a listed contributor's recording may go into an
+  episode, so the page offers no control for anyone else's.
 - Episode audio and RSS feed live on the VPS, not GitHub Pages.
 - iOS recording floor: 18.4.
 - Intro segment is always position 0 in its section's manifest order.
 - Published episode is immutable (`episodeStatus: published` is terminal).
+- A stitch run that fails hands the episode back: the worker republishes the
+  manifest as `draft` with `lastFailure` (one-line reason + time), which the
+  episode page shows to the producer. `cutting` is therefore not terminal, and
+  the next publish clears the reason. Never leave a locked episode that only the
+  worker can retry.
+- A recording that captured no sound is refused at the microphone (true peak
+  below −66 dBFS). Silence cannot be normalised — loudness normalisation would
+  apply ~80 dB of gain to the noise floor — so it must never reach the cut.

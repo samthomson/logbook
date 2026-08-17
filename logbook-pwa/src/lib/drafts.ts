@@ -5,7 +5,7 @@ export interface RecordingDraft {
   issueNumber: number
   /** Authenticated principal that created the draft. Legacy rows may lack this at runtime and fail closed. */
   ownerPubkey: string
-  target: { sectionId: string; respondingTo: string | null }
+  target: { sectionId: string; respondingTo?: string | null }
   blob: Blob
   duration: number
   waveform: number[]

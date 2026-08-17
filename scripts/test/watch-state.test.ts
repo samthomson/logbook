@@ -60,3 +60,26 @@ test('latestVerifiedManifest selects the newest verified addressable revision de
   ], 'logbook-32', { expectedPubkey: COMPASS, verify: (event) => event.id !== 'forged' })
   assert.equal(selected?.id, 'same-time-b')
 })
+
+test('a manifest is trusted from a Compass-appointed producer and from nobody else', () => {
+  const producers = new Set([COMPASS, 'producer'])
+  const events = [
+    manifest('compass-draft', 10, 'logbook-32', 'draft'),
+    manifest('producer-lock', 20, 'logbook-32', 'cutting', 'producer'),
+    manifest('stranger-lock', 30, 'logbook-32', 'cutting', 'stranger'),
+  ]
+  const verify = () => true
+
+  const selected = latestVerifiedManifest(events, 'logbook-32', { expectedPubkey: producers, verify })
+  assert.equal(selected?.id, 'producer-lock')
+
+  // The producer lock must reach the stitcher; the stranger must never.
+  assert.deepEqual(
+    latestCuttingManifests(events, { expectedPubkey: producers, verify }).map((event) => event.id),
+    ['producer-lock'],
+  )
+  assert.deepEqual(
+    latestCuttingManifests(events, { expectedPubkey: COMPASS, verify }).map((event) => event.id),
+    [],
+  )
+})

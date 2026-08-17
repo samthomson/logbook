@@ -6,7 +6,7 @@ const baseDraft: RecordingDraft = {
   id: 'draft-1',
   issueNumber: 32,
   ownerPubkey: 'a'.repeat(64),
-  target: { sectionId: 'sec-intro-32', respondingTo: null },
+  target: { sectionId: 'sec-intro-32' },
   blob: new Blob(['audio'], { type: 'audio/webm' }),
   duration: 2,
   waveform: [0.1, 0.2],

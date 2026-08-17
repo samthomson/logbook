@@ -21,3 +21,23 @@ export function selectNewestAddressableRevision<
     events.filter((event) => event.tags.some((tag) => tag[0] === 'd' && tag[1] === expectedDTag)),
   )
 }
+
+/** One newest revision per `d` tag. Relays return every replaceable revision. */
+export function selectNewestPerDTag<T extends Pick<NostrEvent, 'id' | 'created_at' | 'tags'>>(
+  events: T[],
+): T[] {
+  const byD = new Map<string, T[]>()
+  for (const event of events) {
+    const d = event.tags.find((tag) => tag[0] === 'd')?.[1]
+    if (!d) continue
+    const group = byD.get(d)
+    if (group) group.push(event)
+    else byD.set(d, [event])
+  }
+  const newest: T[] = []
+  for (const group of byD.values()) {
+    const picked = selectNewestManifestRevision(group)
+    if (picked) newest.push(picked)
+  }
+  return newest
+}

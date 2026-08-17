@@ -43,13 +43,13 @@ export function now(): number {
   return Math.floor(Date.now() / 1000)
 }
 
-/** Format seconds as mm:ss (sub-10s shows one decimal: 0:03.5). */
+/** Format seconds as m:ss. One format everywhere, so a colon always means minutes. */
 export function formatDuration(seconds: number): string {
-  const m = Math.floor(seconds / 60)
-  if (m === 0 && seconds < 10) {
-    return `0:0${seconds.toFixed(1)}`
-  }
-  const s = Math.floor(seconds % 60)
+  // MediaRecorder webm streams report Infinity until fully buffered.
+  if (!Number.isFinite(seconds) || seconds < 0) return '—:——'
+  const whole = Math.round(seconds)
+  const m = Math.floor(whole / 60)
+  const s = whole % 60
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 

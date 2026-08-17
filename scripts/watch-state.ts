@@ -11,13 +11,19 @@ export interface ManifestEvent extends TaggedEvent {
 }
 
 export interface ManifestSelectionOptions {
-  expectedPubkey: string
+  /** One pubkey, or the trusted producer set (Compass plus its appointees). */
+  expectedPubkey: string | ReadonlySet<string>
   verify: (event: ManifestEvent) => boolean
 }
 
 function manifestDTag(event: TaggedEvent): string | null {
   const dTag = event.tags.find((tag) => tag[0] === 'd')?.[1]
   return typeof dTag === 'string' && dTag.length > 0 ? dTag : null
+}
+
+function authoredByTrusted(event: ManifestEvent, expected: string | ReadonlySet<string>): boolean {
+  const pubkey = event.pubkey.toLowerCase()
+  return typeof expected === 'string' ? pubkey === expected.toLowerCase() : expected.has(pubkey)
 }
 
 /**
@@ -33,7 +39,7 @@ export function latestCuttingManifests(
 
   for (const event of events) {
     const issueId = manifestDTag(event)
-    if (!issueId || event.pubkey !== expectedPubkey || !verify(event)) continue
+    if (!issueId || !authoredByTrusted(event, expectedPubkey) || !verify(event)) continue
     try {
       const content = JSON.parse(event.content) as { episodeStatus?: unknown }
       if (typeof content.episodeStatus !== 'string') continue
@@ -61,7 +67,7 @@ export function latestVerifiedManifest(
   { expectedPubkey, verify }: ManifestSelectionOptions,
 ): ManifestEvent | null {
   return events
-    .filter((event) => manifestDTag(event) === issueId && event.pubkey === expectedPubkey && verify(event))
+    .filter((event) => manifestDTag(event) === issueId && authoredByTrusted(event, expectedPubkey) && verify(event))
     .sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0) || b.id.localeCompare(a.id))[0] ?? null
 }
 

@@ -109,5 +109,4 @@ ENV NODE_ENV=production \
     KOKORO_TMPDIR=/run/kokoro \
     LOGBOOK_STATIC_DIR=/var/www/logbook \
     LOGBOOK_AUDIO_DIR=/var/www/logbook/audio
-
 CMD ["npm", "run", "watch"]

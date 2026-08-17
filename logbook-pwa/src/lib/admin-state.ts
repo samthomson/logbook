@@ -14,8 +14,17 @@ function updateSection(
   }
 }
 
-export function canEditManifest(content: ManifestContent, pubkey: string): boolean {
-  return content.episodeStatus === 'draft' && pubkey === COMPASS_PUBKEY
+/**
+ * Producers curate; Compass is always one. Membership comes from the
+ * Compass-signed producer list, so this is delegated authority, not a second
+ * trust root.
+ */
+export function canEditManifest(
+  content: ManifestContent,
+  pubkey: string,
+  producers: ReadonlySet<string> = new Set([COMPASS_PUBKEY]),
+): boolean {
+  return content.episodeStatus === 'draft' && producers.has(pubkey.toLowerCase())
 }
 
 export function canLockEpisode(content: ManifestContent): boolean {

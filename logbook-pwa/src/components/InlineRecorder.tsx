@@ -12,6 +12,7 @@
 
 import { useRef, useState, useEffect, useCallback } from 'react'
 import { RECORDING_MIME, RECORDING_MIME_FALLBACK, WAVEFORM_SAMPLES } from '../config'
+import { isSilent, recordingPeak } from '../lib/silence'
 
 export interface InlineRecordingResult {
   blob: Blob
@@ -24,16 +25,25 @@ interface Props {
   onCancel?: () => void
   onArm?: () => void   // synchronously claims the shared recorder target
   autoStart?: boolean
+  /** Idle-row wording, so a chapter that already has notes says so. */
+  idleLabel?: string
 }
 
 const MAX_RECORDING_SECONDS = 600 // 10 min hard cap
 
-export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart }: Props) {
+export default function InlineRecorder({
+  onRecorded,
+  onCancel,
+  onArm,
+  autoStart,
+  idleLabel = 'Add a voice note',
+}: Props) {
   const [recording, setRecording] = useState(false)
   const [arming, setArming] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [bars, setBars] = useState<number[]>(new Array(36).fill(0))
   const [micError, setMicError] = useState<string | null>(null)
+  const [checking, setChecking] = useState(false)
   const [review, setReview] = useState<InlineRecordingResult | null>(null)
 
   const streamRef = useRef<MediaStream | null>(null)
@@ -118,7 +128,22 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
         const blob = new Blob(chunksRef.current, { type: mr.mimeType || 'audio/webm' })
         const duration = (Date.now() - startRef.current) / 1000
         const waveform = downsample(samplesRef.current, WAVEFORM_SAMPLES)
-        setReview({ blob, waveform, duration })
+        setChecking(true)
+        void recordingPeak(blob)
+          .then((peak) => {
+            if (!isCurrent() || cancelledRef.current) return
+            if (isSilent(peak)) {
+              setMicError('That recording captured no sound. Check which microphone the browser is using, then record again.')
+              return
+            }
+            setReview({ blob, waveform, duration })
+          })
+          .catch((err: unknown) => {
+            if (!isCurrent() || cancelledRef.current) return
+            setMicError('That recording could not be read back. Record it again.')
+            console.error('Recording playback check failed:', err)
+          })
+          .finally(() => { if (isCurrent()) setChecking(false) })
       }
 
       mr.start(100)
@@ -211,15 +236,21 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
     )
   }
 
+  if (checking) {
+    return <span className="irec__idle" role="status">Checking the recording…</span>
+  }
+
   if (arming) {
     return <span className="irec__idle" role="status">Opening microphone…</span>
   }
 
   if (!recording) {
+    // Reads as one more row in the chapter, so recording looks like part of the
+    // list it joins rather than a floating control.
     return (
-      <span className="irec__idle">
+      <div className="irec__idle">
         <button
-          className="irec__btn"
+          className="irec__add"
           onClick={() => {
             // Claim the shared recorder target before getUserMedia awaits, so
             // a second section cannot arm while browser permission is pending.
@@ -227,15 +258,16 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
             setMicError(null)
             startSafely()
           }}
-          aria-label="Record a voice note"
-          title="Record"
         >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
-            <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5.4-3a5.4 5.4 0 0 1-10.8 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-1.6Z" />
-          </svg>
+          <span className="irec__add-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5.4-3a5.4 5.4 0 0 1-10.8 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-1.6Z" />
+            </svg>
+          </span>
+          <span className="irec__add-label">{idleLabel}</span>
         </button>
         {micError && <span className="irec__error" role="alert">{micError}</span>}
-      </span>
+      </div>
     )
   }
 

@@ -1,4 +1,5 @@
 import type { CompassIssue, ManifestContent, ManifestSection, Segment } from '../types/nostr'
+import { insertInCutOrder } from './ordering'
 
 const EVENT_ID = /^[0-9a-f]{64}$/
 
@@ -345,7 +346,7 @@ export function includeInventorySegment(
       ...content,
       sections: content.sections.map((candidate, index) => index === existingIndex ? {
         ...candidate,
-        order: [...candidate.order.filter((id) => id !== segment.event.id), segment.event.id],
+        order: insertInCutOrder(candidate.order.filter((id) => id !== segment.event.id), segment),
         excluded: candidate.excluded.filter((id) => id !== segment.event.id),
       } : candidate),
     }

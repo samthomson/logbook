@@ -4,3 +4,6 @@
 # Authorized NIP-46 session material mounted into the worker. Never commit a
 # bunker URI or client key.
 .secrets/
+
+# Local tool downloads (e.g. nsyte binary from deploy-nsite.sh).
+.bin/

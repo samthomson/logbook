@@ -77,7 +77,37 @@ test('watcher deduplicates acknowledged publications by stable d-tag across repl
   assert.deepEqual(calls, ['stitch:logbook-31', 'publish:logbook-31'])
 })
 
-test('watcher cycle retries a failed stage on a later cycle', async () => {
+test('watcher cycle retries publish without stitching again', async () => {
+  const cutting = manifest('cutting', 1, 'cutting')
+  const published = manifest('published', 2, 'published')
+  const completed = new Set<string>()
+  const stitchedRevisions = new Set<string>()
+  let publishStatus = 1
+  let acknowledged = false
+  const calls: string[] = []
+  const deps = {
+    fetchManifests: async () => acknowledged ? [published] : [cutting],
+    expectedPubkey: COMPASS,
+    verify: () => true,
+    runStitch: (issueId: string) => { calls.push(`stitch:${issueId}`); return 0 },
+    runPublish: (issueId: string) => {
+      calls.push(`publish:${issueId}`)
+      if (publishStatus !== 0) return publishStatus
+      acknowledged = true
+      return 0
+    },
+  }
+  assert.deepEqual(await runWatcherCycle(completed, deps, stitchedRevisions), [
+    { issueId: 'logbook-31', outcome: 'publish-failed' },
+  ])
+  publishStatus = 0
+  assert.deepEqual(await runWatcherCycle(completed, deps, stitchedRevisions), [
+    { issueId: 'logbook-31', outcome: 'published' },
+  ])
+  assert.deepEqual(calls, ['stitch:logbook-31', 'publish:logbook-31', 'publish:logbook-31'])
+})
+
+test('watcher cycle retries a failed stitch on a later cycle', async () => {
   const cutting = manifest('cutting', 1, 'cutting')
   const stitched = new Set<string>()
   let stitchStatus = 1

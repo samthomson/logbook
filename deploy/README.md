@@ -23,4 +23,16 @@ The service's writable scope is limited to `/var/www/logbook`, `/var/lib/logbook
 
 ## PWA deployment
 
-The authoritative nsyte configuration is `logbook-pwa/.nsite/config.json`. Build with `npm run build`, then deploy from `logbook-pwa/` with the existing authorized signer using `nsyte deploy dist --sync`. A successful upload is not release proof: verify a gateway whose HTML references the exact local bundle, compare the served bundle SHA-256 with `dist/assets`, and confirm a marker from the shipped change before sharing a URL.
+The authoritative nsyte configuration is `logbook-pwa/.nsite/config.json`. From
+the repo root, with `.env` filled (including Compass bunker vars):
+
+```sh
+./scripts/deploy-nsite.sh
+```
+
+That builds the PWA and runs `nsyte deploy dist --sync` signed as Compass
+(`COMPASS_BUNKER_URI` or `COMPASS_NSYTE_SEC`). A successful upload is not release
+proof: verify a gateway whose HTML references the exact local bundle, compare
+the served bundle SHA-256 with `dist/assets`, and confirm a marker from the
+shipped change before sharing a URL. Point `gatewayHostnames` in
+`.nsite/config.json` at your gateway (e.g. Relaykit).

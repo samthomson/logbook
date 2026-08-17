@@ -23,14 +23,20 @@ separate operational gates; a green unit/build run is not release evidence.
 - `deploy/` — hardened trusted-worker unit, public environment template, and
   installation/recovery runbook.
 
-## Roles (two keys)
+## Roles
 
-- **Compass** (`COMPASS_PUBKEY` + bunker) — the podcast identity. Authors
-  newsletters, manifests, and whitelists. You do **not** log into the PWA as
-  this key; the worker uses the bunker to sign as Compass.
-- **Admin** (`ADMIN_PUBKEYS`) — comma-separated hex pubkeys that may open the
-  curation UI. Put your personal key(s) here; log into the browser with one of
-  them. Blank means only Compass counts as admin (via env — no hardcoded keys).
+- **Compass** (`COMPASS_PUBKEY` + bunker) — the podcast identity. Nobody logs
+  in as it; the worker signs newsletters and releases with its bunker.
+- **Producer** (`ADMIN_PUBKEYS`, comma-separated hex) — curates and locks
+  episodes. Put your personal key here and log in with it. Compass publishes
+  this list (kind 34201, `d=logbook-wl-admins`); only Compass can change it.
+- **Contributor** — anyone on the issue whitelist. Records voice notes. A
+  producer can also be a contributor; the two are independent.
+
+There is one page per episode (`#/episode/<naddr>`). Contributors get record rows
+on it; a producer additionally gets the in/out and ordering controls on each
+voice note and the publish bar at the end. Once published, the episode takes no
+more recordings and links the finished audio.
 
 ## Run it locally
 
@@ -46,15 +52,25 @@ machine.
    `BLOSSOM_SERVERS`, and the bunker vars above. Same names everywhere. No
    defaults: missing values fail at startup.
 
-3. Worker: `docker compose up --build`. Local PWA too:
-   `docker compose -f compose.yml -f compose.dev.yml --profile dev up --build`
-   (PWA on `localhost:$PWA_DEV_PORT`). Dokploy only needs `compose.yml` (worker).
+3. App + worker: `docker compose --profile dev up --build` (PWA on
+   `localhost:$PWA_DEV_PORT` with Vite HMR). Use `--profile prod` for the built
+   nginx PWA on `localhost:$PWA_PORT`. Dokploy passes no profile, so it starts
+   the worker alone.
 
 4. Seed a fake newsletter + whitelist (bunker must be running):
 
    ```sh
    docker compose run --rm worker npm run seed -- 1
    ```
+
+5. Publish the PWA as an nsite (Compass identity — same bunker as the worker):
+
+   ```sh
+   ./scripts/deploy-nsite.sh
+   ```
+
+   Needs `nsyte` on PATH. Optional: `nsyte ci` once and
+   set `COMPASS_NSYTE_SEC` for a stable deploy credential.
 
 The worker validates the bunker session at startup and exits with an explanation
 if it's missing.

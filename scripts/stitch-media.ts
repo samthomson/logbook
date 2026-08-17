@@ -66,6 +66,18 @@ function ff(args: string[]): void {
   }
 }
 
+/**
+ * A recording that captured no signal measures an integrated loudness of -inf,
+ * which loudnorm's second pass rejects. Normalising it is not an option either:
+ * lifting silence to -16 LUFS would apply ~80 dB of gain to the noise floor.
+ */
+export class SilentClipError extends Error {
+  constructor(readonly clip: string) {
+    super(`Clip ${clip} carries no audio: its integrated loudness measures -inf.`)
+    this.name = 'SilentClipError'
+  }
+}
+
 export function loudnorm(inputPath: string, outDir: string, stem?: string): string {
   const outPath = join(outDir, `${stem ?? basename(inputPath).replace(/\.[^.]+$/, '')}_norm.wav`)
   const pass1 = spawnSync(
@@ -91,6 +103,9 @@ export function loudnorm(inputPath: string, outDir: string, stem?: string): stri
     input_lra: string
     input_thresh: string
     target_offset: string
+  }
+  if (!Number.isFinite(Number(measured.input_i))) {
+    throw new SilentClipError(basename(inputPath))
   }
   const filter = [
     'loudnorm=I=-16:TP=-1.5:LRA=11',

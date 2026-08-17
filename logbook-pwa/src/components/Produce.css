@@ -1,0 +1,85 @@
+/* Producer strip at the end of the episode page — same tokens as index.css. */
+
+.produce__notice,
+.produce__error,
+.produce__banner {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  background: var(--surface);
+}
+
+.produce__error {
+  background: #fdecec;
+  color: var(--danger);
+}
+
+.produce__failed {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: #fdecec;
+  color: var(--danger);
+  font-size: 0.875rem;
+}
+
+.produce__failed-reason {
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.produce__failed-when {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.produce__issue {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* The release decision belongs where the cut ends, not above it. */
+.produce__footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 12px 0 calc(12px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.produce__next {
+  flex: 1 1 16rem;
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.produce__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.produce__access {
+  margin-top: 16px;
+}
+
+.produce__access summary {
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 600;
+}

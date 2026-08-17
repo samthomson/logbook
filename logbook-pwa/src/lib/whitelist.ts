@@ -62,28 +62,36 @@ export interface AccessLists {
 }
 
 // In-memory cache, keyed per d-tag. Cleared on own publish; refetched on
-// session start / AdminPanel mount. Cross-device staleness is bounded by
+// session start / episode page mount. Cross-device staleness is bounded by
 // session lifetime — acceptable for a UI-only gate.
 const eventCache = new Map<string, NostrEvent | null>()
 
-/** Fetch one whitelist event by d-tag. Returns null when absent/invalid. */
+/**
+ * Fetch one whitelist event by d-tag. Returns null when absent/invalid.
+ *
+ * `authors` must always be pinned — anyone can squat a d-tag. The producer list
+ * itself is Compass-only; contributor lists also accept producer signatures,
+ * because Compass appointed those producers.
+ */
 async function fetchWhitelistEvent(
   dTag: string,
   relays: string[] = RELAYS,
   forceRefresh = false,
+  authors: string[] = [COMPASS_PUBKEY],
 ): Promise<NostrEvent | null> {
   if (!forceRefresh && eventCache.has(dTag)) return eventCache.get(dTag) ?? null
   const pool = getPool()
+  const trusted = new Set(authors.map((author) => author.toLowerCase()))
   const events = await pool.querySync(relays, {
     kinds: [KINDS.WHITELIST],
-    authors: [COMPASS_PUBKEY], // REQUIRED — anyone can squat the d-tag
+    authors: [...trusted], // REQUIRED — anyone can squat the d-tag
     '#d': [dTag],
     until: latestReasonableEventTimestamp(),
     limit: 50,
   })
   // Latest-by-created_at wins after signature verification (manifest rule).
   const verified = filterVerified(events)
-    .filter((e) => e.pubkey === COMPASS_PUBKEY)
+    .filter((e) => trusted.has(e.pubkey.toLowerCase()))
     .filter((e) => hasReasonableEventTimestamp(e))
     .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))
   const winner = verified[0] ?? null
@@ -133,15 +141,27 @@ export async function fetchAccessLists(
   const issueDTag = D_ISSUE_WL(issueNumber)
   const legacyIssueId = `${ISSUE_PREFIX}-${issueNumber}` // logbook-<N> static JSON
 
-  const results = await Promise.allSettled([
-    fetchWhitelistEvent(issueDTag, relays, options.forceRefresh),
-    fetchWhitelistEvent(D_STANDING, relays, options.forceRefresh),
+  // The producer list resolves first: it decides who may sign the others.
+  const adminsResult = await Promise.allSettled([
     fetchWhitelistEvent(D_ADMINS, relays, options.forceRefresh),
+  ])
+  const adminsEv = adminsResult[0].status === 'fulfilled' ? adminsResult[0].value : null
+  const producers = new Set<string>([COMPASS_PUBKEY.toLowerCase()])
+  if (adminsEv) {
+    for (const entry of parseEntries(adminsEv, 'admins')) producers.add(entry.pubkey.toLowerCase())
+  } else {
+    for (const pubkey of ADMIN_PUBKEYS) producers.add(pubkey.toLowerCase())
+  }
+
+  const contributorResults = await Promise.allSettled([
+    fetchWhitelistEvent(issueDTag, relays, options.forceRefresh, [...producers]),
+    fetchWhitelistEvent(D_STANDING, relays, options.forceRefresh, [...producers]),
     fetchLegacyJson(legacyIssueId),
   ])
-  const [issueEv, standingEv, adminsEv, legacy] = results.map((r) =>
+  const results = [...adminsResult, ...contributorResults]
+  const [issueEv, standingEv, legacy] = contributorResults.map((r) =>
     r.status === 'fulfilled' ? r.value : null,
-  ) as [NostrEvent | null, NostrEvent | null, NostrEvent | null, Set<string> | null]
+  ) as [NostrEvent | null, NostrEvent | null, Set<string> | null]
 
   const contributors = new Set<string>()
   const sources = new Map<string, ('per-issue' | 'standing' | 'legacy')[]>()
@@ -157,12 +177,7 @@ export async function fetchAccessLists(
   // Admins: verified on-chain event replaces config entirely; config is the
   // bootstrap when no verified event is fetchable. COMPASS_PUBKEY always admin.
   const adminsFromBootstrap = adminsEv === null
-  const admins = new Set<string>([COMPASS_PUBKEY])
-  if (adminsEv) {
-    for (const e of parseEntries(adminsEv, 'admins')) admins.add(e.pubkey)
-  } else {
-    for (const pk of ADMIN_PUBKEYS) admins.add(pk.toLowerCase())
-  }
+  const admins = producers
 
   // Degraded = every source failed (all promises rejected). Absent events are
   // fulfilled-null and do NOT count as failure.
@@ -184,9 +199,10 @@ export function extractMentionedPubkeys(markdown: string): string[] {
 }
 
 /**
- * Publish a whitelist event. Signed by the caller's signer — but readers
- * only trust COMPASS_PUBKEY-authored events, so a non-Compass publish is
- * pointless: throw pre-signing (same guard class as updateManifest).
+ * Publish a whitelist event. Readers only trust signatures they can trace back
+ * to Compass, so reject a hopeless publish pre-signing (same guard class as
+ * updateManifest): contributor lists accept any producer, the producer list
+ * itself is Compass-only so nobody can appoint themselves.
  */
 export async function publishWhitelist(
   dTag: string,
@@ -199,14 +215,24 @@ export async function publishWhitelist(
   assertActive?.()
   const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Signer identity request')
   assertActive?.()
-  if (pubkey !== COMPASS_PUBKEY) {
-    throw new Error(
-      'Whitelist events are only trusted when signed by the Compass key. ' +
-      'You are logged in as an admin, but not the Compass key — this change ' +
-      'would be ignored by all clients.',
-    )
-  }
   const isAdmins = dTag === D_ADMINS
+  if (isAdmins) {
+    if (pubkey.toLowerCase() !== COMPASS_PUBKEY.toLowerCase()) {
+      throw new Error(
+        'Only the Compass key can change the producer list. Producers can edit ' +
+        'contributor lists, but appointing a producer stays with Compass.',
+      )
+    }
+  } else {
+    const producers = await fetchProducerPubkeys(relays, true)
+    assertActive?.()
+    if (!producers.has(pubkey.toLowerCase())) {
+      throw new Error(
+        'Only Compass or a producer on the Compass-signed producer list can change ' +
+        'contributor access. This change would be ignored by all clients.',
+      )
+    }
+  }
   const content = JSON.stringify(
     isAdmins
       ? { admins: entries.map((e) => e.pubkey) }
@@ -225,8 +251,8 @@ export async function publishWhitelist(
   assertActive?.()
   const event = await withSignerTimeout(signer.signEvent(unsigned), 'Signer whitelist signing')
   assertActive?.()
-  assertEventSignedByExpected(event, COMPASS_PUBKEY)
-  await assertSignerStillExpected(signer, COMPASS_PUBKEY, assertActive)
+  assertEventSignedByExpected(event, pubkey)
+  await assertSignerStillExpected(signer, pubkey, assertActive)
   await publishToRelays(event, relays)
   assertActive?.()
   // Own publish invalidates the cache for ALL d-tags this session holds.
@@ -242,6 +268,29 @@ export async function fetchWhitelistEntries(
   const ev = await fetchWhitelistEvent(dTag, relays)
   if (!ev) return []
   return parseEntries(ev, dTag === D_ADMINS ? 'admins' : 'contributors')
+}
+
+/**
+ * Pubkeys allowed to author an episode manifest: Compass plus every producer on
+ * the Compass-signed admin list. Authority still originates from Compass alone —
+ * only Compass can sign that list — so no key can promote itself.
+ *
+ * When the list is unreachable the config bootstrap applies, matching
+ * fetchAccessLists. A wrong local guess cannot forge a release: updateManifest
+ * re-resolves this set immediately before publishing.
+ */
+export async function fetchProducerPubkeys(
+  relays: string[] = RELAYS,
+  forceRefresh = false,
+): Promise<Set<string>> {
+  const event = await fetchWhitelistEvent(D_ADMINS, relays, forceRefresh)
+  const producers = new Set<string>([COMPASS_PUBKEY.toLowerCase()])
+  if (event) {
+    for (const entry of parseEntries(event, 'admins')) producers.add(entry.pubkey.toLowerCase())
+  } else {
+    for (const pubkey of ADMIN_PUBKEYS) producers.add(pubkey.toLowerCase())
+  }
+  return producers
 }
 
 /** Legacy static-JSON sources (one-release fallback). */

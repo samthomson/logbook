@@ -1,3 +1,4 @@
+import { nip19 } from 'nostr-tools'
 import { COMPASS_PUBKEY, RELAYS, ISSUE_PREFIX, KINDS } from '../config'
 import type { NostrEvent, CompassIssue, IssueSection, IssueSectionItem } from '../types/nostr'
 import { slugify } from './utils'
@@ -11,6 +12,17 @@ const ISSUE_QUERY_MAX_WAIT_MS = 1_800
 const INITIAL_ISSUE_SCAN_LIMIT = 12
 const issueLists = new Map<string, { expiresAt: number; events: NostrEvent[] }>()
 const issueRequests = new Map<string, Promise<NostrEvent[]>>()
+
+/** The newsletter's own Nostr address — the episode is built from this event. */
+export function issueAddress(issue: CompassIssue): string {
+  const identifier = issue.event.tags.find((tag) => tag[0] === 'd')?.[1]
+  if (!identifier) throw new Error('The Compass issue has no addressable identifier.')
+  return nip19.naddrEncode({
+    kind: issue.event.kind,
+    pubkey: issue.event.pubkey,
+    identifier,
+  })
+}
 
 /** Fetch the most recent Compass kind 30023 long-form issue. */
 export async function fetchLatestIssue(

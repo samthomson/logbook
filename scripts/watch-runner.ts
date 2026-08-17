@@ -2,7 +2,8 @@ import { latestCuttingManifests, latestVerifiedManifest, type ManifestEvent } fr
 
 export interface WatcherCycleDependencies {
   fetchManifests: () => Promise<ManifestEvent[]>
-  expectedPubkey: string
+  /** One pubkey, or the trusted producer set (Compass plus its appointees). */
+  expectedPubkey: string | ReadonlySet<string>
   verify: (event: ManifestEvent) => boolean
   runStitch: (issueId: string) => number
   runPublish: (issueId: string) => number
@@ -38,6 +39,9 @@ function isCutting(event: ManifestEvent): boolean {
 export async function runWatcherCycle(
   completed: Set<string>,
   dependencies: WatcherCycleDependencies,
+  /** Revision event ids whose stitch already succeeded. Publish retries must
+   *  not re-encode or re-upload; that is what exhausted the bunker. */
+  stitchedRevisions: Set<string> = new Set(),
 ): Promise<WatcherCycleResult[]> {
   const initial = await dependencies.fetchManifests()
   const candidates = latestCuttingManifests(initial, {
@@ -66,10 +70,13 @@ export async function runWatcherCycle(
     // Record only a fully acknowledged publication and key it by the stable
     // addressable d-tag, not a replaceable manifest revision ID.
     completed.add(issueId)
-    if (dependencies.runStitch(issueId) !== 0) {
-      completed.delete(issueId)
-      results.push({ issueId, outcome: 'stitch-failed' })
-      continue
+    if (!stitchedRevisions.has(candidate.id)) {
+      if (dependencies.runStitch(issueId) !== 0) {
+        completed.delete(issueId)
+        results.push({ issueId, outcome: 'stitch-failed' })
+        continue
+      }
+      stitchedRevisions.add(candidate.id)
     }
     if (!(await candidateIsCurrent())) {
       completed.delete(issueId)

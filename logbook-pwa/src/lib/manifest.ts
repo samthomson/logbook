@@ -2,11 +2,14 @@ import { getPool } from './pool'
 /**
  * Manifest module — fetch and update kind 34200 issue manifests.
  *
- * Security: ALL queries MUST pin authors:[COMPASS_PUBKEY].
- * The client re-verifies event.pubkey === COMPASS_PUBKEY on receipt.
+ * Security: ALL queries MUST pin authors to the trusted producer set — Compass
+ * plus the producers named on the Compass-signed admin list. The client
+ * re-verifies event.pubkey against that same set on receipt. Only Compass can
+ * sign the admin list, so authority always originates from Compass.
  */
 
-import { COMPASS_PUBKEY, RELAYS, KINDS, ISSUE_PREFIX } from '../config'
+import { RELAYS, KINDS, ISSUE_PREFIX } from '../config'
+import { fetchProducerPubkeys } from './whitelist'
 import type {
   NostrEvent,
   IssueManifest,
@@ -17,7 +20,7 @@ import type {
 import { parseManifestContent } from '../types/nostr'
 import { now } from './utils'
 import { publishToRelays, filterVerified } from './relay'
-import { selectNewestAddressableRevision } from './manifest-revision'
+import { selectNewestAddressableRevision, selectNewestPerDTag } from './manifest-revision'
 import { withSignerTimeout } from './signer-timeout'
 import { assertEventSignedByExpected, assertSignerStillExpected } from './signer-identity'
 
@@ -29,16 +32,17 @@ export async function fetchManifest(
 ): Promise<IssueManifest | null> {
   const issueId = `${ISSUE_PREFIX}-${issueNumber}`
   const pool = getPool()
+  const producers = await fetchProducerPubkeys(relays)
 
   const events = await pool.querySync(relays, {
     kinds: [KINDS.MANIFEST],
-    authors: [COMPASS_PUBKEY],  // REQUIRED — never omit
+    authors: [...producers],  // REQUIRED — never query unpinned
     '#d': [issueId],
     limit: 50,
   })
 
   const event = selectNewestAddressableRevision(
-    filterVerified(events).filter((candidate) => candidate.pubkey === COMPASS_PUBKEY),
+    filterVerified(events).filter((candidate) => producers.has(candidate.pubkey.toLowerCase())),
     issueId,
   )
   if (!event) return null
@@ -46,27 +50,99 @@ export async function fetchManifest(
   return parseManifestEvent(event)
 }
 
+/**
+ * Live revisions of one episode's manifest. The worker can hand an episode back
+ * at any moment, so the page must not need a reload to show it. Same pinning as
+ * every other manifest read: producer authors, signature re-verified on receipt.
+ */
+export function subscribeManifest(
+  issueNumber: number,
+  onRevision: (manifest: IssueManifest) => void,
+  relays: string[] = RELAYS,
+): () => void {
+  const issueId = `${ISSUE_PREFIX}-${issueNumber}`
+  let cancelled = false
+  let close: (() => void) | null = null
+
+  void fetchProducerPubkeys(relays).then((producers) => {
+    if (cancelled) return
+    const sub = getPool().subscribeMany(
+      relays,
+      { kinds: [KINDS.MANIFEST], authors: [...producers], '#d': [issueId] },
+      {
+        onevent: (event) => {
+          if (!producers.has(event.pubkey.toLowerCase())) return
+          const [verified] = filterVerified([event as NostrEvent])
+          if (!verified) return
+          const parsed = parseManifestEvent(verified)
+          if (parsed && parsed.issueId === issueId) onRevision(parsed)
+        },
+      },
+    )
+    close = () => sub.close()
+  })
+
+  return () => {
+    cancelled = true
+    close?.()
+  }
+}
+
+/** Live revisions of every episode, for the index. Same pinning as fetchAllManifests. */
+export function subscribeManifests(
+  onRevision: (manifest: IssueManifest) => void,
+  relays: string[] = RELAYS,
+): () => void {
+  let cancelled = false
+  let close: (() => void) | null = null
+
+  void fetchProducerPubkeys(relays).then((producers) => {
+    if (cancelled) return
+    const sub = getPool().subscribeMany(
+      relays,
+      { kinds: [KINDS.MANIFEST], authors: [...producers] },
+      {
+        onevent: (event) => {
+          if (!producers.has(event.pubkey.toLowerCase())) return
+          const [verified] = filterVerified([event as NostrEvent])
+          if (!verified) return
+          const parsed = parseManifestEvent(verified)
+          if (parsed) onRevision(parsed)
+        },
+      },
+    )
+    close = () => sub.close()
+  })
+
+  return () => {
+    cancelled = true
+    close?.()
+  }
+}
+
 /** Fetch all available manifests for the issue picker. */
 export async function fetchAllManifests(
   relays: string[] = RELAYS,
 ): Promise<IssueManifest[]> {
   const pool = getPool()
+  const producers = await fetchProducerPubkeys(relays)
 
   const events = await pool.querySync(relays, {
     kinds: [KINDS.MANIFEST],
-    authors: [COMPASS_PUBKEY],  // REQUIRED
+    authors: [...producers],  // REQUIRED
     limit: 50,
   })
 
-  return filterVerified(events)
-    .filter((e) => e.pubkey === COMPASS_PUBKEY)  // re-verify author
+  return selectNewestPerDTag(
+    filterVerified(events).filter((e) => producers.has(e.pubkey.toLowerCase())),
+  )
     .map(parseManifestEvent)
     .filter((m): m is IssueManifest => m !== null)
     .sort((a, b) => b.event.created_at - a.event.created_at)
 }
 
 /**
- * Publish an updated manifest (admin only).
+ * Publish an updated manifest (producers only).
  * Replaces the previous version via the addressable event mechanism.
  */
 export async function updateManifest(
@@ -83,9 +159,15 @@ export async function updateManifest(
   const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Signer identity request')
   assertActive?.()
 
-  // Only Compass pubkey should publish manifests
-  if (pubkey !== COMPASS_PUBKEY) {
-    throw new Error('Only the Compass pubkey can publish manifests')
+  // Re-resolve authority at publish time: a stale UI must not emit an event
+  // every reader would discard.
+  const producers = await fetchProducerPubkeys(relays, true)
+  assertActive?.()
+  if (!producers.has(pubkey.toLowerCase())) {
+    throw new Error(
+      'Only Compass or a producer on the Compass-signed producer list can publish an episode. ' +
+      'Ask Compass to add this key before releasing.',
+    )
   }
 
   const unsigned = {
@@ -99,8 +181,8 @@ export async function updateManifest(
   assertActive?.()
   const event = await withSignerTimeout(signer.signEvent(unsigned), 'Signer manifest signing')
   assertActive?.()
-  assertEventSignedByExpected(event, COMPASS_PUBKEY)
-  await assertSignerStillExpected(signer, COMPASS_PUBKEY, assertActive)
+  assertEventSignedByExpected(event, pubkey)
+  await assertSignerStillExpected(signer, pubkey, assertActive)
   await publishToRelays(event, relays)
   assertActive?.()
   return event

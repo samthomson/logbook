@@ -4,6 +4,7 @@ import { getPool } from './pool'
  * Queries DISCOVERY_RELAYS only — never publishes there.
  */
 
+import { nip19 } from 'nostr-tools'
 import { DISCOVERY_RELAYS } from '../config'
 import type { NostrEvent } from '../types/nostr'
 
@@ -48,7 +49,8 @@ export async function fetchProfile(pubkey: string): Promise<Profile | null> {
       cache.set(pubkey, profile)
       return profile
     } catch {
-      cache.set(pubkey, null)
+      // A failed query is not evidence of a missing profile. Caching null here
+      // would pin every later render to the anonymous fallback for the session.
       return null
     } finally {
       pending.delete(pubkey)
@@ -74,7 +76,8 @@ export async function fetchProfiles(pubkeys: string[]): Promise<Map<string, Prof
       }
       for (const pk of missing) cache.set(pk, parseProfileEvent(pk, byAuthor.get(pk) ?? null))
     }).catch(() => {
-      for (const pk of missing) if (!cache.has(pk)) cache.set(pk, null)
+      // Leave the cache untouched so the next mount retries instead of showing
+      // an anonymous author for the rest of the session.
     })
 
     // Claim every pubkey synchronously, before another mounted excerpt can
@@ -102,4 +105,19 @@ export async function fetchProfiles(pubkeys: string[]): Promise<Map<string, Prof
 /** Short fallback label for a pubkey with no known profile. */
 export function shortKey(pubkey: string): string {
   return pubkey.slice(0, 8)
+}
+
+/**
+ * Display name for a recording's author. Falls back to a truncated npub rather
+ * than a generic word, so two unknown authors never look like the same person.
+ */
+export function authorLabel(profile: Profile | null | undefined, pubkey: string): string {
+  const name = profile?.name?.trim()
+  if (name) return name
+  try {
+    const npub = nip19.npubEncode(pubkey)
+    return `${npub.slice(0, 12)}…${npub.slice(-4)}`
+  } catch {
+    return shortKey(pubkey)
+  }
 }

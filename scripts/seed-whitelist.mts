@@ -41,7 +41,7 @@ function adminPubkeys(): string[] {
   return [...new Set([COMPASS_PUBKEY, ...fromEnv])]
 }
 
-async function hasExisting(dTag: string): Promise<boolean> {
+async function existingContent(dTag: string): Promise<string | null> {
   const pool = new SimplePool()
   try {
     const events = await pool.querySync(
@@ -49,7 +49,10 @@ async function hasExisting(dTag: string): Promise<boolean> {
       { kinds: [KINDS.WHITELIST], authors: [COMPASS_PUBKEY], '#d': [dTag], limit: 5 },
       { maxWait: 15_000 },
     )
-    return events.some((event) => event.pubkey === COMPASS_PUBKEY && verifyNostrEvent(event))
+    const newest = events
+      .filter((event) => event.pubkey === COMPASS_PUBKEY && verifyNostrEvent(event))
+      .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))[0]
+    return newest ? newest.content : null
   } finally {
     pool.close(RELAYS)
   }
@@ -65,8 +68,11 @@ try {
     [D_STANDING, JSON.stringify({ contributors: standing })],
     [D_ADMINS, JSON.stringify({ admins: admins.map((a) => a.pubkey) })],
   ] as const) {
-    if (await hasExisting(dTag)) {
-      console.log(`SKIP ${dTag} — already published`)
+    // Republish when the desired list differs, so adding an ADMIN_PUBKEYS entry
+    // actually reaches the relay instead of being skipped forever.
+    const published = await existingContent(dTag)
+    if (published === content) {
+      console.log(`SKIP ${dTag} — already published and unchanged`)
       continue
     }
     const signed = await signer.signEvent({

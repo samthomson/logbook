@@ -30,7 +30,8 @@ html,
 .app-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
   width: min(100%, calc(var(--measure) + 2 * var(--pad)));
   margin: 0 auto;
   padding: calc(12px + env(safe-area-inset-top)) var(--pad) 12px;
@@ -42,25 +43,61 @@ html,
 }
 
 .app-title {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
   font-size: 1.125rem;
   font-weight: 600;
-  flex: 0 0 auto;
+  cursor: pointer;
 }
 
 .app-nav {
   display: flex;
-  flex: 1;
-  gap: 4px;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: 6px;
   min-width: 0;
 }
 
 .app-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 0 1 auto;
   font-size: 0.875rem;
   color: var(--muted);
-  max-width: 8rem;
+}
+
+.app-identity img {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: 0 0 auto;
+}
+
+.app-identity__name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.app-role {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 2px 8px;
+}
+
+.app-role--producer {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .app-read-only {
@@ -92,14 +129,24 @@ html,
   gap: 6px;
   min-height: 36px;
   padding: 8px 14px;
+  border: 1px solid var(--line);
   border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
   font-size: 0.875rem;
   font-weight: 600;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .btn--primary {
   background: var(--accent);
+  border-color: var(--accent);
   color: #fff;
 }
 
@@ -127,6 +174,7 @@ html,
 
 .btn--record {
   background: var(--danger);
+  border-color: var(--danger);
   color: #fff;
   border-radius: 999px;
   padding: 10px 20px;
@@ -353,22 +401,95 @@ html,
   gap: 8px;
 }
 
-.timeline__recrow {
-  display: flex;
-  justify-content: flex-start;
+.timeline__note--reply {
+  margin-left: calc(var(--reply-depth, 1) * 1.25rem);
+  padding-left: 12px;
+  border-left: 2px solid var(--accent);
 }
 
-.timeline__community {
+.timeline__recrow {
+  display: flex;
+  width: 100%;
+}
+
+.timeline__contents {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 24px;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
 }
 
-.timeline__community .timeline__group-title {
+.timeline__contents-lead {
+  margin: 0;
   font-size: 0.875rem;
   color: var(--muted);
-  margin-bottom: 8px;
+}
+
+.timeline__contents-label {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.timeline__toc {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.timeline__toc-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.timeline__toc-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--fg);
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+}
+
+.timeline__toc-count {
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.timeline__source {
+  margin: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 0.8125rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.timeline__source-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .timeline__community-links {
@@ -377,14 +498,105 @@ html,
   gap: 8px;
 }
 
-.timeline__community-links a {
+.timeline__community-links button {
   padding: 4px 10px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--bg);
   color: var(--fg);
   font-size: 0.875rem;
-  text-decoration: none;
+  cursor: pointer;
+}
+
+.issue-picker__group {
+  margin: 16px 0 8px;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* The episode's state decides what every control below can do, so it reads as
+   a banner at the top rather than a note at the bottom. */
+.timeline__closed {
+  margin: 0 0 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.timeline__chapter-state {
+  margin: 4px 0 8px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.timeline__produce {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* Dim only what is being excluded — never its own controls. */
+.bubble--out .bubble__head,
+.bubble--out .bubble__player,
+.bubble--out .bubble__transcript {
+  opacity: 0.55;
+}
+
+.bubble__cut {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.bubble__cut-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.bubble__cut-check:hover:not(:has(input:disabled)) {
+  color: var(--accent);
+}
+
+.bubble__cut-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.bubble__cut-check input:disabled {
+  cursor: not-allowed;
+}
+
+.bubble__cut-group {
+  display: inline-flex;
+  gap: 4px;
+  padding-left: 16px;
+  border-left: 1px solid var(--line);
+}
+
+.bubble__cut-note {
+  font-size: 0.8125rem;
+  color: var(--muted);
 }
 
 .timeline__publish-error,
@@ -433,15 +645,11 @@ html,
 
 /* ── Voice bubbles ──────────────────────────────────────────────────────────── */
 
+/* One full-width card per voice note: the author sits inside it, so there is no
+   avatar gutter and no left/right alignment to read as a chat. */
 .bubble {
   display: flex;
-  gap: 10px;
-  align-items: flex-end;
   width: 100%;
-}
-
-.bubble--own {
-  flex-direction: row-reverse;
 }
 
 .bubble__avatar {
@@ -479,11 +687,17 @@ html,
   border-color: #c9dbf8;
 }
 
-.bubble__meta {
+.bubble__head {
   display: flex;
-  gap: 8px;
-  align-items: baseline;
-  margin-bottom: 8px;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.bubble__who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .bubble__author {
@@ -491,10 +705,34 @@ html,
   font-weight: 600;
 }
 
+.bubble__npub {
+  font-size: 0.75rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .bubble__new,
 .bubble__published {
   font-size: 0.75rem;
   color: var(--muted);
+}
+
+.bubble__reply-of {
+  margin: 0 0 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.bubble__reply-of:hover {
+  text-decoration: underline;
 }
 
 .bubble__player {
@@ -554,13 +792,37 @@ html,
 }
 
 .bubble__reply {
-  width: 28px;
-  height: 28px;
-  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--accent);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
 }
 
-.bubble__transcript,
-.bubble__reply-context {
+.bubble__reply:hover {
+  color: #fff;
+  background: var(--accent);
+}
+
+.bubble__problem {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: #fdecec;
+  color: var(--danger);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.bubble__transcript {
   margin: 8px 0 0;
   padding-top: 8px;
   border-top: 1px solid var(--line);
@@ -634,16 +896,54 @@ html,
   width: 100%;
 }
 
-.note-row__reply {
-  color: var(--muted);
-}
-
 /* ── Inline recorder ────────────────────────────────────────────────────────── */
 
 .irec__idle {
-  display: inline-flex;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.irec__add {
+  display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  color: var(--accent);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.irec__add:hover {
+  border-style: solid;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* Not recording yet, so not red: red is reserved for errors and for the live
+   recording controls below. */
+.irec__add-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+}
+
+.irec__add:hover .irec__add-icon {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 
 .irec__btn,
@@ -746,6 +1046,11 @@ html,
   font-weight: 600;
 }
 
+.issue-picker__lead {
+  margin: -8px 0 20px;
+  color: var(--muted);
+}
+
 .issue-picker__list {
   list-style: none;
   margin: 0;
@@ -780,6 +1085,28 @@ html,
 .issue-picker__badge {
   font-size: 0.75rem;
   color: var(--accent);
+}
+
+.issue-picker__status {
+  flex: 0 0 auto;
+  padding: 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.issue-picker__status--releasing {
+  color: #6a4b00;
+  border-color: #e0c675;
+  background: #fff8e6;
+}
+
+.issue-picker__status--released {
+  color: #146b3a;
+  border-color: #9ed6b6;
+  background: #eefaf2;
 }
 
 .issue-picker__item--current .issue-picker__item-title {
