@@ -1,8 +1,7 @@
 # Logbook UI — minimal design system
 
-One file of tokens (`src/index.css`), one product stylesheet (`src/App.css`),
-admin extras in `src/components/AdminWorkspace.css`. No icon fonts, no Google
-Fonts, no component libraries.
+One file of tokens (`src/index.css`), one product stylesheet (`src/App.css`).
+No icon fonts, no Google Fonts, no component libraries.
 
 ## Principles
 

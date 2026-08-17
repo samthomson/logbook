@@ -82,9 +82,9 @@ fallbacks, secondary lists, or soft defaults that paper over misconfiguration.
 - If something is broken, catch it and fix it. Do not ship a second path that
   "usually works instead."
 
-This file is the executable handoff for the next agent(s). Read `.planning/PROJECT.md`,
-`.planning/REQUIREMENTS.md`, `.planning/ROADMAP.md`, and `PLAN.md` for full context before
-starting any phase. The design in `PLAN.md` is locked; do not re-debate architecture.
+This file is the executable handoff for the next agent(s). How to run: `README.md`.
+The design in `PLAN.md` is locked; do not re-debate architecture. `.planning/` is a
+frozen GSD import — do not treat it as current runtime or UI.
 
 ## Project Summary
 
