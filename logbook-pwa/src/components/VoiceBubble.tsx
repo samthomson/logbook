@@ -7,7 +7,7 @@ import { nip19 } from 'nostr-tools'
 import { usePlayback } from '../lib/playback'
 import type { Segment } from '../types/nostr'
 import { authorLabel, type Profile } from '../lib/profiles'
-import { avatarInitials, avatarStyle, noteTint } from '../lib/avatar'
+import { avatarInitials, avatarStyle } from '../lib/avatar'
 import { formatDuration, clamp } from '../lib/utils'
 import { useState } from 'react'
 
@@ -71,7 +71,6 @@ export default function VoiceBubble({
   const name = authorLabel(profile, segment.event.pubkey)
   const initials = avatarInitials(profile?.name, segment.event.pubkey)
   const avatarColors = avatarStyle(segment.event.pubkey)
-  const tint = noteTint(segment.event.pubkey)
   const npub = profile?.name?.trim() ? nip19.npubEncode(segment.event.pubkey) : null
 
   return (
@@ -79,7 +78,7 @@ export default function VoiceBubble({
       id={`voice-note-${segment.event.id}`}
       className={`bubble ${isOwn ? 'bubble--own' : ''} ${isNew ? 'bubble--new' : ''} ${cut && !cut.inCut ? 'bubble--out' : ''}`}
     >
-      <div className="bubble__body" style={tint}>
+      <div className="bubble__body">
         <div className="bubble__head">
           <div className="bubble__avatar" style={avatarColors} aria-hidden="true">
             {profile?.picture ? (

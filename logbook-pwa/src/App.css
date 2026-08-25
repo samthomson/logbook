@@ -707,6 +707,7 @@ html,
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--card);
+  color: var(--fg);
 }
 
 .bubble__head {

@@ -33,9 +33,3 @@ export function avatarStyle(pubkey: string): { backgroundColor: string; color: s
   const { bg, fg } = PALETTE[index]
   return { backgroundColor: bg, color: fg }
 }
-
-/** Card wash from the same palette so two authors are distinct at a glance. */
-export function noteTint(pubkey: string): { backgroundColor: string; borderColor: string } {
-  const { backgroundColor, color } = avatarStyle(pubkey)
-  return { backgroundColor, borderColor: color }
-}

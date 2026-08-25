@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { avatarInitials, avatarStyle, noteTint } from './avatar'
+import { avatarInitials, avatarStyle } from './avatar'
 
 describe('avatarInitials', () => {
   it('uses first and last word for multi-word names', () => {
@@ -22,13 +22,5 @@ describe('avatarStyle', () => {
     const a = avatarStyle('a'.repeat(64))
     const b = avatarStyle('f'.repeat(64))
     expect(a.backgroundColor).not.toBe(b.backgroundColor)
-  })
-
-  it('tints the note card from the same colour', () => {
-    const pk = 'c'.repeat(64)
-    const avatar = avatarStyle(pk)
-    const tint = noteTint(pk)
-    expect(tint.backgroundColor).toBe(avatar.backgroundColor)
-    expect(tint.borderColor).toBe(avatar.color)
   })
 })
