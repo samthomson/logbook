@@ -7,7 +7,7 @@
   --line: #d9d9d9;
   --surface: #f0f0f0;
   --card: #ffffff;
-  --accent: #0b57d0;
+  --accent: #6e6294;
   --on-accent: #ffffff;
   --danger: #b00020;
   --warning-bg: #fff8e6;
@@ -33,8 +33,8 @@
     --line: #262626;
     --surface: #0a0a0a;
     --card: #141414;
-    --accent: #4a9eff;
-    --on-accent: #ffffff;
+    --accent: #9d8fbf;
+    --on-accent: #0a0a0a;
     --danger: #ff6b6b;
     --warning-bg: #2a2300;
     --warning-fg: #e0c675;
