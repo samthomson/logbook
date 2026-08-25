@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { nip19 } from 'nostr-tools'
-import { COMPASS_PUBKEY, KINDS } from '../config'
+import { KINDS } from '../config'
+import { REAL_COMPASS_PUBKEY } from './config-env'
 import { episodeAddress, parseRoute, routeHash, routeIssueNumber } from './route'
 
 describe('hash routes', () => {
@@ -29,12 +30,12 @@ describe('hash routes', () => {
     })
     const otherKind = nip19.naddrEncode({
       kind: 30_024,
-      pubkey: COMPASS_PUBKEY,
+      pubkey: REAL_COMPASS_PUBKEY,
       identifier: 'newsletter-7',
     })
     const otherIdentifier = nip19.naddrEncode({
       kind: KINDS.COMPASS_ISSUE,
-      pubkey: COMPASS_PUBKEY,
+      pubkey: REAL_COMPASS_PUBKEY,
       identifier: 'logbook-7',
     })
 

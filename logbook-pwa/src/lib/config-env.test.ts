@@ -54,7 +54,7 @@ describe('requireUrlList', () => {
 })
 
 describe('REAL_COMPASS_PUBKEY', () => {
-  it('is the known production identity for deny-lists only', () => {
+  it('is the production Compass identity', () => {
     expect(REAL_COMPASS_PUBKEY).toMatch(/^[0-9a-f]{64}$/)
   })
 })

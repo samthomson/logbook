@@ -1,26 +1,35 @@
 /**
- * IssuePicker — menu of all Compass issues from relays.
+ * IssuePicker — episode index.
  *
- * Lists every kind 30023 issue from the Compass pubkey (not just ones with
- * manifests), newest first, with the current one highlighted. Tapping loads
- * that issue's timeline.
+ * Published episodes for everyone. Episodes being made for people who are
+ * signed in. Compass newsletters with no Logbook episode yet only for a
+ * producer, who starts the draft from this page.
  */
 
 import { useState, useEffect } from 'react'
 import { fetchAllIssues, extractIssueNumber } from '../lib/compass'
 import { fetchAllManifests, subscribeManifests } from '../lib/manifest'
 import { selectNewestManifestRevision } from '../lib/manifest-revision'
-import type { EpisodeStatus, IssueManifest, NostrEvent } from '../types/nostr'
+import { startPodcastDraft } from '../lib/start-podcast-draft'
+import type { LatestRequestGuard } from '../lib/latest-request'
+import type { EpisodeStatus, IssueManifest, NostrEvent, NostrSigner } from '../types/nostr'
+
+export interface PickerProducer {
+  signer: NostrSigner
+  pubkey: string
+  writeRequests: LatestRequestGuard
+}
 
 interface Props {
   currentIssueNumber: number | null
   onSelect: (event: NostrEvent) => void
+  onDraftStarted: (issueNumber: number) => void
   onBack?: () => void
   /** Off for signed-out visitors: an episode in progress is not theirs to browse. */
   showUnpublished: boolean
+  producer: PickerProducer | null
 }
 
-// Module-level cache: revisiting Episodes is instant; relays re-validate in background
 let issuesCache: NostrEvent[] | null = null
 
 const STATUS_LABEL: Record<EpisodeStatus, { label: string; tone: string }> = {
@@ -29,12 +38,27 @@ const STATUS_LABEL: Record<EpisodeStatus, { label: string; tone: string }> = {
   published: { label: 'Published', tone: 'released' },
 }
 
-export default function IssuePicker({ currentIssueNumber, onSelect, onBack, showUnpublished }: Props) {
+function rowKind(status: EpisodeStatus | undefined): 'published' | 'in-progress' | 'newsletter' {
+  if (status === 'published') return 'published'
+  if (status === 'draft' || status === 'cutting') return 'in-progress'
+  return 'newsletter'
+}
+
+export default function IssuePicker({
+  currentIssueNumber,
+  onSelect,
+  onDraftStarted,
+  onBack,
+  showUnpublished,
+  producer,
+}: Props) {
   const [issues, setIssues] = useState<NostrEvent[]>(issuesCache ?? [])
-  const [loading, setLoading] = useState(!issuesCache)
+  const [loading, setLoading] = useState(issuesCache === null)
   const [error, setError] = useState<string | null>(null)
   const [manifestByIssue, setManifestByIssue] = useState<Map<number, IssueManifest>>(new Map())
   const [statusesLoaded, setStatusesLoaded] = useState(false)
+  const [startingId, setStartingId] = useState<string | null>(null)
+  const [startError, setStartError] = useState<string | null>(null)
   const statuses = new Map<number, EpisodeStatus>(
     [...manifestByIssue].map(([number, manifest]) => [number, manifest.content.episodeStatus]),
   )
@@ -46,8 +70,6 @@ export default function IssuePicker({ currentIssueNumber, onSelect, onBack, show
       .finally(() => setLoading(false))
   }, [])
 
-  // Status comes from the newest trusted revision of each episode. Relays keep
-  // older replaceable events, so "Making the audio" must not overwrite Published.
   useEffect(() => {
     let alive = true
     const apply = (manifest: IssueManifest) => {
@@ -69,7 +91,9 @@ export default function IssuePicker({ currentIssueNumber, onSelect, onBack, show
         if (!alive) return
         for (const manifest of manifests) apply(manifest)
       })
-      .catch(() => {})
+      .catch((err: unknown) => {
+        if (alive) setError(err instanceof Error ? err.message : String(err))
+      })
       .finally(() => { if (alive) setStatusesLoaded(true) })
 
     const unsubscribe = subscribeManifests((manifest) => {
@@ -81,13 +105,49 @@ export default function IssuePicker({ currentIssueNumber, onSelect, onBack, show
     }
   }, [])
 
-  const published = issues.filter((event) => statuses.get(extractIssueNumber(event)) === 'published')
-  const inProgress = showUnpublished
-    ? issues.filter((event) => statuses.get(extractIssueNumber(event)) !== 'published')
-    : []
-  const hidden = issues.length - published.length - inProgress.length
+  const published: NostrEvent[] = []
+  const inProgress: NostrEvent[] = []
+  const newsletters: NostrEvent[] = []
+  if (statusesLoaded) {
+    for (const event of issues) {
+      const kind = rowKind(statuses.get(extractIssueNumber(event)))
+      if (kind === 'published') published.push(event)
+      else if (kind === 'in-progress') {
+        if (showUnpublished) inProgress.push(event)
+      } else if (producer) {
+        newsletters.push(event)
+      }
+    }
+  }
+  const hidden = issues.length - published.length - inProgress.length - newsletters.length
 
-  const list = (events: NostrEvent[]) => (
+  const startDraft = async (event: NostrEvent) => {
+    if (!producer || startingId) return
+    const request = producer.writeRequests.begin()
+    setStartingId(event.id)
+    setStartError(null)
+    try {
+        await startPodcastDraft({
+        issueEvent: event,
+        signer: producer.signer,
+        expectedPubkey: producer.pubkey,
+        assertActive: () => {
+          if (!producer.writeRequests.isCurrent(request)) {
+            throw new Error('Producer capability was revoked')
+          }
+        },
+      })
+      if (!producer.writeRequests.isCurrent(request)) return
+      onDraftStarted(extractIssueNumber(event))
+    } catch (err: unknown) {
+      if (!producer.writeRequests.isCurrent(request)) return
+      setStartError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setStartingId((current) => (current === event.id ? null : current))
+    }
+  }
+
+  const episodeRow = (events: NostrEvent[]) => (
     <ul className="issue-picker__list">
       {events.map((ev) => {
         const num = extractIssueNumber(ev)
@@ -120,32 +180,71 @@ export default function IssuePicker({ currentIssueNumber, onSelect, onBack, show
         <h2 className="issue-picker__title">Episodes</h2>
       </div>
       <p className="issue-picker__lead">
-        {showUnpublished
-          ? 'An episode is either being made or published. Pick one to open it.'
-          : 'Published episodes. Log in to follow one that is still being made.'}
+        {producer
+          ? 'A Logbook episode starts from a Compass newsletter. Newsletters without an episode are listed first.'
+          : showUnpublished
+            ? 'An episode is either being made or published. Pick one to open it.'
+            : 'Published episodes. Log in to follow one that is still being made.'}
       </p>
 
       {(loading || !statusesLoaded) && <p className="issue-picker__loading">Loading…</p>}
       {error && <p className="issue-picker__error">Error: {error}</p>}
       {!loading && !error && issues.length === 0 && (
-        <p className="issue-picker__empty">No issues found on relays.</p>
+        <p className="issue-picker__empty">No Compass newsletters on these relays.</p>
+      )}
+
+      {producer && statusesLoaded && !error && issues.length > 0 && (
+        <>
+          <h3 className="issue-picker__group">No episode yet</h3>
+          {newsletters.length === 0 ? (
+            <p className="issue-picker__empty">
+              None — every Compass issue on these relays already has a Logbook episode.
+            </p>
+          ) : (
+            <ul className="issue-picker__list">
+              {newsletters.map((ev) => {
+                const num = extractIssueNumber(ev)
+                const title = ev.tags.find((t) => t[0] === 'title')?.[1] ?? `Issue ${num}`
+                const date = new Date(ev.created_at * 1000)
+                const label = date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+                const busy = startingId !== null
+                return (
+                  <li key={ev.id} className="issue-picker__item issue-picker__item--newsletter">
+                    <div className="issue-picker__item-copy">
+                      <span className="issue-picker__item-title">{title}</span>
+                      <span className="issue-picker__date">{label}</span>
+                    </div>
+                    <button
+                      className="btn btn--primary btn--small"
+                      disabled={busy}
+                      onClick={() => { void startDraft(ev) }}
+                    >
+                      {startingId === ev.id ? 'Starting…' : 'Start podcast draft'}
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+          {startError && <p className="issue-picker__error">{startError}</p>}
+        </>
       )}
 
       {inProgress.length > 0 && (
         <>
           <h3 className="issue-picker__group">Being made</h3>
-          {list(inProgress)}
+          {episodeRow(inProgress)}
         </>
       )}
 
       {published.length > 0 && (
         <>
-          {inProgress.length > 0 && <h3 className="issue-picker__group">Published</h3>}
-          {list(published)}
+          {(inProgress.length > 0 || (producer && statusesLoaded)) && <h3 className="issue-picker__group">Published</h3>}
+          {episodeRow(published)}
         </>
       )}
 
-      {!loading && !error && statusesLoaded && published.length === 0 && inProgress.length === 0 && issues.length > 0 && (
+      {!loading && !error && statusesLoaded && published.length === 0 && inProgress.length === 0 && newsletters.length === 0 && issues.length > 0 && (
         <p className="issue-picker__empty">No published episodes yet.</p>
       )}
 

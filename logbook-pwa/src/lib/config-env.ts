@@ -14,8 +14,9 @@ function splitList(raw: string): string[] {
 }
 
 /**
- * Known production Compass pubkey. Used only as a deny-list for destructive
- * test tools (e.g. seed-newsletter). Never used as a configuration fallback.
+ * Production Compass npub. Kind 30023 newsletters are this author. Also a
+ * deny-list for seed tools so a staging `COMPASS_PUBKEY` cannot write there.
+ * Never a fallback when `COMPASS_PUBKEY` is unset.
  */
 export const REAL_COMPASS_PUBKEY =
   '775954f7314112489a4a29ec692b72386fd60bcceb0308d423101ea979c57a80'

@@ -9,10 +9,17 @@ export const COMPASS_PUBKEY = requirePubkey(
   'COMPASS_PUBKEY',
 )
 
-/** Single relay list for all worker Nostr I/O. */
+/** Logbook write/query: segments, manifests, whitelists, publish. */
 export const RELAYS = requireUrlList(
   process.env.RELAYS,
   'RELAYS',
+  'ws',
+)
+
+/** Read-only: Compass kind 30023 newsletters. Never used for publishing. */
+export const DISCOVERY_RELAYS = requireUrlList(
+  process.env.DISCOVERY_RELAYS,
+  'DISCOVERY_RELAYS',
   'ws',
 )
 

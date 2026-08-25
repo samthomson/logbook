@@ -1,11 +1,10 @@
 import { nip19 } from 'nostr-tools'
-import { COMPASS_PUBKEY, RELAYS, ISSUE_PREFIX, KINDS } from '../config'
+import { RELAYS, DISCOVERY_RELAYS, ISSUE_PREFIX, KINDS } from '../config'
+import { REAL_COMPASS_PUBKEY } from './config-env'
 import type { NostrEvent, CompassIssue, IssueSection, IssueSectionItem } from '../types/nostr'
 import { slugify } from './utils'
 import { filterVerified } from './relay'
 import { hasReasonableEventTimestamp, latestReasonableEventTimestamp } from './event-time'
-
-
 import { getPool } from './pool'
 const ISSUE_CACHE_TTL_MS = 5 * 60 * 1000
 const ISSUE_QUERY_MAX_WAIT_MS = 1_800
@@ -26,12 +25,12 @@ export function issueAddress(issue: CompassIssue): string {
 
 /** Fetch the most recent Compass kind 30023 long-form issue. */
 export async function fetchLatestIssue(
-  relays: string[] = RELAYS,
+  relays: string[] = DISCOVERY_RELAYS,
 ): Promise<NostrEvent | null> {
   const pool = getPool()
   const events = await pool.querySync(relays, {
     kinds: [KINDS.COMPASS_ISSUE],
-    authors: [COMPASS_PUBKEY],
+    authors: [REAL_COMPASS_PUBKEY],
     until: latestReasonableEventTimestamp(),
     limit: 20,
   }, { maxWait: ISSUE_QUERY_MAX_WAIT_MS })
@@ -48,12 +47,12 @@ export async function fetchLatestIssue(
 /** Fetch a specific Compass issue by its d-tag (issue number slug). */
 export async function fetchIssueByDTag(
   dTag: string,
-  relays: string[] = RELAYS,
+  relays: string[] = DISCOVERY_RELAYS,
 ): Promise<NostrEvent | null> {
   const pool = getPool()
   const events = await pool.querySync(relays, {
     kinds: [KINDS.COMPASS_ISSUE],
-    authors: [COMPASS_PUBKEY],
+    authors: [REAL_COMPASS_PUBKEY],
     '#d': [dTag],
     until: latestReasonableEventTimestamp(),
     limit: 20,
@@ -68,7 +67,7 @@ export async function fetchIssueByDTag(
 
 /** Fetch all available Compass issues (for the issue picker). */
 export async function fetchAllIssues(
-  relays: string[] = RELAYS,
+  relays: string[] = DISCOVERY_RELAYS,
 ): Promise<NostrEvent[]> {
   const key = relays.join('\n')
   const cached = issueLists.get(key)
@@ -78,7 +77,7 @@ export async function fetchAllIssues(
 
   const request = getPool().querySync(relays, {
     kinds: [KINDS.COMPASS_ISSUE],
-    authors: [COMPASS_PUBKEY],
+    authors: [REAL_COMPASS_PUBKEY],
     until: latestReasonableEventTimestamp(),
     limit: 100,
   }, { maxWait: ISSUE_QUERY_MAX_WAIT_MS }).then((events) => {
@@ -117,9 +116,9 @@ export async function fetchLatestIssueWithSegments(
 ): Promise<NostrEvent | null> {
   // Startup only needs a recent window. Loading the complete episode picker
   // here made SimplePool verify every historical issue before first content.
-  const recent = await getPool().querySync(relays, {
+  const recent = await getPool().querySync(DISCOVERY_RELAYS, {
     kinds: [KINDS.COMPASS_ISSUE],
-    authors: [COMPASS_PUBKEY],
+    authors: [REAL_COMPASS_PUBKEY],
     until: latestReasonableEventTimestamp(),
     limit: INITIAL_ISSUE_SCAN_LIMIT,
   }, { maxWait: ISSUE_QUERY_MAX_WAIT_MS })
@@ -131,7 +130,7 @@ export async function fetchLatestIssueWithSegments(
   // newsletters has no audio. The expensive inventory scan is a fallback,
   // never part of the normal startup path.
   const recentIds = new Set(issues.map((event) => event.id))
-  const olderIssues = (await fetchAllIssues(relays)).filter((event) => !recentIds.has(event.id))
+  const olderIssues = (await fetchAllIssues()).filter((event) => !recentIds.has(event.id))
   return findLatestPopulatedIssue(olderIssues, relays)
 }
 

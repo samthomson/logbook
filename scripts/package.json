@@ -8,7 +8,7 @@
     "stitch": "tsx stitch.ts",
     "publish-rss": "node --loader ts-node/esm publish-rss.ts",
     "typecheck": "tsc --noEmit",
-    "test": "COMPASS_PUBKEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa RELAYS=wss://relay.test BLOSSOM_SERVERS=https://blossom.test LOGBOOK_BASE_URL=http://localhost:8080 tsx --test test/*.test.ts",
+    "test": "COMPASS_PUBKEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa RELAYS=wss://relay.test DISCOVERY_RELAYS=wss://discovery.test BLOSSOM_SERVERS=https://blossom.test LOGBOOK_BASE_URL=http://localhost:8080 tsx --test test/*.test.ts",
     "rss": "tsx publish-rss.ts",
     "watch": "tsx watch-compass.ts",
     "transcribe-missing": "tsx transcribe-missing.ts",

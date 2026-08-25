@@ -13,7 +13,7 @@ function splitList(raw: string): string[] {
   return raw.split(',').map((value) => value.trim()).filter((value) => value !== '')
 }
 
-/** Deny-list for seed tools only — never a config fallback. */
+/** Production Compass npub: kind 30023 author, and a seed-tool deny-list. Never a config fallback. */
 export const REAL_COMPASS_PUBKEY =
   '775954f7314112489a4a29ec692b72386fd60bcceb0308d423101ea979c57a80'
 

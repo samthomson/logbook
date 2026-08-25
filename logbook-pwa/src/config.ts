@@ -25,7 +25,7 @@ export const RELAYS = requireUrlList(
   'ws',
 )
 
-/** Read-only: kind 0 / NIP-05 discovery. Never used for publishing. */
+/** Read-only: kind 0 / NIP-05 / Compass kind 30023 newsletters. Never used for publishing. */
 export const DISCOVERY_RELAYS = requireUrlList(
   import.meta.env.DISCOVERY_RELAYS,
   'DISCOVERY_RELAYS',

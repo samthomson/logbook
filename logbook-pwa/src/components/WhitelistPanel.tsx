@@ -324,7 +324,7 @@ function WhitelistIdentity({
   fallbackName?: string
 }) {
   const name = profile?.name ?? fallbackName ?? null
-  const npub = `${nip19.npubEncode(pubkey).slice(0, 16)}…`
+  const npub = nip19.npubEncode(pubkey)
   const initials = avatarInitials(name, pubkey)
   const avatarColors = profile?.picture ? undefined : avatarStyle(pubkey)
   return (

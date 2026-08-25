@@ -1,6 +1,7 @@
 /** Public offline snapshot only: verified issue data and parsed relay segments.
  * Never store signer/session/draft data in this database. */
-import { BLOSSOM_SERVERS, COMPASS_PUBKEY, ISSUE_PREFIX, KINDS } from '../config'
+import { BLOSSOM_SERVERS, ISSUE_PREFIX, KINDS } from '../config'
+import { REAL_COMPASS_PUBKEY } from './config-env'
 import type { CompassIssue, NostrEvent } from '../types/nostr'
 import { getTag } from '../types/nostr'
 import { extractIssueNumber, parseIssue } from './compass'
@@ -37,7 +38,7 @@ function validateCachedIssue(row: CachedIssue): { issue: CompassIssue; segments:
   if (!Number.isFinite(row.cachedAt) || row.cachedAt > Date.now()) return null
   if (!row.issue || typeof row.issue !== 'object') return null
   const event = (row.issue as { event?: unknown }).event
-  if (!isNostrEvent(event) || event.kind !== KINDS.COMPASS_ISSUE || event.pubkey !== COMPASS_PUBKEY) return null
+  if (!isNostrEvent(event) || event.kind !== KINDS.COMPASS_ISSUE || event.pubkey !== REAL_COMPASS_PUBKEY) return null
   if (!hasReasonableEventTimestamp(event)) return null
   if (filterVerified([event]).length !== 1) return null
 

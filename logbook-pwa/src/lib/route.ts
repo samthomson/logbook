@@ -12,7 +12,8 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { nip19 } from 'nostr-tools'
-import { COMPASS_PUBKEY, KINDS } from '../config'
+import { KINDS } from '../config'
+import { REAL_COMPASS_PUBKEY } from './config-env'
 
 export type Route =
   | { kind: 'home' }
@@ -25,7 +26,7 @@ const NEWSLETTER_IDENTIFIER = /^newsletter-(\d{1,9})$/
 export function episodeAddress(issueNumber: number): string {
   return nip19.naddrEncode({
     kind: KINDS.COMPASS_ISSUE,
-    pubkey: COMPASS_PUBKEY,
+    pubkey: REAL_COMPASS_PUBKEY,
     identifier: `newsletter-${issueNumber}`,
   })
 }
@@ -36,7 +37,7 @@ function issueNumberFromAddress(address: string): number | null {
     if (decoded.type !== 'naddr') return null
     const pointer = decoded.data
     if (pointer.kind !== KINDS.COMPASS_ISSUE) return null
-    if (pointer.pubkey.toLowerCase() !== COMPASS_PUBKEY.toLowerCase()) return null
+    if (pointer.pubkey.toLowerCase() !== REAL_COMPASS_PUBKEY) return null
     const match = NEWSLETTER_IDENTIFIER.exec(pointer.identifier)
     return match ? Number(match[1]) : null
   } catch {

@@ -603,7 +603,13 @@ export default function App() {
           <IssuePicker
             currentIssueNumber={null}
             onSelect={handleSelectIssue}
+            onDraftStarted={(issueNumber) => navigate({ kind: 'episode', issueNumber })}
             showUnpublished={Boolean(auth)}
+            producer={auth && isProducerKey ? {
+              signer: auth.signer,
+              pubkey: auth.pubkey,
+              writeRequests: manifestWriteRequests,
+            } : null}
           />
         )}
 

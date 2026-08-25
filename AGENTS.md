@@ -28,6 +28,9 @@
 - One compose file. One `.env`. Same variable names in `.env`, PWA, and worker.
 - Comments record a non-obvious constraint or why, never what the next line
   already says. Do not annotate a variable with a restatement of its name.
+- Smallest diff that does the job. Change the value passed, not the parameter's
+  name. Do not rename `relays` because the list is now discovery. Do not add
+  parameters to thread a list the callee already imports from config.
 
 ## UI/UX rules (the operator judges the app by these)
 
@@ -58,6 +61,7 @@
   cut), each with one line of plain guidance saying what happens next and why an
   action is disabled.
 - No duplicated warnings. State appears once, next to the thing it describes.
+  An empty list is one sentence; do not also claim the opposite.
 - An episode in progress is not for signed-out visitors: the index lists only
   published episodes for them, and a direct link says "still being made". This
   is presentation only — the events stay public, so never describe it as access
@@ -71,7 +75,11 @@ fallbacks, secondary lists, or soft defaults that paper over misconfiguration.
 
 - Two relay roles, two names, both required (no silent defaults):
   - `RELAYS` — Logbook write/query (segments, manifests, whitelists, publish).
-  - `DISCOVERY_RELAYS` — read-only discovery (kind 0 profiles, NIP-05 hints).
+  - `DISCOVERY_RELAYS` — read-only discovery (kind 0 profiles, NIP-05 hints, Compass kind 30023).
+  Kind 30023 is authored by the production Compass npub (`REAL_COMPASS_PUBKEY`).
+  `COMPASS_PUBKEY` is this deployment's Logbook signer and may be a staging key;
+  do not pin newsletter queries to it. `REAL_COMPASS_PUBKEY` is never a fallback
+  for an unset `COMPASS_PUBKEY`.
   Same names in `.env`, PWA, and worker. Never rename with `VITE_` / `LOGBOOK_`.
 - Required identity and endpoints are required: unset or invalid → throw at
   load. Do not substitute production Compass keys or Blossom mirrors when env

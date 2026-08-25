@@ -21,12 +21,13 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import fetch from 'node-fetch'
 import {
-  COMPASS_PUBKEY,
   RELAYS,
+  DISCOVERY_RELAYS,
   KINDS,
   AUDIO_DIR,
   BLOSSOM_SERVERS,
 } from './config.ts'
+import { REAL_COMPASS_PUBKEY } from './config-env.ts'
 import { uploadToBlossom } from './blossom.ts'
 import { parseVerifiedSegment, verifyNostrEvent } from './segment-security.ts'
 import { downloadVerifiedBlob } from './stitch-download.ts'
@@ -144,7 +145,7 @@ async function fetchRequiredChapterIds(
     const decoded = nip19.decode(manifest.issueRef)
     if (decoded.type === 'naddr') {
       const address = decoded.data
-      if (address.kind === KINDS.COMPASS_ISSUE && address.pubkey === COMPASS_PUBKEY) {
+      if (address.kind === KINDS.COMPASS_ISSUE && address.pubkey === REAL_COMPASS_PUBKEY) {
         identifier = address.identifier
       }
     }
@@ -153,14 +154,14 @@ async function fetchRequiredChapterIds(
     // deterministic; the fetched newsletter is still signature checked.
   }
 
-  const candidates = await pool.querySync(RELAYS, {
+  const candidates = await pool.querySync(DISCOVERY_RELAYS, {
     kinds: [KINDS.COMPASS_ISSUE],
-    authors: [COMPASS_PUBKEY],
+    authors: [REAL_COMPASS_PUBKEY],
     '#d': [...new Set([identifier, String(issueNumber), issueId])],
     limit: 20,
   })
   const issue = (candidates as NostrEvent[])
-    .filter((event) => event.pubkey === COMPASS_PUBKEY && verifyNostrEvent(event as never))
+    .filter((event) => event.pubkey === REAL_COMPASS_PUBKEY && verifyNostrEvent(event as never))
     .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))[0]
   if (!issue) throw new Error(`[stitch] No verified Compass newsletter found for ${issueId}`)
 
@@ -265,7 +266,7 @@ async function main(): Promise<void> {
   })
   if (stitchState === 'already-published') {
     console.log('[stitch] Episode already published. Use --force to re-stitch.')
-    pool.close(RELAYS)
+    pool.close([...RELAYS, ...DISCOVERY_RELAYS])
     return
   }
 
@@ -284,7 +285,7 @@ async function main(): Promise<void> {
   )
 
   const segments = await fetchSegments(allSegmentIds, pool)
-  pool.close(RELAYS)
+  pool.close([...RELAYS, ...DISCOVERY_RELAYS])
   assertLockedSegmentsPresent(activeSections, segments)
 
   if (dryRun) {

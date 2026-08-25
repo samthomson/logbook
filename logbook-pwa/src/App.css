@@ -158,7 +158,7 @@ html,
   padding: 8px 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--bg);
+  background: var(--card);
   color: var(--fg);
   font-size: 0.875rem;
   font-weight: 600;
@@ -179,7 +179,7 @@ html,
 
 .btn--ghost {
   border: 1px solid var(--line);
-  background: var(--bg);
+  background: var(--card);
   color: var(--fg);
 }
 
@@ -1114,6 +1114,9 @@ html,
   list-style: none;
   margin: 0;
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .issue-picker__item {
@@ -1121,8 +1124,10 @@ html,
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--line);
+  padding: 12px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
   text-align: left;
 }
 
@@ -1166,6 +1171,21 @@ html,
   color: var(--success-fg);
   border-color: var(--success-border);
   background: var(--success-bg);
+}
+
+.issue-picker__item--newsletter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: default;
+}
+
+.issue-picker__item-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .issue-picker__item--current .issue-picker__item-title {
@@ -1302,9 +1322,7 @@ html,
 }
 
 .wl-identity__text code {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   color: var(--muted);
   font-size: 0.75rem;
 }

@@ -7,6 +7,7 @@ vi.mock('./pool', () => ({
 }))
 
 import { fetchLatestIssueWithSegments } from './compass'
+import { REAL_COMPASS_PUBKEY } from './config-env'
 
 describe('initial issue relay budget', () => {
   it('scans only a bounded recent issue window on the startup path', async () => {
@@ -15,6 +16,7 @@ describe('initial issue relay budget', () => {
     expect(querySync).toHaveBeenCalled()
     expect(querySync.mock.calls[0]?.[1]).toMatchObject({
       kinds: [30023],
+      authors: [REAL_COMPASS_PUBKEY],
       limit: 12,
     })
   })

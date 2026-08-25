@@ -22,7 +22,9 @@ services:
     # Dokploy injects these as project env; local uses `.env` the same way.
     environment:
       COMPASS_PUBKEY: ${COMPASS_PUBKEY}
+      ADMIN_PUBKEYS: ${ADMIN_PUBKEYS}
       RELAYS: ${RELAYS}
+      DISCOVERY_RELAYS: ${DISCOVERY_RELAYS}
       BLOSSOM_SERVERS: ${BLOSSOM_SERVERS}
       LOGBOOK_BASE_URL: ${LOGBOOK_BASE_URL}
       COMPASS_BUNKER_URI: ${COMPASS_BUNKER_URI}
