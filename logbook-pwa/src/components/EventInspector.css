@@ -7,7 +7,7 @@
   display: grid;
   place-items: center;
   padding: 16px;
-  background: rgb(15 23 42 / 0.45);
+  background: var(--overlay);
 }
 
 .ev {
@@ -128,7 +128,7 @@
   border-left: 3px solid var(--line);
   padding-left: 6px;
   margin-left: -9px;
-  background: #fff;
+  background: var(--card);
 }
 
 .ev__line--kind { border-left-color: #7c3aed; }

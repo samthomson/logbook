@@ -174,7 +174,7 @@ html,
 .btn--primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .btn--ghost {
@@ -202,7 +202,7 @@ html,
 .btn--record {
   background: var(--danger);
   border-color: var(--danger);
-  color: #fff;
+  color: var(--on-accent);
   border-radius: 999px;
   padding: 10px 20px;
 }
@@ -231,12 +231,12 @@ html,
 }
 
 .notice--warning {
-  background: #fff8e6;
-  color: #6a4b00;
+  background: var(--warning-bg);
+  color: var(--warning-fg);
 }
 
 .notice--error {
-  background: #fdecec;
+  background: var(--error-bg);
   color: var(--danger);
 }
 
@@ -357,7 +357,7 @@ html,
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: #fff;
+  background: var(--card);
 }
 
 .auth-warning,
@@ -634,13 +634,13 @@ html,
 }
 
 .timeline__publish-error {
-  background: #fdecec;
+  background: var(--error-bg);
   color: var(--danger);
 }
 
 .timeline__publish-status {
-  background: #e8f5e9;
-  color: #1b5e20;
+  background: var(--success-bg);
+  color: var(--success-fg);
 }
 
 /* ── Section prose ──────────────────────────────────────────────────────────── */
@@ -683,7 +683,7 @@ html,
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.8);
+  border: 2px solid color-mix(in srgb, var(--card) 80%, transparent);
   background: var(--surface);
   color: var(--muted);
   font-size: 0.75rem;
@@ -706,7 +706,7 @@ html,
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: #fff;
+  background: var(--card);
 }
 
 .bubble__head {
@@ -768,7 +768,7 @@ html,
   height: 36px;
   border-radius: 50%;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   display: grid;
   place-items: center;
   flex-shrink: 0;
@@ -829,7 +829,7 @@ html,
 }
 
 .bubble__reply:hover {
-  color: #fff;
+  color: var(--on-accent);
   background: var(--accent);
 }
 
@@ -838,7 +838,7 @@ html,
   padding: 8px 10px;
   border: 1px solid var(--danger);
   border-radius: var(--radius);
-  background: #fdecec;
+  background: var(--error-bg);
   color: var(--danger);
   font-size: 0.8125rem;
   font-weight: 600;
@@ -859,12 +859,12 @@ html,
 
 .bubble--upload-unsaved .bubble__body,
 .bubble--upload-pending .bubble__body {
-  background: #fff4e6;
+  background: var(--warning-bg);
   border-color: #e8943a;
 }
 
 .bubble--upload-failed .bubble__body {
-  background: #fdecec;
+  background: var(--error-bg);
   border-color: var(--danger);
 }
 
@@ -905,8 +905,8 @@ html,
 .note-row__spinner {
   width: 14px;
   height: 14px;
-  border: 2px solid rgba(255 255 255 / 0.35);
-  border-top-color: #fff;
+  border: 2px solid color-mix(in srgb, var(--on-accent) 35%, transparent);
+  border-top-color: var(--on-accent);
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }
@@ -927,7 +927,7 @@ html,
   height: 32px;
   border-radius: 50%;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .note-row__main {
@@ -993,7 +993,7 @@ html,
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--accent);
   color: var(--accent);
 }
@@ -1001,7 +1001,7 @@ html,
 .irec__add:hover .irec__add-icon {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .irec__btn,
@@ -1010,7 +1010,7 @@ html,
   height: 36px;
   border-radius: 50%;
   background: var(--danger);
-  color: #fff;
+  color: var(--on-accent);
   display: grid;
   place-items: center;
 }
@@ -1156,15 +1156,15 @@ html,
 }
 
 .issue-picker__status--releasing {
-  color: #6a4b00;
-  border-color: #e0c675;
-  background: #fff8e6;
+  color: var(--warning-fg);
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
 }
 
 .issue-picker__status--released {
-  color: #146b3a;
-  border-color: #9ed6b6;
-  background: #eefaf2;
+  color: var(--success-fg);
+  border-color: var(--success-border);
+  background: var(--success-bg);
 }
 
 .issue-picker__item--current .issue-picker__item-title {
@@ -1214,11 +1214,11 @@ html,
 }
 
 .wl-panel__notice {
-  background: #fff8e6;
+  background: var(--warning-bg);
 }
 
 .wl-panel__error {
-  background: #fdecec;
+  background: var(--error-bg);
   color: var(--danger);
 }
 
@@ -1257,7 +1257,7 @@ html,
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: #fff;
+  background: var(--card);
 }
 
 .wl-identity {

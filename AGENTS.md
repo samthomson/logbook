@@ -26,6 +26,8 @@
   when the work is finished and tests pass. Read-only git (status, diff, log) is
   fine.
 - One compose file. One `.env`. Same variable names in `.env`, PWA, and worker.
+- Comments record a non-obvious constraint or why, never what the next line
+  already says. Do not annotate a variable with a restatement of its name.
 
 ## UI/UX rules (the operator judges the app by these)
 

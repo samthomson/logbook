@@ -50,7 +50,7 @@ services:
       dockerfile: logbook-pwa/Dockerfile
       target: deps
     user: "node"
-    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "${PWA_DEV_PORT}"]
     environment:
       COMPASS_PUBKEY: ${COMPASS_PUBKEY}
       ADMIN_PUBKEYS: ${ADMIN_PUBKEYS}
@@ -58,7 +58,7 @@ services:
       DISCOVERY_RELAYS: ${DISCOVERY_RELAYS}
       BLOSSOM_SERVERS: ${BLOSSOM_SERVERS}
     ports:
-      - "${PWA_DEV_PORT}:5173"
+      - "${PWA_DEV_PORT}:${PWA_DEV_PORT}"
     volumes:
       - ./logbook-pwa/src:/app/src
       - ./logbook-pwa/index.html:/app/index.html

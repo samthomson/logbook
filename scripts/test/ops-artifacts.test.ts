@@ -28,7 +28,7 @@ test('tracked worker service is hardened, restartable, and never asks for a hot 
 })
 
 test('container worker reproduces the systemd sandbox and pins an ffmpeg the stitcher can use', async () => {
-  const compose = await read('compose.yml')
+  const compose = await read('docker-compose.yml')
   const dockerfile = await read('scripts/Dockerfile')
 
   // Bookworm's ffmpeg 5.1 silently empties every episode, so the base image is

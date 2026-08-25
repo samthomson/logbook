@@ -1,6 +1,6 @@
 # Worker on a host
 
-Prefer Docker: root `compose.yml`, same `.env` names as local. Dokploy with no
+Prefer Docker: root `docker-compose.yml`, same `.env` names as local. Dokploy with no
 profile starts the worker only.
 
 Bare metal: `systemd/logbook-worker.service` plus `systemd/logbook.env.example`
