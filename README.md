@@ -47,11 +47,11 @@ Compass npub. Changing `COMPASS_PUBKEY` needs a rebuild; Vite inlines it.
 
 ## todo
 
-- dark themed ui, AMOLED black
-- Producer UI: browse real Compass kind 30023 issues on relays → pick one → “Start podcast draft” → publish kind 34200 manifest from that newsletter’s sections (not seed stub)
-- normalise audio levels in ffmpeg when stitching a podcast together
-- mobile ux ui++ (recorder, tap targets, sticky release bar)
-- ai transcription of uploads
-- make publishing feel more robust, for each episode show a checklist of sorts of what tasks get done and are done (ie producing various xml files and publishing to blossom). have individual states/buttons for each
-- Whitelist Derek/MrBlack + run the test — ops actions, fair to omit from a code todo list
-- Prove release end-to-end on staging — the actual milestone blocker, not in README
+- [x] dark themed ui, AMOLED black
+- [ ] Producer UI: browse real Compass kind 30023 issues on relays → pick one → “Start podcast draft” → publish kind 34200 manifest from that newsletter’s sections (not seed stub)
+- [ ] normalise audio levels in ffmpeg when stitching a podcast together
+- [ ] mobile ux ui++ (recorder, tap targets, sticky release bar)
+- [ ] ai transcription of uploads
+- [ ] make publishing feel more robust, for each episode show a checklist of sorts of what tasks get done and are done (ie producing various xml files and publishing to blossom). have individual states/buttons for each
+- [ ] Whitelist Derek/MrBlack + run the test — ops actions, fair to omit from a code todo list
+- [ ] Prove release end-to-end on staging — the actual milestone blocker, not in README
