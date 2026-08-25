@@ -45,3 +45,10 @@ Compass npub. Changing `COMPASS_PUBKEY` needs a rebuild; Vite inlines it.
 - Tag a guest on a chapter, not only on the episode whitelist. Today an `npub`
   in the newsletter is a suggested add for the whole issue.
 
+## todo
+
+- dark themed ui, AMOLED black
+- Producer UI: browse real Compass kind 30023 issues on relays → pick one → “Start podcast draft” → publish kind 34200 manifest from that newsletter’s sections (not seed stub)
+- normalise audio levels in ffmpeg when stitching a podcast together
+- mobile ux ui++ (recorder, tap targets, sticky release bar)
+- ai transcription of uploads
