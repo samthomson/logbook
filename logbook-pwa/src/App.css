@@ -164,6 +164,7 @@ html,
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
+  text-decoration: none;
 }
 
 .btn:disabled {
@@ -533,15 +534,6 @@ html,
   color: var(--fg);
   font-size: 0.875rem;
   cursor: pointer;
-}
-
-.issue-picker__group {
-  margin: 16px 0 8px;
-  font-size: 0.8125rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--muted);
 }
 
 /* The episode's state decides what every control below can do, so it reads as
@@ -1116,11 +1108,12 @@ html,
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 10px;
 }
 
 .issue-picker__item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -1131,8 +1124,24 @@ html,
   text-align: left;
 }
 
+.issue-picker__item--archive,
+.issue-picker__item--none {
+  background: var(--surface);
+}
+
+.issue-picker__item--draft,
+.issue-picker__item--cutting {
+  background: color-mix(in srgb, var(--accent) 16%, var(--card));
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+
+.issue-picker__item--published {
+  background: var(--success-bg);
+  border-color: var(--success-border);
+}
+
 .issue-picker__item-title {
-  flex: 1;
+  font-weight: 600;
 }
 
 .issue-picker__date,
@@ -1146,39 +1155,50 @@ html,
   color: var(--danger);
 }
 
-.issue-picker__badge {
-  font-size: 0.75rem;
-  color: var(--accent);
-}
-
 .issue-picker__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   flex: 0 0 auto;
-  padding: 2px 10px;
+  min-height: 1.75rem;
+  padding: 4px 10px 4px 8px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
   font-weight: 600;
   color: var(--muted);
+  background: var(--bg);
 }
 
-.issue-picker__status--releasing {
+.issue-picker__status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.issue-picker__status--draft {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 14%, var(--card));
+}
+
+.issue-picker__status--cutting {
   color: var(--warning-fg);
   border-color: var(--warning-border);
   background: var(--warning-bg);
 }
 
-.issue-picker__status--released {
+.issue-picker__status--published {
   color: var(--success-fg);
   border-color: var(--success-border);
   background: var(--success-bg);
 }
 
-.issue-picker__item--newsletter {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  cursor: default;
+.issue-picker__status--archive::before,
+.issue-picker__status--none::before {
+  background: var(--line);
 }
 
 .issue-picker__item-copy {
@@ -1186,10 +1206,44 @@ html,
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  flex: 1 1 12rem;
 }
 
-.issue-picker__item--current .issue-picker__item-title {
+.issue-picker__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.issue-picker__actions .btn {
+  background: var(--bg);
+}
+
+.issue-picker__actions .btn:disabled {
+  opacity: 1;
+  color: var(--muted);
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
+.issue-picker__offsite {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 6px 4px;
+  color: var(--accent);
+  font-size: 0.875rem;
   font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.issue-picker__item--current {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 /* ── Install prompt ─────────────────────────────────────────────────────────── */

@@ -83,3 +83,88 @@
   font-size: 0.875rem;
   font-weight: 600;
 }
+
+.produce__checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.produce__check {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.produce__check--done {
+  border-color: var(--success-border);
+}
+
+.produce__check--failed {
+  border-color: var(--danger);
+  background: var(--error-bg);
+}
+
+.produce__check--happening {
+  border-color: var(--accent);
+}
+
+.produce__check-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 12rem;
+  flex: 1 1 12rem;
+}
+
+.produce__check-state {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.produce__check--done .produce__check-state {
+  color: var(--success-fg);
+}
+
+.produce__check--failed .produce__check-state {
+  color: var(--danger);
+}
+
+.produce__check--happening .produce__check-state,
+.produce__check--ready .produce__check-state {
+  color: var(--accent);
+}
+
+.produce__check-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.produce__check-detail {
+  font-size: 0.8125rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.produce__check--failed .produce__check-detail {
+  color: var(--fg);
+}
+
+.produce__check-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}

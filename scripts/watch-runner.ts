@@ -31,6 +31,33 @@ function isCutting(event: ManifestEvent): boolean {
   return isStatus(event, 'cutting')
 }
 
+function cutSections(event: ManifestEvent): { issueRef?: unknown; sections?: unknown } {
+  try {
+    const parsed = JSON.parse(event.content) as { issueRef?: unknown; sections?: unknown }
+    return { issueRef: parsed.issueRef, sections: parsed.sections }
+  } catch {
+    return {}
+  }
+}
+
+/** Compass may rewrite the cutting event with release progress; that is still this lock. */
+function isSameLock(latest: ManifestEvent, candidate: ManifestEvent): boolean {
+  if (!isCutting(latest)) return false
+  if (latest.id === candidate.id) return true
+  const a = cutSections(candidate)
+  const b = cutSections(latest)
+  return a.issueRef === b.issueRef && JSON.stringify(a.sections) === JSON.stringify(b.sections)
+}
+
+function audioCompleted(event: ManifestEvent): boolean {
+  try {
+    const parsed = JSON.parse(event.content) as { release?: { completed?: unknown } }
+    return Array.isArray(parsed.release?.completed) && parsed.release.completed.includes('audio')
+  } catch {
+    return false
+  }
+}
+
 /**
  * Run one bounded watcher cycle with every relay read and process side effect
  * injected. The exact selected revision is revalidated immediately before any
@@ -60,7 +87,7 @@ export async function runWatcherCycle(
         expectedPubkey: dependencies.expectedPubkey,
         verify: dependencies.verify,
       })
-      return Boolean(latest && latest.id === candidate.id && isCutting(latest))
+      return Boolean(latest && isSameLock(latest, candidate))
     }
     if (!(await candidateIsCurrent())) {
       results.push({ issueId, outcome: 'stale' })
@@ -70,7 +97,7 @@ export async function runWatcherCycle(
     // Record only a fully acknowledged publication and key it by the stable
     // addressable d-tag, not a replaceable manifest revision ID.
     completed.add(issueId)
-    if (!stitchedRevisions.has(candidate.id)) {
+    if (!audioCompleted(candidate) && !stitchedRevisions.has(candidate.id)) {
       if (dependencies.runStitch(issueId) !== 0) {
         completed.delete(issueId)
         results.push({ issueId, outcome: 'stitch-failed' })

@@ -57,8 +57,26 @@ function sameRevision(left: ManifestRevision, right: ManifestRevision): boolean 
     left.contentDigest === right.contentDigest
 }
 
+function parseCut(content: string): { episodeStatus?: unknown; issueRef?: unknown; sections?: unknown } {
+  try {
+    return JSON.parse(content) as { episodeStatus?: unknown; issueRef?: unknown; sections?: unknown }
+  } catch {
+    return {}
+  }
+}
+
+/** The locked cut, ignoring Compass progress fields (release, lastFailure, publishedRss). */
+export function sameLockedCut(left: ManifestRevision, right: ManifestRevision): boolean {
+  if (left.dTag !== right.dTag) return false
+  const a = parseCut(left.content)
+  const b = parseCut(right.content)
+  if (a.episodeStatus !== 'cutting' || b.episodeStatus !== 'cutting') return false
+  if (a.issueRef !== b.issueRef) return false
+  return JSON.stringify(a.sections) === JSON.stringify(b.sections)
+}
+
 export function assertRunMatchesManifest(run: RunMetadataBinding, revision: ManifestRevision): void {
-  if (!sameRevision(run.manifest, revision)) {
+  if (!sameLockedCut(run.manifest, revision)) {
     throw new Error('Run metadata belongs to a different verified manifest revision')
   }
 }
@@ -94,7 +112,7 @@ export interface ReleaseStageRunner {
 
 async function assertCurrent(expected: ManifestRevision, current: () => Promise<ManifestRevision>): Promise<void> {
   const actual = await current()
-  if (!sameRevision(expected, actual)) {
+  if (!sameLockedCut(expected, actual) && !sameRevision(expected, actual)) {
     throw new Error('Release stopped: stale or mismatched manifest revision')
   }
 }
@@ -105,8 +123,12 @@ async function assertCurrent(expected: ManifestRevision, current: () => Promise<
  */
 export async function runReleaseStages({ ledger, revision, current, stages }: ReleaseStageRunner): Promise<ReleaseLedgerState> {
   let state = ledger.load()
-  if (state && !sameRevision(state.revision, revision)) {
+  if (state && !sameLockedCut(state.revision, revision) && !sameRevision(state.revision, revision)) {
     throw new Error('Release ledger belongs to a different verified manifest revision')
+  }
+  if (state && !sameRevision(state.revision, revision)) {
+    state = { ...state, revision }
+    ledger.save(state)
   }
   if (!state) {
     state = { revision, completed: {}, terminal: false }

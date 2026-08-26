@@ -92,6 +92,7 @@ export interface EpisodeCut {
   toggleReviewed: (segmentId: string) => void
   save: () => void
   publish: () => void
+  retryRelease: () => void
   reload: () => void
 }
 
@@ -281,7 +282,7 @@ export function useEpisodeCut(
     : dirty
       ? 'Unsaved changes. Saving stores the running order — nothing is published and you can keep editing.'
       : !everyChapterReady
-        ? 'Every chapter needs at least one recording in the cut before you can publish.'
+        ? 'Nothing in the cut.'
         : !validation.canLock
           ? 'Resolve the flagged recordings before you can publish.'
           : 'Running order saved. Publishing makes the audio file and the podcast feed. It cannot be undone.'
@@ -311,14 +312,22 @@ export function useEpisodeCut(
     },
     publish: () => {
       if (!draft || !publishReady) return
-      const confirmed = window.confirm(
-        'Publish this episode? The worker will make the audio file and the podcast feed from this running order. This cannot be undone.',
-      )
-      if (!confirmed) return
       // A new attempt owns its own outcome: the previous failure goes with it.
       void save(
-        { ...draft, episodeStatus: 'cutting', lastFailure: null },
-        'Published — the worker is making the audio and the feed.',
+        { ...draft, episodeStatus: 'cutting', lastFailure: null, release: undefined },
+        'The worker is making the audio and the feed.',
+      )
+    },
+    retryRelease: () => {
+      if (!base || base.content.episodeStatus !== 'cutting') return
+      const completed = base.content.release?.completed ?? []
+      void save(
+        {
+          ...base.content,
+          lastFailure: null,
+          release: completed.length > 0 ? { completed } : undefined,
+        },
+        'Trying the remaining publish steps again.',
       )
     },
     reload: () => setReloads((count) => count + 1),

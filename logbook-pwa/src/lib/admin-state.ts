@@ -27,12 +27,14 @@ export function canEditManifest(
   return content.episodeStatus === 'draft' && producers.has(pubkey.toLowerCase())
 }
 
+/** A chapter is in the stitch when it has a recording and was not left out. */
+export function sectionInCut(section: ManifestSection): boolean {
+  if (section.sectionExcluded === true || section.introEventId === 'excluded') return false
+  return section.order.some((id) => !section.excluded.includes(id))
+}
+
 export function canLockEpisode(content: ManifestContent): boolean {
-  return content.episodeStatus === 'draft' && content.sections.length > 0 && content.sections.every((section) =>
-    section.sectionExcluded !== true &&
-    section.introEventId !== 'excluded' &&
-    section.order.some((id) => !section.excluded.includes(id)),
-  )
+  return content.episodeStatus === 'draft' && content.sections.some(sectionInCut)
 }
 
 export function includeAllChapters(

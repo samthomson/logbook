@@ -49,6 +49,7 @@ import {
 import { createCompassAmberSigner, type CompassSigner } from './amber-signer.ts'
 import { fetchProducerPubkeys } from './producers.ts'
 import { draftAfterFailure, SegmentFailure } from './stitch-failure.ts'
+import { writeCuttingProgress } from './cutting-progress.ts'
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -82,6 +83,8 @@ interface ManifestContent {
   sections: ManifestSection[]
   episodeStatus: string
   publishedRss: unknown
+  lastFailure?: unknown
+  release?: { completed?: unknown; failed?: unknown }
 }
 
 interface Segment {
@@ -452,6 +455,28 @@ async function main(): Promise<void> {
     ),
   )
   console.log(`[stitch] Run metadata → ${metaPath}`)
+
+  if (manifest.episodeStatus === 'cutting') {
+    const progressPool = new SimplePool()
+    try {
+      await writeCuttingProgress({
+        issueId,
+        manifest,
+        event: manifestEvent,
+        signer,
+        pool: progressPool,
+        completed: ['audio'],
+        publishedRss: { mp3Url: blob.url },
+        lastFailure: null,
+        failed: null,
+      })
+      console.log('[stitch] Manifest notes that the episode audio is on Blossom')
+    } catch (error) {
+      console.error('[stitch] Could not write audio progress on the manifest:', error)
+    } finally {
+      progressPool.close(RELAYS)
+    }
+  }
 
   // Cleanup working directory
   rmSync(workDir, { recursive: true, force: true })

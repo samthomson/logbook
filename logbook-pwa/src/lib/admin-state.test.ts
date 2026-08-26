@@ -135,7 +135,7 @@ describe('admin manifest invariants', () => {
     expect(canLockEpisode({ ...manifest(), sections: [{ ...manifest().sections[0], order: [] }] })).toBe(false)
   })
 
-  it('refuses to lock until every newsletter chapter has an active recording', () => {
+  it('locks when at least one chapter has a recording; empty and left-out chapters are skipped', () => {
     const withEmptyChapter = manifest()
     withEmptyChapter.sections.push({
       ...withEmptyChapter.sections[0],
@@ -144,7 +144,7 @@ describe('admin manifest invariants', () => {
       introEventId: null,
       order: [],
     })
-    expect(canLockEpisode(withEmptyChapter)).toBe(false)
+    expect(canLockEpisode(withEmptyChapter)).toBe(true)
 
     const withExcludedChapter = manifest()
     withExcludedChapter.sections.push({
@@ -153,7 +153,11 @@ describe('admin manifest invariants', () => {
       title: 'Excluded chapter',
       sectionExcluded: true,
     })
-    expect(canLockEpisode(withExcludedChapter)).toBe(false)
+    expect(canLockEpisode(withExcludedChapter)).toBe(true)
+
+    const onlyExcluded = manifest()
+    onlyExcluded.sections[0].sectionExcluded = true
+    expect(canLockEpisode(onlyExcluded)).toBe(false)
   })
 
   it('round-trips excluded segments and reviewed markers immutably', () => {

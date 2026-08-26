@@ -23,15 +23,22 @@ test('stitch state requires a cutting manifest and preserves published skip sema
   )
 })
 
-test('release rejects any excluded or empty newsletter chapter', () => {
+test('release skips empty or left-out chapters and refuses a cut with nothing to stitch', () => {
   const excludedChapter = { ...included, id: 'hidden', sectionExcluded: true }
   const legacyExcludedChapter = { ...included, id: 'legacy-hidden', introEventId: 'excluded' }
   const emptyChapter = { ...included, id: 'empty', order: [], excluded: [] }
 
+  assert.equal(
+    assertStitchableManifest({
+      episodeStatus: 'cutting',
+      sections: [included, excludedChapter, legacyExcludedChapter, emptyChapter],
+    }),
+    'run',
+  )
   for (const section of [excludedChapter, legacyExcludedChapter, emptyChapter]) {
     assert.throws(
       () => assertStitchableManifest({ episodeStatus: 'cutting', sections: [section] }),
-      /Every newsletter chapter must have an active recording/,
+      /no recordings to stitch/,
     )
   }
 })
@@ -53,10 +60,13 @@ test('locked segment selection excludes individual omitted recordings', () => {
   assert.deepEqual(collectLockedSegmentIds(active), ['segment-a'])
 })
 
-test('active section selection does not silently honor legacy chapter exclusion', () => {
-  const legacy = { ...included, id: 'hidden', introEventId: 'real-intro', sectionExcluded: true }
-  assert.deepEqual(selectActiveSections([included, legacy]).map((section) => section.id), ['news', 'hidden'])
-  assert.equal(legacy.introEventId, 'real-intro')
+test('active section selection leaves out excluded and empty chapters', () => {
+  const excluded = { ...included, id: 'hidden', introEventId: 'real-intro', sectionExcluded: true }
+  const empty = { ...included, id: 'empty', order: [], excluded: [] }
+  assert.deepEqual(
+    selectActiveSections([included, excluded, empty]).map((section) => section.id),
+    ['news'],
+  )
 })
 
 test('missing or rejected segments fail a locked cut before any media work', () => {

@@ -34,6 +34,11 @@ export function assertStitchableManifest(
   throw new Error(`Manifest is not locked/cutting (current status: ${manifest.episodeStatus})`)
 }
 
+function sectionInCut(section: StitchManifestSection): boolean {
+  if (section.sectionExcluded === true || section.introEventId === 'excluded') return false
+  return section.order.some((id) => !section.excluded.includes(id))
+}
+
 function assertEveryChapterIncluded(
   sections: StitchManifestSection[],
   requiredChapterIds: readonly string[],
@@ -43,22 +48,13 @@ function assertEveryChapterIncluded(
   if (missing) {
     throw new Error(`Every newsletter chapter must be included; missing required chapter: ${missing}`)
   }
-  const invalid = sections.find((section) =>
-    section.sectionExcluded === true ||
-    section.introEventId === 'excluded' ||
-    !section.order.some((id) => !section.excluded.includes(id)),
-  )
-  if (!sections.length || invalid) {
-    throw new Error(
-      `Every newsletter chapter must have an active recording before release${invalid ? ` (chapter: ${invalid.title})` : ''}.`,
-    )
+  if (!sections.some(sectionInCut)) {
+    throw new Error('The cut has no recordings to stitch.')
   }
 }
 
 export function selectActiveSections(sections: StitchManifestSection[]): StitchManifestSection[] {
-  return sections.filter((section) =>
-    section.order.some((id) => !section.excluded.includes(id)),
-  )
+  return sections.filter(sectionInCut)
 }
 
 export function collectLockedSegmentIds(sections: StitchManifestSection[]): string[] {

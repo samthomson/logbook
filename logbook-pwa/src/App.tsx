@@ -602,7 +602,6 @@ export default function App() {
         {route.kind === 'home' && (
           <IssuePicker
             currentIssueNumber={null}
-            onSelect={handleSelectIssue}
             onDraftStarted={(issueNumber) => navigate({ kind: 'episode', issueNumber })}
             showUnpublished={Boolean(auth)}
             producer={auth && isProducerKey ? {

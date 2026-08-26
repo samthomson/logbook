@@ -17,7 +17,7 @@ const sectionId = 'sec-lead-stories-public-chapter-32'
 const secondSectionId = 'sec-lead-stories-second-chapter-32'
 const fixtureEvent = {
   id: '1'.repeat(64), pubkey: compassPubkey,
-  created_at: 1_700_000_000, kind: 30_023, tags: [['d', 'newsletter-32']],
+  created_at: 1_785_628_800, kind: 30_023, tags: [['d', 'newsletter-32']],
   content: '## Lead stories\n### Public chapter\nDeterministic content', sig: '2'.repeat(128),
 }
 const fixtureIssue = {
@@ -46,9 +46,12 @@ const secondIssue = {
 }
 async function clickButton(page, label) {
   const clicked = await page.evaluate((text) => {
-    const button = [...document.querySelectorAll('button')].find((element) => element.textContent?.trim() === text)
-    if (!button) return false
-    button.click()
+    const control = [...document.querySelectorAll('button, a')].find((element) => {
+      const labelText = element.getAttribute('aria-label') ?? element.textContent ?? ''
+      return labelText.replace(/\s+/g, ' ').trim() === text
+    })
+    if (!control) return false
+    control.click()
     return true
   }, label)
   if (!clicked) throw new Error(`Button not found: ${label}`)
@@ -76,7 +79,12 @@ const modules = new Map([
     export async function fetchManifest(){return null}
     export function subscribeManifest(){return ()=>{}}
     export function subscribeManifests(){return ()=>{}}
-    export async function fetchAllManifests(){return []}
+    export async function fetchAllManifests(){
+      return [
+        {issueId:'logbook-33',content:{episodeStatus:'draft'},event:{id:'7'.repeat(64),pubkey:${JSON.stringify(compassPubkey)},created_at:3,kind:34200,tags:[['d','logbook-33']],content:'{}',sig:'2'.repeat(128)}},
+        {issueId:'logbook-32',content:{episodeStatus:'draft'},event:{id:'8'.repeat(64),pubkey:${JSON.stringify(compassPubkey)},created_at:2,kind:34200,tags:[['d','logbook-32']],content:'{}',sig:'2'.repeat(128)}},
+      ]
+    }
     export async function updateManifest(){throw new Error('no writes')}
     export function buildInitialManifest(){return {episodeStatus:'draft',publishedRss:null,issueRef:'',sections:[]}}
   `],
@@ -277,7 +285,7 @@ try {
   await page.waitForSelector('.irec__idle[role="status"]')
   await clickButton(page, 'All episodes')
   await page.waitForSelector('.issue-picker__item')
-  await page.click('.issue-picker__item')
+  await clickButton(page, 'Open episode')
   await page.waitForFunction(() => document.querySelector('.timeline__issue-title')?.textContent?.includes('33'))
   await page.evaluate(() => { globalThis.__qaDeferMedia = false; globalThis.__qaReleaseMedia?.() })
   await new Promise((resolve) => setTimeout(resolve, 50))

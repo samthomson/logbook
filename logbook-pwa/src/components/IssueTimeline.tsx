@@ -26,6 +26,8 @@ import { issueAddress } from '../lib/compass'
 import { fetchSegmentsForIssue, parseSegment, publishSegment, fetchTranscripts, selectTrustedSegmentEvents } from '../lib/segment'
 import { orderTimelineSegments } from '../lib/timeline-order'
 import { useEpisodeCut, type ProducerContext } from '../lib/use-episode-cut'
+import { releaseChecklist } from '../lib/release-checklist'
+import ReleaseChecklist from './ReleaseChecklist'
 import WhitelistPanel from './WhitelistPanel'
 import './Produce.css'
 import { saveCachedIssue } from '../lib/issue-cache'
@@ -591,6 +593,15 @@ export default function IssueTimeline({
   }, [sections])
 
   const cut = useEpisodeCut(issue, allSegments, producer)
+  const produceRef = useRef<HTMLElement>(null)
+  const previousStatus = useRef(cut.status)
+  useEffect(() => {
+    const previous = previousStatus.current
+    previousStatus.current = cut.status
+    if (previous === 'draft' && cut.status === 'cutting') {
+      produceRef.current?.scrollIntoView({ block: 'nearest' })
+    }
+  }, [cut.status])
   // Once the running order is final the episode takes no more recordings, so
   // the page stops offering them rather than collecting notes nobody will hear.
   const episodeOpen = cut.status !== 'cutting' && cut.status !== 'published'
@@ -653,29 +664,11 @@ export default function IssueTimeline({
           </p>
           {leadProse && <SectionExcerpt section={{ id: '__lead', title: '', items: [{ title: '', body: leadProse }] }} profiles={profiles} />}
         </header>
-        {cut.failure && producer && (
-          <div className="produce__failed" role="alert">
-            <strong>The audio could not be made, so the episode came back to you.</strong>
-            <span className="produce__failed-reason">{cut.failure.reason}</span>
-            {cut.failure.segmentId && (
-              <button
-                type="button"
-                className="btn btn--small"
-                onClick={() => document
-                  .getElementById(`voice-note-${cut.failure!.segmentId}`)
-                  ?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
-              >
-                Scroll to that voice note
-              </button>
-            )}
-            <span className="produce__failed-when">{new Date(cut.failure.at * 1000).toLocaleString()}</span>
-          </div>
-        )}
         {!episodeOpen && (
           <p className="timeline__closed" role="status">
             {cut.status === 'published'
               ? 'This episode is published. The voice notes below are what went into it.'
-              : 'The running order is final and the audio is being made. No more recordings for this one.'}
+              : 'The running order is final. No more recordings for this one.'}
             {cut.content?.publishedRss?.mp3Url && (
               <>
                 {' '}
@@ -787,7 +780,7 @@ export default function IssueTimeline({
                       {(() => {
                         const included = (orders.get(target.id) ?? []).filter((id) => cut.stateOf(id) === 'in').length
                         const total = orders.get(target.id)?.length ?? 0
-                        if (total === 0) return 'No voice notes yet'
+                        if (total === 0) return 'Nothing in the cut'
                         return included === 0
                           ? `Nothing included · ${total} to choose from`
                           : `${included} included${total > included ? ` · ${total - included} left out` : ''}`
@@ -907,7 +900,7 @@ export default function IssueTimeline({
         ))}
 
         {producer && (
-          <section className="timeline__produce" aria-label="Producing this episode">
+          <section ref={produceRef} className="timeline__produce" aria-label="Producing this episode">
             {cut.notice && <p className="produce__notice">{cut.notice}</p>}
             {cut.error && <p className="produce__error" role="alert">{cut.error}</p>}
             {cut.issues.length > 0 && (
@@ -922,7 +915,7 @@ export default function IssueTimeline({
 
             {cut.editable ? (
               <div className="produce__footer">
-                <p className="produce__next">{cut.nextStep}</p>
+                {(!cut.publishReady || cut.dirty) && <p className="produce__next">{cut.nextStep}</p>}
                 <div className="produce__actions">
                   <button
                     type="button"
@@ -932,23 +925,28 @@ export default function IssueTimeline({
                   >
                     {cut.saving ? 'Saving…' : 'Save running order'}
                   </button>
-                  <button
-                    type="button"
-                    className={`btn ${cut.publishReady ? 'btn--primary' : ''}`}
-                    disabled={!cut.publishReady || cut.saving}
-                    onClick={cut.publish}
-                  >
-                    Publish episode
-                  </button>
                 </div>
               </div>
             ) : cut.status === 'draft' ? (
-              // Cutting and published already say so in the banner at the top;
-              // only an unauthorized key needs explaining here.
               <p className="produce__banner" role="status">
                 This key is not on the producer list, so the episode cannot be edited here.
               </p>
             ) : null}
+
+            <ReleaseChecklist
+              rows={releaseChecklist({
+                content: cut.content,
+                publishReady: cut.publishReady,
+                waitingReason: cut.editable && (!cut.publishReady || cut.dirty) ? '' : cut.nextStep,
+                saving: cut.saving,
+              })}
+              saving={cut.saving}
+              onLock={cut.publish}
+              onRetry={cut.retryRelease}
+              onScrollToSegment={(segmentId) => document
+                .getElementById(`voice-note-${segmentId}`)
+                ?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+            />
 
             <details className="produce__access">
               <summary>Contributor access</summary>

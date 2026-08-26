@@ -4,6 +4,7 @@ import type { IssueManifest, ManifestContent, NostrEvent, NostrSigner } from '..
 import { createAdminSaveController, type AdminSaveDependencies } from './admin-save'
 import { buildRecordingTargets } from './admin-workspace'
 import { issueAddress, parseIssue } from './compass'
+import { isLogbookNewsletter } from './issue-index'
 import { buildInitialManifest, fetchManifest, updateManifest } from './manifest'
 import { assertExpectedSignerPubkey } from './signer-identity'
 import { withSignerTimeout } from './signer-timeout'
@@ -39,6 +40,9 @@ export async function startPodcastDraft(params: StartPodcastDraftParams): Promis
   }
   if (issueEvent.pubkey.toLowerCase() !== REAL_COMPASS_PUBKEY) {
     throw new Error('Only a Compass newsletter can start a Logbook episode.')
+  }
+  if (!isLogbookNewsletter(issueEvent)) {
+    throw new Error('This Compass issue is not a Logbook episode.')
   }
 
   const issue = parseIssue(issueEvent)

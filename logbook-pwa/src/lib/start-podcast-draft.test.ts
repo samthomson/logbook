@@ -3,6 +3,7 @@ import { KINDS } from '../config'
 import { REAL_COMPASS_PUBKEY } from './config-env'
 import type { IssueManifest, ManifestContent, NostrEvent, NostrSigner } from '../types/nostr'
 import { startPodcastDraft } from './start-podcast-draft'
+import { LOGBOOK_FROM_SECONDS } from './issue-index'
 
 const SAVED_ID = '2'.repeat(64)
 
@@ -10,7 +11,7 @@ function newsletter(overrides: Partial<NostrEvent> = {}): NostrEvent {
   return {
     id: '1'.repeat(64),
     pubkey: REAL_COMPASS_PUBKEY,
-    created_at: 1_700_000_000,
+    created_at: LOGBOOK_FROM_SECONDS + 86_400,
     kind: KINDS.COMPASS_ISSUE,
     tags: [['d', 'newsletter-42'], ['title', 'Compass #42']],
     content: '## Lead stories\n### Public chapter\nBody',
@@ -107,5 +108,14 @@ describe('startPodcastDraft', () => {
       },
     })).rejects.toThrow(/changed elsewhere/)
     expect(publish).not.toHaveBeenCalled()
+  })
+
+  it('refuses a Compass issue from before the Logbook cutoff', async () => {
+    await expect(startPodcastDraft({
+      issueEvent: newsletter({ created_at: LOGBOOK_FROM_SECONDS - 1 }),
+      signer: signer(),
+      expectedPubkey: 'a'.repeat(64),
+      save: { fetchLatest: vi.fn(), publish: vi.fn(), delay: vi.fn() },
+    })).rejects.toThrow(/not a Logbook episode/)
   })
 })

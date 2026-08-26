@@ -52,10 +52,21 @@ export interface ManifestSection {
   reviewed: string[]     // segment event IDs marked reviewed by admin
 }
 
+export type ReleaseStep = 'audio' | 'chapters' | 'feed' | 'podstr' | 'announcement'
+
+/** Worker-written checklist of publish steps that have acknowledged. */
+export interface ManifestRelease {
+  completed: ReleaseStep[]
+  failed?: ReleaseStep
+}
+
 export interface PublishedRss {
-  guid: string
   mp3Url: string
-  chapters: PodcastChapter[]
+  guid?: string
+  chapters?: PodcastChapter[]
+  chaptersUrl?: string
+  feedUrl?: string
+  publishedAt?: number
 }
 
 export interface PodcastChapter {
@@ -74,6 +85,7 @@ export interface ManifestFailure {
   reason: string         // one line naming what to fix, no event ids
   segmentId?: string     // set when one recording is at fault
   sectionId?: string
+  stage?: ReleaseStep    // set when an RSS/publish step failed while still cutting
 }
 
 export interface ManifestContent {
@@ -82,6 +94,7 @@ export interface ManifestContent {
   sections: ManifestSection[]
   publishedRss: PublishedRss | null
   lastFailure?: ManifestFailure | null
+  release?: ManifestRelease
 }
 
 /** A parsed kind 34200 manifest event. */

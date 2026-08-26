@@ -34,6 +34,7 @@ import { fetchProducerPubkeys } from './producers.ts'
 import { assertPublishableManifest, selectTrustedReleaseMetadata } from './rss-state.ts'
 import { FileReleaseLedger, assertRunMatchesManifest, manifestRevision, runReleaseStages, type ManifestRevision } from './release-state.ts'
 import { acknowledgeStaticSync, readBackHostedFeed } from './static-sync.ts'
+import { releaseFailure, writeCuttingProgress, type ReleaseStep } from './cutting-progress.ts'
 
 // ── npubs.yml loading ─────────────────────────────────────────────────────────
 
@@ -109,6 +110,8 @@ interface ManifestContent {
   sections: ManifestSection[]
   episodeStatus: string
   publishedRss: unknown
+  lastFailure?: unknown
+  release?: { completed?: unknown; failed?: unknown }
 }
 
 interface Chapter {
@@ -325,7 +328,11 @@ async function publishManifestStatus(
     publishedRss: {
       feedUrl: `${BASE_URL}/feed.xml`,
       mp3Url: ep.mp3Url,
+      chaptersUrl: ep.chaptersUrl || undefined,
       publishedAt: Math.floor(Date.now() / 1000),
+    },
+    release: {
+      completed: ['audio', 'chapters', 'feed', 'podstr', 'announcement'],
     },
   }
   const event = await signer.signEvent({
@@ -414,143 +421,201 @@ async function main(): Promise<void> {
   const issueId = args[issueFlag + 1]
   const signer = createCompassAmberSigner()
   const pool = new SimplePool()
+  let failedStage: ReleaseStep = 'feed'
+  let live: { manifest: ManifestContent; event: ManifestEvent } | null = null
 
-  console.log(`[publish-rss] Fetching manifest for ${issueId}…`)
-  const { manifest, event: manifestEvent } = await fetchManifest(issueId, pool)
-  assertPublishableManifest(manifest)
+  try {
+    console.log(`[publish-rss] Fetching manifest for ${issueId}…`)
+    const fetched = await fetchManifest(issueId, pool)
+    assertPublishableManifest(fetched.manifest)
+    live = fetched
 
-  // Run metadata from stitch.ts carries the canonical Blossom mp3 URL.
-  const metaPath = join(AUDIO_DIR, `${issueId}-run.json`)
-  if (!existsSync(metaPath)) {
-    throw new Error(`Run metadata not found: ${metaPath}. Run stitch.ts first.`)
-  }
-  const run = JSON.parse(readFileSync(metaPath, 'utf-8')) as RunMeta
-  const revision = manifestRevision(manifestEvent)
-  assertRunMatchesManifest(run, revision)
-  const assertExactCut = async (): Promise<void> => {
-    const latest = manifestRevision((await fetchManifest(issueId, pool)).event)
-    assertRunMatchesManifest({ manifest: revision }, latest)
-  }
+    const note = async (
+      completed: ReleaseStep[],
+      publishedRss?: Record<string, unknown>,
+    ): Promise<void> => {
+      const next = await writeCuttingProgress({
+        issueId,
+        manifest: live!.manifest,
+        event: live!.event,
+        signer,
+        pool,
+        completed,
+        publishedRss,
+        lastFailure: null,
+        failed: null,
+      })
+      live = next
+    }
 
-  // Upload chapters JSON to Blossom so podcatchers can fetch it from anywhere.
-  const chaptersPath = join(AUDIO_DIR, `${issueId}-chapters.json`)
-  let chapters: Chapter[] = []
-  let chaptersUrl = run.chaptersUrl
-  if (existsSync(chaptersPath)) {
-    const cf = JSON.parse(readFileSync(chaptersPath, 'utf-8')) as ChaptersFile
-    chapters = cf.chapters
-    if (!chaptersUrl) {
+    // Run metadata from stitch.ts carries the canonical Blossom mp3 URL.
+    const metaPath = join(AUDIO_DIR, `${issueId}-run.json`)
+    if (!existsSync(metaPath)) {
+      throw new Error(`Run metadata not found: ${metaPath}. Run stitch.ts first.`)
+    }
+    const run = JSON.parse(readFileSync(metaPath, 'utf-8')) as RunMeta
+    const revision = manifestRevision(live.event)
+    assertRunMatchesManifest(run, revision)
+    const assertExactCut = async (): Promise<void> => {
+      const latest = manifestRevision((await fetchManifest(issueId, pool)).event)
+      assertRunMatchesManifest({ manifest: revision }, latest)
+    }
+
+    // Upload chapters JSON to Blossom so podcatchers can fetch it from anywhere.
+    failedStage = 'chapters'
+    const chaptersPath = join(AUDIO_DIR, `${issueId}-chapters.json`)
+    let chapters: Chapter[] = []
+    let chaptersUrl = run.chaptersUrl
+    if (existsSync(chaptersPath)) {
+      const cf = JSON.parse(readFileSync(chaptersPath, 'utf-8')) as ChaptersFile
+      chapters = cf.chapters
+      if (!chaptersUrl) {
+        await assertExactCut()
+        const blob = await uploadToBlossom(
+          Buffer.from(JSON.stringify(cf, null, 2)),
+          'application/json',
+          signer,
+        )
+        chaptersUrl = blob.url
+        run.chaptersUrl = chaptersUrl
+        writeFileSync(metaPath, JSON.stringify(run, null, 2))
+      }
+      await note(
+        ['audio', 'chapters'],
+        { mp3Url: run.mp3Url, chaptersUrl },
+      )
+    }
+
+    // Collect contributor pubkeys + transcripts from relay
+    const segmentEvents =
+      run.segmentIds.length > 0
+        ? await pool.querySync(RELAYS, { kinds: [KINDS.SEGMENT], ids: run.segmentIds })
+        : []
+    // Companion transcripts (kind 1111 with e-tag → segment) for podcast:transcript
+    const transcriptEvents =
+      run.segmentIds.length > 0
+        ? await pool.querySync(RELAYS, { kinds: [KINDS.TRANSCRIPT], '#e': run.segmentIds, limit: 200 })
+        : []
+    const { participantPubkeys, transcriptBySegment } = selectTrustedReleaseMetadata(
+      run.segmentIds,
+      segmentEvents,
+      transcriptEvents,
+      BLOSSOM_SERVERS,
+    )
+    // Stitch a full-episode transcript in segment order (used as transcript JSON)
+    const fullTranscript = run.segmentIds
+      .map((id) => transcriptBySegment.get(id))
+      .filter(Boolean)
+      .join('\n\n')
+    let transcriptUrl: string | null = null
+    if (fullTranscript) {
       await assertExactCut()
       const blob = await uploadToBlossom(
-        Buffer.from(JSON.stringify(cf, null, 2)),
+        Buffer.from(JSON.stringify({ version: '1.0.0', transcript: fullTranscript }, null, 2)),
         'application/json',
         signer,
       )
-      chaptersUrl = blob.url
-      run.chaptersUrl = chaptersUrl
-      writeFileSync(metaPath, JSON.stringify(run, null, 2))
+      transcriptUrl = blob.url
     }
-  }
 
-  // Collect contributor pubkeys + transcripts from relay
-  const segmentEvents =
-    run.segmentIds.length > 0
-      ? await pool.querySync(RELAYS, { kinds: [KINDS.SEGMENT], ids: run.segmentIds })
-      : []
-  // Companion transcripts (kind 1111 with e-tag → segment) for podcast:transcript
-  const transcriptEvents =
-    run.segmentIds.length > 0
-      ? await pool.querySync(RELAYS, { kinds: [KINDS.TRANSCRIPT], '#e': run.segmentIds, limit: 200 })
-      : []
-  const { participantPubkeys, transcriptBySegment } = selectTrustedReleaseMetadata(
-    run.segmentIds,
-    segmentEvents,
-    transcriptEvents,
-    BLOSSOM_SERVERS,
-  )
-  // Stitch a full-episode transcript in segment order (used as transcript JSON)
-  const fullTranscript = run.segmentIds
-    .map((id) => transcriptBySegment.get(id))
-    .filter(Boolean)
-    .join('\n\n')
-  let transcriptUrl: string | null = null
-  if (fullTranscript) {
-    await assertExactCut()
-    const blob = await uploadToBlossom(
-      Buffer.from(JSON.stringify({ version: '1.0.0', transcript: fullTranscript }, null, 2)),
-      'application/json',
-      signer,
-    )
-    transcriptUrl = blob.url
-  }
+    const issueNumber = live.manifest.issueNumber ?? parseInt(issueId.replace(/^\D+/, ''), 10) ?? 0
+    const issueTitle = live.manifest.title ?? `Logbook Episode ${issueNumber}`
+    const ep: EpisodeData = {
+      issueId,
+      issueNumber,
+      issueTitle,
+      mp3Url: run.mp3Url,
+      chaptersUrl: chaptersUrl ?? '',
+      transcriptUrl,
+      mp3Size: run.mp3Size,
+      durationSeconds: run.durationSeconds,
+      pubDate: new Date(run.stitchedAt * 1000),
+      chapters,
+      description: `Async voice notes from Nostr Compass contributors on issue #${issueNumber}.`,
+      participantPubkeys,
+    }
 
-  const issueNumber = manifest.issueNumber ?? parseInt(issueId.replace(/^\D+/, ''), 10) ?? 0
-  const issueTitle = manifest.title ?? `Logbook Episode ${issueNumber}`
-  const ep: EpisodeData = {
-    issueId,
-    issueNumber,
-    issueTitle,
-    mp3Url: run.mp3Url,
-    chaptersUrl: chaptersUrl ?? '',
-    transcriptUrl,
-    mp3Size: run.mp3Size,
-    durationSeconds: run.durationSeconds,
-    pubDate: new Date(run.stitchedAt * 1000),
-    chapters,
-    description: `Async voice notes from Nostr Compass contributors on issue #${issueNumber}.`,
-    participantPubkeys,
-  }
+    // Episode state file → regenerate feed from scratch (idempotent). Ensure the
+    // configured static root exists before the first episode writes its state.
+    mkdirSync(STATIC_DIR, { recursive: true })
+    const episodeStatePath = join(STATIC_DIR, 'episodes.json')
+    let existingEpisodes: EpisodeData[] = []
+    if (existsSync(episodeStatePath)) {
+      existingEpisodes = JSON.parse(readFileSync(episodeStatePath, 'utf-8')) as EpisodeData[]
+    }
+    const filtered = existingEpisodes.filter((e) => e.issueId !== issueId)
+    const allEpisodes = [ep, ...filtered].slice(0, 50)
+    writeFileSync(episodeStatePath, JSON.stringify(allEpisodes, null, 2))
 
-  // Episode state file → regenerate feed from scratch (idempotent). Ensure the
-  // configured static root exists before the first episode writes its state.
-  mkdirSync(STATIC_DIR, { recursive: true })
-  const episodeStatePath = join(STATIC_DIR, 'episodes.json')
-  let existingEpisodes: EpisodeData[] = []
-  if (existsSync(episodeStatePath)) {
-    existingEpisodes = JSON.parse(readFileSync(episodeStatePath, 'utf-8')) as EpisodeData[]
-  }
-  const filtered = existingEpisodes.filter((e) => e.issueId !== issueId)
-  const allEpisodes = [ep, ...filtered].slice(0, 50)
-  writeFileSync(episodeStatePath, JSON.stringify(allEpisodes, null, 2))
+    const xml = buildFeedXml(FEED_META, allEpisodes, ep.participantPubkeys ?? [])
+    const xmlBytes = Buffer.from(xml, 'utf-8')
+    writeFileSync(RSS_PATH, xmlBytes)
+    console.log(`[publish-rss] RSS written: ${RSS_PATH}`)
+    console.log(`[publish-rss] Episodes in feed: ${allEpisodes.length}`)
 
-  const xml = buildFeedXml(FEED_META, allEpisodes, ep.participantPubkeys ?? [])
-  const xmlBytes = Buffer.from(xml, 'utf-8')
-  writeFileSync(RSS_PATH, xmlBytes)
-  console.log(`[publish-rss] RSS written: ${RSS_PATH}`)
-  console.log(`[publish-rss] Episodes in feed: ${allEpisodes.length}`)
-
-  const feedDigest = createHash('sha256').update(xmlBytes).digest('hex')
-  const ledger = new FileReleaseLedger(STATIC_DIR, issueId)
-  await runReleaseStages({
-    ledger,
-    revision,
-    // Re-query and signature-verify the exact addressable revision before every
-    // remote stage; a newer draft, lock, or terminal replacement stops the run.
-    current: async () => manifestRevision((await fetchManifest(issueId, pool)).event),
-    stages: {
-      // The stitch run produced and hash-bound its immutable media artifact.
-      artifacts: async () => assertRunMatchesManifest(run, revision),
-      feed: async () => {
-        const blob = await uploadToBlossom(xmlBytes, 'application/rss+xml', signer)
-        console.log(`[publish-rss] Feed hosted: ${blob.url}`)
-        await acknowledgeStaticSync(feedDigest, () => readBackHostedFeed(blob.url))
+    const feedDigest = createHash('sha256').update(xmlBytes).digest('hex')
+    const ledger = new FileReleaseLedger(STATIC_DIR, issueId)
+    await runReleaseStages({
+      ledger,
+      revision,
+      // Progress writes change the event id; the locked cut (sections) must not.
+      current: async () => manifestRevision((await fetchManifest(issueId, pool)).event),
+      stages: {
+        artifacts: async () => assertRunMatchesManifest(run, revision),
+        feed: async () => {
+          failedStage = 'feed'
+          const blob = await uploadToBlossom(xmlBytes, 'application/rss+xml', signer)
+          console.log(`[publish-rss] Feed hosted: ${blob.url}`)
+          await acknowledgeStaticSync(feedDigest, () => readBackHostedFeed(blob.url))
+          await note(
+            ['audio', 'chapters', 'feed'],
+            { mp3Url: run.mp3Url, chaptersUrl: chaptersUrl || undefined, feedUrl: `${BASE_URL}/feed.xml` },
+          )
+        },
+        podstr: async () => {
+          failedStage = 'podstr'
+          await publishPodstrEpisode(ep, signer, pool)
+          await note(['audio', 'chapters', 'feed', 'podstr'])
+        },
+        announcement: async () => {
+          failedStage = 'announcement'
+          await publishAnnouncement(ep, signer, pool)
+          await note(['audio', 'chapters', 'feed', 'podstr', 'announcement'])
+        },
+        manifest: async () => publishManifestStatus(
+          issueId,
+          live!.manifest,
+          ep,
+          signer,
+          pool,
+          live!.event.created_at ?? 0,
+        ),
       },
-      podstr: async () => publishPodstrEpisode(ep, signer, pool),
-      announcement: async () => publishAnnouncement(ep, signer, pool),
-      // Terminal state is published only after every distribution stage acks.
-      manifest: async () => publishManifestStatus(
-        issueId,
-        manifest,
-        ep,
-        signer,
-        pool,
-        manifestEvent.created_at ?? 0,
-      ),
-    },
-  })
+    })
 
-  pool.close(RELAYS)
-  console.log('[publish-rss] Done.')
+    console.log('[publish-rss] Done.')
+  } catch (err) {
+    console.error('[publish-rss] Fatal:', err)
+    if (live) {
+      try {
+        await writeCuttingProgress({
+          issueId,
+          manifest: live.manifest,
+          event: live.event,
+          signer,
+          pool,
+          lastFailure: releaseFailure(err, failedStage),
+          failed: failedStage,
+        })
+        console.log(`[publish-rss] Manifest still cutting; ${failedStage} is the step that failed`)
+      } catch (writeErr) {
+        console.error('[publish-rss] Could not write the failure on the manifest:', writeErr)
+      }
+    }
+    process.exit(1)
+  } finally {
+    pool.close(RELAYS)
+  }
 }
 
 main().catch((err) => {

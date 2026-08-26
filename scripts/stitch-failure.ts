@@ -13,6 +13,8 @@ export interface ManifestFailure {
   /** Set when one recording is at fault, so the page can point at it. */
   segmentId?: string
   sectionId?: string
+  /** Set when an RSS/publish step failed while the cut stayed locked. */
+  stage?: 'audio' | 'chapters' | 'feed' | 'podstr' | 'announcement'
 }
 
 /** A failure the producer fixes by changing one recording's place in the cut. */

@@ -52,6 +52,6 @@ Compass npub. Changing `COMPASS_PUBKEY` needs a rebuild; Vite inlines it.
 - [ ] normalise audio levels in ffmpeg when stitching a podcast together
 - [ ] mobile ux ui++ (recorder, tap targets, sticky release bar)
 - [ ] ai transcription of uploads
-- [ ] make publishing feel more robust, for each episode show a checklist of sorts of what tasks get done and are done (ie producing various xml files and publishing to blossom). have individual states/buttons for each
+- [x] make publishing feel more robust, for each episode show a checklist of sorts of what tasks get done and are done (ie producing various xml files and publishing to blossom). have individual states/buttons for each
 - [ ] Whitelist Derek/MrBlack + run the test — ops actions, fair to omit from a code todo list
 - [ ] Prove release end-to-end on staging — the actual milestone blocker, not in README

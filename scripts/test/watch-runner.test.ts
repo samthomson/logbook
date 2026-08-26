@@ -147,3 +147,50 @@ test('watcher cycle revalidates again after stitch and skips stale publication',
   assert.deepEqual(result, [{ issueId: 'logbook-31', outcome: 'stale' }])
   assert.equal(completed.size, 0)
 })
+
+test('watcher cycle continues publish after a progress rewrite of the same lock', async () => {
+  const cutting = manifest('cutting', 1, 'cutting')
+  const progressed = manifest('progress', 2, 'cutting')
+  progressed.content = JSON.stringify({ episodeStatus: 'cutting', release: { completed: ['audio'] } })
+  const published = manifest('published', 3, 'published')
+  let phase: 'pre' | 'stitched' | 'done' = 'pre'
+  const calls: string[] = []
+  const stitched = new Set<string>()
+  const deps = {
+    fetchManifests: async () => {
+      if (phase === 'done') return [published]
+      if (phase === 'stitched') return [progressed]
+      return [cutting]
+    },
+    expectedPubkey: COMPASS,
+    verify: () => true,
+    runStitch: (issueId: string) => { calls.push(`stitch:${issueId}`); phase = 'stitched'; return 0 },
+    runPublish: (issueId: string) => { calls.push(`publish:${issueId}`); phase = 'done'; return 0 },
+  }
+  assert.deepEqual(await runWatcherCycle(stitched, deps), [
+    { issueId: 'logbook-31', outcome: 'published' },
+  ])
+  assert.deepEqual(calls, ['stitch:logbook-31', 'publish:logbook-31'])
+})
+
+test('watcher cycle skips stitch when audio is already on the manifest', async () => {
+  const cutting = manifest('cutting', 1, 'cutting')
+  cutting.content = JSON.stringify({
+    episodeStatus: 'cutting',
+    release: { completed: ['audio'] },
+  })
+  const published = manifest('published', 2, 'published')
+  let acknowledged = false
+  const calls: string[] = []
+  const deps = {
+    fetchManifests: async () => acknowledged ? [published] : [cutting],
+    expectedPubkey: COMPASS,
+    verify: () => true,
+    runStitch: (issueId: string) => { calls.push(`stitch:${issueId}`); return 0 },
+    runPublish: (issueId: string) => { calls.push(`publish:${issueId}`); acknowledged = true; return 0 },
+  }
+  assert.deepEqual(await runWatcherCycle(new Set(), deps), [
+    { issueId: 'logbook-31', outcome: 'published' },
+  ])
+  assert.deepEqual(calls, ['publish:logbook-31'])
+})
