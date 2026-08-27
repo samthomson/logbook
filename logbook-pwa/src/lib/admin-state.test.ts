@@ -49,8 +49,20 @@ describe('admin manifest invariants', () => {
     expect(canEditManifest({ ...manifest(), episodeStatus: 'cutting' }, producer, producers)).toBe(false)
     expect(canReopenPublishedCut({ ...manifest(), episodeStatus: 'published' }, producer, producers)).toBe(true)
     expect(canReopenPublishedCut({ ...manifest(), episodeStatus: 'published' }, 'c'.repeat(64), producers)).toBe(false)
+    expect(canReopenPublishedCut({
+      ...manifest(),
+      episodeStatus: 'cutting',
+      lastFailure: { at: 1, reason: 'RSS feed is not hosted' },
+    }, producer, producers)).toBe(true)
+    expect(canReopenPublishedCut({ ...manifest(), episodeStatus: 'cutting' }, producer, producers)).toBe(false)
     expect(reopenPublishedCut({ ...manifest(), episodeStatus: 'published' }).episodeStatus).toBe('draft')
     expect(reopenPublishedCut({ ...manifest(), episodeStatus: 'published' }).release).toBeUndefined()
+    expect(reopenPublishedCut({
+      ...manifest(),
+      episodeStatus: 'cutting',
+      lastFailure: { at: 1, reason: 'RSS feed is not hosted' },
+      release: { completed: ['audio'] },
+    })).toMatchObject({ episodeStatus: 'draft', lastFailure: null, release: undefined })
   })
 
   it('excludes a section without destroying its intro event id', () => {
@@ -138,6 +150,7 @@ describe('admin manifest invariants', () => {
 
   it('refuses to lock an empty episode for export', () => {
     expect(canLockEpisode(manifest())).toBe(true)
+    expect(canLockEpisode({ ...manifest(), episodeStatus: 'published' })).toBe(true)
     expect(canLockEpisode({ ...manifest(), sections: [{ ...manifest().sections[0], order: [] }] })).toBe(false)
   })
 

@@ -82,6 +82,17 @@ export function unfinishedReleaseStep(
   return RELEASE_STEPS.find((step) => !done.has(step)) ?? 'announcement'
 }
 
+/** Compass progress names the lock (or prior progress) it is releasing. */
+export function cuttingProgressTags(issueId: string, event: { id: string; tags: string[][] }): string[][] {
+  const tags = event.tags.length > 0
+    ? event.tags.map((tag) => [...tag])
+    : [['d', issueId]]
+  if (!tags.some((tag) => tag[0] === 'previous' && tag[1] === event.id)) {
+    tags.push(['previous', event.id])
+  }
+  return tags
+}
+
 /** Compass-signed progress on a locked cut. Same d-tag; newer created_at. */
 export async function writeCuttingProgress<T extends CuttingManifest>(params: {
   issueId: string
@@ -104,7 +115,7 @@ export async function writeCuttingProgress<T extends CuttingManifest>(params: {
   const event = await params.signer.signEvent({
     kind: KINDS.MANIFEST,
     created_at: Math.max(now, (params.event.created_at ?? 0) + 1),
-    tags: params.event.tags.length > 0 ? params.event.tags : [['d', params.issueId]],
+    tags: cuttingProgressTags(params.issueId, params.event),
     content: JSON.stringify(content),
   })
   await Promise.any(params.pool.publish(RELAYS, event))

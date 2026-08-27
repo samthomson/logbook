@@ -30,50 +30,82 @@ export function selectNewestManifestRevision<T extends Pick<NostrEvent, 'id' | '
   }, null)
 }
 
-function latestPerPubkey<T extends Pick<NostrEvent, 'id' | 'created_at' | 'pubkey'>>(events: T[]): T[] {
-  const byPubkey = new Map<string, T[]>()
-  for (const event of events) {
-    const key = event.pubkey.toLowerCase()
-    const group = byPubkey.get(key)
-    if (group) group.push(event)
-    else byPubkey.set(key, [event])
-  }
-  const heads: T[] = []
-  for (const group of byPubkey.values()) {
-    const picked = selectNewestManifestRevision(group)
-    if (picked) heads.push(picked)
-  }
-  return heads
-}
-
 function isNewerThan<T extends Pick<NostrEvent, 'id' | 'created_at'>>(event: T, than: T): boolean {
   if (event.created_at !== than.created_at) return event.created_at > than.created_at
   return event.id > than.id
 }
 
+function previousIds(event: { tags?: string[][] }): string[] {
+  return (event.tags ?? [])
+    .filter((tag) => tag[0] === 'previous' && typeof tag[1] === 'string' && tag[1].length > 0)
+    .map((tag) => tag[1])
+}
+
+/** The recordings in the cut, ignoring publish progress Compass writes onto the same lock. */
+export function cutBodyKey(content: string | undefined): string | null {
+  if (typeof content !== 'string') return null
+  try {
+    const parsed = JSON.parse(content) as { issueRef?: unknown; sections?: unknown }
+    if (!('sections' in parsed)) return null
+    return JSON.stringify({ issueRef: parsed.issueRef ?? null, sections: parsed.sections })
+  } catch {
+    return null
+  }
+}
+
+function compassProgress<
+  T extends Pick<NostrEvent, 'id' | 'created_at' | 'pubkey'> & { content?: string },
+>(events: T[], publishedAuthor: string): T[] {
+  return events.filter((event) => (
+    event.pubkey.toLowerCase() === publishedAuthor && episodeStatusOf(event) === 'cutting'
+  ))
+}
+
 /**
- * Each author has one current kind 34200. Among those, a producer draft or
- * lock newer than Compass's published event is the live cut (reopen / republish).
- * An older leftover lock must not hide that publish.
+ * Compass progress is a later cutting from the publish author; it must not hide
+ * published. The leftover producer lock is the one Compass kept writing after.
+ * A later producer lock of the same cut (Edit the cut → publish) is live even
+ * when the published event has no previous tag.
  */
 export function selectAuthoritativeManifestRevision<
-  T extends Pick<NostrEvent, 'id' | 'created_at' | 'pubkey'> & { content?: string },
+  T extends Pick<NostrEvent, 'id' | 'created_at' | 'pubkey'> & { content?: string; tags?: string[][] },
 >(events: T[]): T | null {
-  const heads = latestPerPubkey(events)
-  const newest = selectNewestManifestRevision(heads)
-  if (!newest) return null
+  if (events.length === 0) return null
   const published = selectNewestManifestRevision(
-    heads.filter((event) => episodeStatusOf(event) === 'published'),
+    events.filter((event) => episodeStatusOf(event) === 'published'),
   )
-  if (!published) return newest
+  if (!published) return selectNewestManifestRevision(events)
+  const namedDead = new Set(previousIds(published))
+  const publishedBody = cutBodyKey(published.content)
+  const publishedAuthor = published.pubkey.toLowerCase()
+  const progress = compassProgress(events, publishedAuthor)
   const live = selectNewestManifestRevision(
-    heads.filter((event) => {
+    events.filter((event) => {
       const status = episodeStatusOf(event)
-      if (status !== 'draft' && status !== 'cutting') return false
-      return isNewerThan(event, published)
+      if (!isNewerThan(event, published) && !previousIds(event).includes(published.id)) return false
+      if (status === 'draft') return true
+      if (status !== 'cutting') return false
+      if (namedDead.has(event.id)) return false
+      if (event.pubkey.toLowerCase() === publishedAuthor) return false
+      if (previousIds(event).includes(published.id)) return true
+      const body = cutBodyKey(event.content)
+      const sameCut = Boolean(publishedBody && body && body === publishedBody)
+      if (sameCut && namedDead.size === 0) {
+        if (progress.some((item) => isNewerThan(item, event))) return false
+        if (progress.length === 0) return false
+      }
+      return true
     }),
   )
   return live ?? published
+}
+
+/** Keep every revision seen on a live subscription and re-select. */
+export function foldAuthoritativeManifestRevision<
+  T extends Pick<NostrEvent, 'id' | 'created_at' | 'pubkey'> & { content?: string; tags?: string[][] },
+>(seen: Map<string, T>, incoming: T): T | null {
+  seen.set(incoming.id, incoming)
+  return selectAuthoritativeManifestRevision([...seen.values()])
 }
 
 /** Select one addressable-event revision without trusting relay-side filters. */

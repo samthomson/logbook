@@ -33,13 +33,13 @@ test('hosted acknowledgement is the bytes read back from the public URL', async 
   assert.equal(ack.feedDigest.length, 64)
 })
 
-test('origin feed read-back uses the compose nginx service for loopback BASE_URL', () => {
+test('origin feed read-back is the compose nginx service, not the public BASE_URL', () => {
   assert.equal(
     originFeedReadbackUrl('http://localhost:8080'),
     'http://origin:8080/feed.xml',
   )
   assert.equal(
     originFeedReadbackUrl('https://podcast.nostrcompass.org'),
-    'https://podcast.nostrcompass.org/feed.xml',
+    'http://origin:8080/feed.xml',
   )
 })

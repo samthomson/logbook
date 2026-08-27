@@ -999,21 +999,6 @@ export default function IssueTimeline({
                   </button>
                 </div>
               </div>
-            ) : cut.canReopen ? (
-              <div className="produce__footer">
-                <p className="produce__next">The published episode stays in the feed until you publish again.</p>
-                <div className="produce__actions">
-                  <button
-                    type="button"
-                    className="btn btn--primary"
-                    disabled={cut.saving}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={cut.reopen}
-                  >
-                    {cut.saving ? 'Opening…' : 'Edit the cut'}
-                  </button>
-                </div>
-              </div>
             ) : cut.status === 'draft' ? (
               <p className="produce__banner" role="status">
                 This key is not on the producer list, so the episode cannot be edited here.
@@ -1029,10 +1014,14 @@ export default function IssueTimeline({
                 publishReady: cut.publishReady,
                 waitingReason: cut.editable && (!cut.publishReady || cut.dirty) ? '' : cut.nextStep,
                 saving: cut.saving,
+                canReopen: cut.canReopen,
+                canRerun: cut.canRerun,
               })}
               saving={cut.saving}
               onLock={cut.publish}
               onRetry={cut.retryRelease}
+              onReopen={cut.reopen}
+              onRerun={cut.rerunFrom}
               onInspect={(target: InspectTarget) => {
                 const event = target === 'lock'
                   ? cut.event

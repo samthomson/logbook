@@ -20,7 +20,12 @@ import type {
 import { parseManifestContent } from '../types/nostr'
 import { now } from './utils'
 import { publishToRelays, filterVerified } from './relay'
-import { selectNewestAddressableRevision, selectNewestPerDTag } from './manifest-revision'
+import {
+  foldAuthoritativeManifestRevision,
+  selectNewestAddressableRevision,
+  selectNewestPerDTag,
+} from './manifest-revision'
+import { releaseOverlayKey, withReleaseOverlay } from './release-overlay'
 import { withSignerTimeout } from './signer-timeout'
 import { assertEventSignedByExpected, assertSignerStillExpected } from './signer-identity'
 
@@ -30,7 +35,8 @@ function manifestFilters(
 ): { kinds: number[]; authors: string[]; limit: number; '#d'?: string[] }[] {
   const compass = COMPASS_PUBKEY.toLowerCase()
   const others = [...producers].filter((pubkey) => pubkey !== compass)
-  const base = { kinds: [KINDS.MANIFEST], limit: 50, ...extra }
+  const scoped = Boolean(extra['#d']?.length)
+  const base = { kinds: [KINDS.MANIFEST], limit: scoped ? 500 : 50, ...extra }
   return [
     { ...base, authors: [compass] },
     ...(others.length > 0 ? [{ ...base, authors: others }] : []),
@@ -38,25 +44,43 @@ function manifestFilters(
 }
 
 
-/** Fetch the manifest for a given issue number. Returns null if not found. */
-export async function fetchManifest(
+export async function fetchVerifiedManifestEvents(
   issueNumber: number,
   relays: string[] = RELAYS,
-): Promise<IssueManifest | null> {
+): Promise<NostrEvent[]> {
   const issueId = `${ISSUE_PREFIX}-${issueNumber}`
   const producers = await fetchProducerPubkeys(relays)
   const pool = getPool()
   const events = (
     await Promise.all(manifestFilters(producers, { '#d': [issueId] }).map((filter) => pool.querySync(relays, filter)))
   ).flat()
+  return filterVerified(events).filter((candidate) => (
+    producers.has(candidate.pubkey.toLowerCase())
+    && candidate.tags.some((tag) => tag[0] === 'd' && tag[1] === issueId)
+  ))
+}
 
-  const event = selectNewestAddressableRevision(
-    filterVerified(events).filter((candidate) => producers.has(candidate.pubkey.toLowerCase())),
-    issueId,
-  )
+function presentManifest(event: NostrEvent, all: readonly NostrEvent[]): IssueManifest | null {
+  const parsed = parseManifestEvent(event)
+  if (!parsed) return null
+  return withReleaseOverlay(parsed, all)
+}
+
+/** Fetch the manifest for a given issue number. Returns null if not found. */
+export async function fetchManifest(
+  issueNumber: number,
+  relays: string[] = RELAYS,
+  preferEventId?: string | null,
+): Promise<IssueManifest | null> {
+  const events = await fetchVerifiedManifestEvents(issueNumber, relays)
+  if (preferEventId) {
+    const preferred = events.find((event) => event.id === preferEventId)
+    if (preferred) return presentManifest(preferred, events)
+  }
+  const issueId = `${ISSUE_PREFIX}-${issueNumber}`
+  const event = selectNewestAddressableRevision(events, issueId)
   if (!event) return null
-
-  return parseManifestEvent(event)
+  return presentManifest(event, events)
 }
 
 /**
@@ -75,6 +99,8 @@ export function subscribeManifest(
 
   void fetchProducerPubkeys(relays).then((producers) => {
     if (cancelled) return
+    const seen = new Map<string, NostrEvent>()
+    let emittedKey: string | null = null
     const sub = getPool().subscribeMany(
       relays,
       manifestFilters(producers, { '#d': [issueId] }),
@@ -83,8 +109,23 @@ export function subscribeManifest(
           if (!producers.has(event.pubkey.toLowerCase())) return
           const [verified] = filterVerified([event as NostrEvent])
           if (!verified) return
-          const parsed = parseManifestEvent(verified)
-          if (parsed && parsed.issueId === issueId) onRevision(parsed)
+          const picked = foldAuthoritativeManifestRevision(seen, verified)
+          if (!picked) return
+          const parsed = presentManifest(picked, [...seen.values()])
+          if (!parsed || parsed.issueId !== issueId) return
+          const key = releaseOverlayKey(parsed)
+          if (key === emittedKey) return
+          emittedKey = key
+          onRevision(parsed)
+        },
+        oneose: () => {
+          void fetchManifest(issueNumber, relays).then((parsed) => {
+            if (cancelled || !parsed) return
+            const key = releaseOverlayKey(parsed)
+            if (key === emittedKey) return
+            emittedKey = key
+            onRevision(parsed)
+          })
         },
       },
     )
@@ -107,6 +148,8 @@ export function subscribeManifests(
 
   void fetchProducerPubkeys(relays).then((producers) => {
     if (cancelled) return
+    const seenByIssue = new Map<string, Map<string, NostrEvent>>()
+    const emittedByIssue = new Map<string, string>()
     const sub = getPool().subscribeMany(
       relays,
       manifestFilters(producers),
@@ -115,8 +158,21 @@ export function subscribeManifests(
           if (!producers.has(event.pubkey.toLowerCase())) return
           const [verified] = filterVerified([event as NostrEvent])
           if (!verified) return
-          const parsed = parseManifestEvent(verified)
-          if (parsed) onRevision(parsed)
+          const dTag = verified.tags.find((tag) => tag[0] === 'd')?.[1]
+          if (!dTag) return
+          let seen = seenByIssue.get(dTag)
+          if (!seen) {
+            seen = new Map()
+            seenByIssue.set(dTag, seen)
+          }
+          const picked = foldAuthoritativeManifestRevision(seen, verified)
+          if (!picked) return
+          const parsed = presentManifest(picked, [...seen.values()])
+          if (!parsed) return
+          const key = releaseOverlayKey(parsed)
+          if (key === emittedByIssue.get(dTag)) return
+          emittedByIssue.set(dTag, key)
+          onRevision(parsed)
         },
       },
     )
@@ -140,10 +196,20 @@ export async function fetchAllManifests(
     await Promise.all(manifestFilters(producers).map((filter) => pool.querySync(relays, filter)))
   ).flat()
 
-  return selectNewestPerDTag(
-    filterVerified(events).filter((e) => producers.has(e.pubkey.toLowerCase())),
-  )
-    .map(parseManifestEvent)
+  const verified = filterVerified(events).filter((e) => producers.has(e.pubkey.toLowerCase()))
+  const byIssue = new Map<string, NostrEvent[]>()
+  for (const event of verified) {
+    const dTag = event.tags.find((tag) => tag[0] === 'd')?.[1]
+    if (!dTag) continue
+    const group = byIssue.get(dTag)
+    if (group) group.push(event)
+    else byIssue.set(dTag, [event])
+  }
+  return selectNewestPerDTag(verified)
+    .map((event) => {
+      const dTag = event.tags.find((tag) => tag[0] === 'd')?.[1]
+      return presentManifest(event, dTag ? byIssue.get(dTag) ?? [event] : [event])
+    })
     .filter((m): m is IssueManifest => m !== null)
     .sort((a, b) => b.event.created_at - a.event.created_at)
 }

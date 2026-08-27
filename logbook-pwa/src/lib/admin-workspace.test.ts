@@ -185,6 +185,8 @@ describe('admin workspace projection', () => {
   it('allows the intro pointer to alias one order entry but rejects any further active duplicate', () => {
     const valid = validateManifestReferences(manifest(), inventory())
     expect(valid.canLock).toBe(true)
+    expect(validateManifestReferences({ ...manifest(), episodeStatus: 'published' }, inventory()).canLock).toBe(true)
+    expect(validateManifestReferences({ ...manifest(), episodeStatus: 'cutting' }, inventory()).canLock).toBe(false)
     expect(valid.issues.some((item) => item.reason === 'Duplicate active recording')).toBe(false)
 
     const duplicated = manifest()

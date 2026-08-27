@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { unfinishedReleaseStep, withReleaseProgress } from '../cutting-progress.ts'
+import { cuttingProgressTags, unfinishedReleaseStep, withReleaseProgress } from '../cutting-progress.ts'
 
 test('release progress appends completed steps in order and clears a failed stage', () => {
   const start = {
@@ -38,4 +38,18 @@ test('release progress records a failed stage without unlocking the cut', () => 
 test('a claimed failure on a completed step is the next unfinished step', () => {
   assert.equal(unfinishedReleaseStep(['audio', 'chapters'], 'chapters'), 'feed')
   assert.equal(unfinishedReleaseStep(['audio'], 'chapters'), 'chapters')
+})
+
+test('Compass progress tags the lock it is releasing', () => {
+  assert.deepEqual(
+    cuttingProgressTags('logbook-31', {
+      id: 'lock',
+      tags: [['d', 'logbook-31'], ['previous', 'pub']],
+    }),
+    [
+      ['d', 'logbook-31'],
+      ['previous', 'pub'],
+      ['previous', 'lock'],
+    ],
+  )
 })

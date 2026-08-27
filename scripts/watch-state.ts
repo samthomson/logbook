@@ -56,37 +56,51 @@ function newestOf(events: ManifestEvent[]): ManifestEvent | null {
   }, null)
 }
 
-function latestPerAuthor(events: ManifestEvent[]): ManifestEvent[] {
-  const byAuthor = new Map<string, ManifestEvent[]>()
-  for (const event of events) {
-    const key = event.pubkey.toLowerCase()
-    const group = byAuthor.get(key)
-    if (group) group.push(event)
-    else byAuthor.set(key, [event])
+function previousIds(event: ManifestEvent): string[] {
+  return event.tags
+    .filter((tag) => tag[0] === 'previous' && typeof tag[1] === 'string' && tag[1].length > 0)
+    .map((tag) => tag[1])
+}
+
+function cutBodyKey(content: string): string | null {
+  try {
+    const parsed = JSON.parse(content) as { issueRef?: unknown; sections?: unknown }
+    if (!('sections' in parsed)) return null
+    return JSON.stringify({ issueRef: parsed.issueRef ?? null, sections: parsed.sections })
+  } catch {
+    return null
   }
-  const heads: ManifestEvent[] = []
-  for (const group of byAuthor.values()) {
-    const picked = newestOf(group)
-    if (picked) heads.push(picked)
-  }
-  return heads
 }
 
 /**
- * Each author has one current kind 34200. A producer draft or lock newer than
- * Compass's published event is the live cut. An older leftover lock must not
- * hide that publish.
+ * Compass progress must not hide published. A leftover producer lock is the one
+ * Compass kept writing after. A later producer lock of the same cut is live.
  */
 function selectAuthoritativeManifest(events: ManifestEvent[]): ManifestEvent | null {
-  const heads = latestPerAuthor(events)
-  const newest = newestOf(heads)
-  if (!newest) return null
-  const published = newestOf(heads.filter((event) => episodeStatusOf(event) === 'published'))
-  if (!published) return newest
-  const live = newestOf(heads.filter((event) => {
+  if (events.length === 0) return null
+  const published = newestOf(events.filter((event) => episodeStatusOf(event) === 'published'))
+  if (!published) return newestOf(events)
+  const namedDead = new Set(previousIds(published))
+  const publishedBody = cutBodyKey(published.content)
+  const publishedAuthor = published.pubkey.toLowerCase()
+  const progress = events.filter((event) => (
+    event.pubkey.toLowerCase() === publishedAuthor && episodeStatusOf(event) === 'cutting'
+  ))
+  const live = newestOf(events.filter((event) => {
     const status = episodeStatusOf(event)
-    if (status !== 'draft' && status !== 'cutting') return false
-    return isNewerManifest(event, published)
+    if (!isNewerManifest(event, published) && !previousIds(event).includes(published.id)) return false
+    if (status === 'draft') return true
+    if (status !== 'cutting') return false
+    if (namedDead.has(event.id)) return false
+    if (event.pubkey.toLowerCase() === publishedAuthor) return false
+    if (previousIds(event).includes(published.id)) return true
+    const body = cutBodyKey(event.content)
+    const sameCut = Boolean(publishedBody && body && body === publishedBody)
+    if (sameCut && namedDead.size === 0) {
+      if (progress.some((item) => isNewerManifest(item, event))) return false
+      if (progress.length === 0) return false
+    }
+    return true
   }))
   return live ?? published
 }

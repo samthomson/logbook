@@ -52,7 +52,7 @@ Compass npub. Changing `COMPASS_PUBKEY` needs a rebuild; Vite inlines it.
 
 - [x] dark themed ui, AMOLED black
 - [x] Producer UI: browse real Compass kind 30023 issues on relays → pick one → “Start podcast draft” → publish kind 34200 manifest from that newsletter’s sections (not seed stub)
-- [ ] normalise audio levels in ffmpeg when stitching a podcast together
+- [x] normalise audio levels in ffmpeg when stitching a podcast together
 - [ ] mobile ux ui++ (recorder, tap targets, sticky release bar)
 - [ ] ai transcription of uploads
 - [x] make publishing feel more robust, for each episode show a checklist of sorts of what tasks get done and are done (ie producing various xml files and publishing to blossom). have individual states/buttons for each

@@ -13,8 +13,33 @@ export const RELEASE_STEPS = [
 export type ChecklistStepId = (typeof RELEASE_STEPS)[number]['id']
 export type ChecklistState = 'waiting' | 'ready' | 'happening' | 'queued' | 'locked' | 'done' | 'failed'
 export type InspectTarget = 'lock' | 'podstr' | 'announcement'
+export type ChecklistAction = 'lock' | 'retry' | 'reopen' | 'rerun'
 
-const WORKER_STEPS: readonly ReleaseStep[] = ['audio', 'chapters', 'feed', 'podstr', 'announcement']
+export const WORKER_STEPS: readonly ReleaseStep[] = ['audio', 'chapters', 'feed', 'podstr', 'announcement']
+
+/** Steps the worker already has; it starts again at `from`. */
+export function completedBefore(from: ReleaseStep): ReleaseStep[] {
+  const index = WORKER_STEPS.indexOf(from)
+  return index > 0 ? WORKER_STEPS.slice(0, index) : []
+}
+
+export const RERUN_LABEL: Record<ReleaseStep, string> = {
+  audio: 'Make the audio again',
+  chapters: 'Make the chapters again',
+  feed: 'Write the feed again',
+  podstr: 'List the episode again',
+  announcement: 'Post the note again',
+}
+
+const RERUNABLE: readonly ReleaseStep[] = ['audio', 'feed', 'podstr', 'announcement']
+
+const RERUN_DETAIL: Record<ReleaseStep, string> = {
+  audio: 'A new file replaces this one in the feed. Chapters, feed, listing, and note follow.',
+  chapters: 'Made with the episode audio.',
+  feed: 'The hosted feed is rewritten from this audio. Listing and note follow.',
+  podstr: 'A new listing for podcast apps. The Compass note follows.',
+  announcement: 'A new Compass note pointing at this episode.',
+}
 
 const IN_PROGRESS: Record<Exclude<ChecklistStepId, 'lock' | 'published'>, string> = {
   audio: 'Episode audio is being made',
@@ -58,7 +83,8 @@ export interface ChecklistRow {
   href?: string
   chaptersUrl?: string
   inspect?: InspectTarget
-  action?: 'lock' | 'retry'
+  action?: ChecklistAction
+  rerunFrom?: ReleaseStep
   primary?: boolean
   scrollToSegmentId?: string
 }
@@ -71,6 +97,8 @@ export interface ChecklistInput {
   publishReady: boolean
   waitingReason: string
   saving: boolean
+  canReopen?: boolean
+  canRerun?: boolean
 }
 
 function completedSet(content: ManifestContent | null): Set<ReleaseStep> {
@@ -126,6 +154,8 @@ export function releaseChecklist({
   publishReady,
   waitingReason,
   saving,
+  canReopen = false,
+  canRerun = false,
 }: ChecklistInput): ChecklistRow[] {
   const status = content?.episodeStatus ?? 'draft'
   const published = status === 'published'
@@ -155,9 +185,15 @@ export function releaseChecklist({
             ? waitingReason
             : state === 'locked' && !failed
               ? 'The worker is making the episode.'
-              : '',
+              : state === 'done'
+                ? 'The running order of voice notes in this episode.'
+                : '',
         inspect: (state === 'done' || state === 'locked') && manifestEvent ? 'lock' : undefined,
-        action: state === 'ready' || state === 'waiting' ? 'lock' : undefined,
+        action: state === 'ready' || state === 'waiting'
+          ? 'lock'
+          : canReopen && (state === 'done' || (state === 'locked' && Boolean(failed)))
+            ? 'reopen'
+            : undefined,
       }
     }
 
@@ -177,11 +213,16 @@ export function releaseChecklist({
     else if (failed === id) state = 'failed'
     else if (happening === id) state = 'happening'
 
+    const rerun = canRerun && published && state === 'done' && (RERUNABLE as readonly string[]).includes(id)
     const detail = state === 'failed'
       ? failureReason
       : state === 'waiting'
         ? 'Earlier steps first.'
-        : ''
+        : rerun
+          ? RERUN_DETAIL[id as ReleaseStep]
+          : id === 'chapters' && published && state === 'done'
+            ? RERUN_DETAIL.chapters
+            : ''
 
     return {
       id,
@@ -197,7 +238,12 @@ export function releaseChecklist({
         : state === 'done' && id === 'announcement' && announcementEvent
           ? 'announcement'
           : undefined,
-      action: state === 'failed' && cutting ? 'retry' : undefined,
+      action: state === 'failed' && cutting
+        ? 'retry'
+        : rerun
+          ? 'rerun'
+          : undefined,
+      rerunFrom: rerun ? id as ReleaseStep : undefined,
       scrollToSegmentId: id === 'audio' && state === 'failed'
         ? content?.lastFailure?.segmentId
         : undefined,

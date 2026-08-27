@@ -33,7 +33,7 @@ import { createCompassAmberSigner, type CompassSigner } from './amber-signer.ts'
 import { latestVerifiedManifest, type ManifestEvent } from './watch-state.ts'
 import { fetchProducerPubkeys } from './producers.ts'
 import { assertPublishableManifest, selectTrustedReleaseMetadata } from './rss-state.ts'
-import { FileReleaseLedger, assertRunMatchesManifest, manifestRevision, runReleaseStages, type ManifestRevision } from './release-state.ts'
+import { FileReleaseLedger, assertRunMatchesManifest, findMatchingLock, manifestRevision, runReleaseStages, type ManifestRevision } from './release-state.ts'
 import { acknowledgeStaticSync, originFeedReadbackUrl, readBackHostedFeed } from './static-sync.ts'
 import { releaseFailure, unfinishedReleaseStep, writeCuttingProgress, type ReleaseStep } from './cutting-progress.ts'
 
@@ -194,38 +194,44 @@ function formatDuration(seconds: number): string {
 async function fetchManifest(issueId: string, pool: SimplePool): Promise<{
   manifest: ManifestContent
   event: ManifestEvent
+  events: ManifestEvent[]
   knownCreatedAt: number
 }> {
   const producers = await fetchProducerPubkeys(pool)
   const compass = COMPASS_PUBKEY.toLowerCase()
   const others = [...producers].filter((pubkey) => pubkey.toLowerCase() !== compass)
-  const base = { kinds: [KINDS.MANIFEST], '#d': [issueId], limit: 50 }
-  const events = (
+  const base = { kinds: [KINDS.MANIFEST], '#d': [issueId], limit: 500 }
+  const raw = (
     await Promise.all([
       pool.querySync(RELAYS, { ...base, authors: [COMPASS_PUBKEY] }),
       others.length > 0
         ? pool.querySync(RELAYS, { ...base, authors: others })
         : Promise.resolve([]),
     ])
-  ).flat()
+  ).flat() as ManifestEvent[]
 
   const options = {
     expectedPubkey: producers,
     verify: (candidate: ManifestEvent) => verifyNostrEvent(candidate as never),
   }
-  const event = latestVerifiedManifest(events as ManifestEvent[], issueId, options)
+  const events = raw.filter((candidate) => (
+    options.verify(candidate)
+    && candidate.tags.some((tag) => tag[0] === 'd' && tag[1] === issueId)
+    && producers.has(candidate.pubkey.toLowerCase())
+  ))
+  const event = latestVerifiedManifest(events, issueId, options)
   if (!event) throw new Error(`No verified manifest found for ${issueId}`)
 
-  const knownCreatedAt = (events as ManifestEvent[]).reduce((max, candidate) => {
-    if (!options.verify(candidate)) return max
-    const d = candidate.tags.find((tag) => tag[0] === 'd')?.[1]
-    if (d !== issueId) return max
-    const pubkey = candidate.pubkey.toLowerCase()
-    if (!producers.has(pubkey)) return max
-    return Math.max(max, candidate.created_at ?? 0)
-  }, 0)
+  const knownCreatedAt = events.reduce((max, candidate) => (
+    Math.max(max, candidate.created_at ?? 0)
+  ), 0)
 
-  return { manifest: JSON.parse(event.content) as ManifestContent, event, knownCreatedAt }
+  return {
+    manifest: JSON.parse(event.content) as ManifestContent,
+    event,
+    events,
+    knownCreatedAt,
+  }
 }
 
 // ── mp3 duration via ffprobe ──────────────────────────────────────────────────
@@ -393,6 +399,7 @@ async function publishManifestStatus(
   ep: EpisodeData,
   signer: CompassSigner,
   pool: SimplePool,
+  previousEventIds: readonly string[],
   supersedesCreatedAt: number,
 ): Promise<void> {
   const updated = {
@@ -422,6 +429,7 @@ async function publishManifestStatus(
       ['d', issueId],
       ['title', ep.issueTitle],
       ['issue', issueId],
+      ...[...new Set(previousEventIds.filter((id) => id.length > 0))].map((id) => ['previous', id]),
     ],
     content: JSON.stringify(updated),
   })
@@ -537,8 +545,8 @@ async function main(): Promise<void> {
     const revision = manifestRevision(live.event)
     assertRunMatchesManifest(run, revision)
     const assertExactCut = async (): Promise<void> => {
-      const latest = manifestRevision((await fetchManifest(issueId, pool)).event)
-      assertRunMatchesManifest({ manifest: revision }, latest)
+      const match = findMatchingLock(revision, (await fetchManifest(issueId, pool)).events)
+      if (!match) throw new Error('Release stopped: stale or mismatched manifest revision')
     }
 
     // Upload chapters JSON to Blossom so podcatchers can fetch it from anywhere.
@@ -641,18 +649,20 @@ async function main(): Promise<void> {
     console.log(`[publish-rss] Episodes in feed: ${allEpisodes.length}`)
 
     const feedDigest = createHash('sha256').update(xmlBytes).digest('hex')
-    const ledger = new FileReleaseLedger(STATIC_DIR, issueId)
+    const ledger = new FileReleaseLedger(STATIC_DIR, issueId, run.manifest.id)
     await runReleaseStages({
       ledger,
       revision,
       // Progress writes change the event id; the locked cut (sections) must not.
-      current: async () => manifestRevision((await fetchManifest(issueId, pool)).event),
+      current: async () => {
+        const match = findMatchingLock(revision, (await fetchManifest(issueId, pool)).events)
+        if (!match) throw new Error('Release stopped: stale or mismatched manifest revision')
+        return match
+      },
       stages: {
         artifacts: async () => assertRunMatchesManifest(run, revision),
         feed: async () => {
           failedStage = 'feed'
-          const blob = await uploadToBlossom(xmlBytes, 'application/rss+xml', signer)
-          console.log(`[publish-rss] Feed blob: ${blob.url}`)
           const originFeed = originFeedReadbackUrl(BASE_URL)
           await acknowledgeStaticSync(feedDigest, () => readBackHostedFeed(originFeed))
           console.log(`[publish-rss] Feed hosted: ${originFeed}`)
@@ -680,6 +690,7 @@ async function main(): Promise<void> {
           ep,
           signer,
           pool,
+          [run.manifest.id, live!.event.id],
           Math.max(knownCreatedAt, live!.event.created_at ?? 0),
         ),
       },

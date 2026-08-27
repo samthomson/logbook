@@ -32,12 +32,15 @@ export function canReopenPublishedCut(
   pubkey: string,
   producers: ReadonlySet<string> = new Set([COMPASS_PUBKEY]),
 ): boolean {
-  return content.episodeStatus === 'published' && producers.has(pubkey.toLowerCase())
+  if (!producers.has(pubkey.toLowerCase())) return false
+  if (content.episodeStatus === 'published') return true
+  return content.episodeStatus === 'cutting' && Boolean(content.lastFailure)
 }
 
 /** Published audio stays in the feed until the next publish lands. */
 export function reopenPublishedCut(content: ManifestContent): ManifestContent {
-  if (content.episodeStatus !== 'published') return content
+  const failedLock = content.episodeStatus === 'cutting' && Boolean(content.lastFailure)
+  if (content.episodeStatus !== 'published' && !failedLock) return content
   return {
     ...content,
     episodeStatus: 'draft',
@@ -53,7 +56,7 @@ export function sectionInCut(section: ManifestSection): boolean {
 }
 
 export function canLockEpisode(content: ManifestContent): boolean {
-  return content.episodeStatus === 'draft' && content.sections.some(sectionInCut)
+  return content.sections.some(sectionInCut)
 }
 
 export function includeAllChapters(

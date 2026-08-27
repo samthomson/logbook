@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ManifestContent, NostrEvent } from '../types/nostr'
-import { reachableHref, releaseChecklist, type ChecklistInput } from './release-checklist'
+import { reachableHref, releaseChecklist, completedBefore, type ChecklistInput } from './release-checklist'
 
 function manifest(overrides: Partial<ManifestContent> = {}): ManifestContent {
   return {
@@ -178,6 +178,46 @@ describe('releaseChecklist', () => {
     expect(listed.find((row) => row.id === 'announcement')?.inspect).toBe('announcement')
     expect(listed.find((row) => row.id === 'published')?.href).toBeUndefined()
     expect(listed.some((row) => row.action || row.primary)).toBe(false)
+  })
+
+  it('puts per-step remake controls on a published episode', () => {
+    const listed = rows({
+      content: manifest({
+        episodeStatus: 'published',
+        release: { completed: ['audio', 'chapters', 'feed', 'podstr', 'announcement'] },
+        publishedRss: {
+          mp3Url: 'https://blossom.test/ep.mp3',
+          chaptersUrl: 'https://blossom.test/ch.json',
+          feedUrl: 'https://podcast.test/feed.xml',
+        },
+      }),
+      canReopen: true,
+      canRerun: true,
+      publishReady: true,
+      waitingReason: '',
+    })
+    expect(listed.find((row) => row.id === 'lock')).toMatchObject({
+      action: 'reopen',
+      detail: 'The running order of voice notes in this episode.',
+    })
+    expect(listed.find((row) => row.id === 'audio')).toMatchObject({
+      action: 'rerun',
+      rerunFrom: 'audio',
+    })
+    expect(listed.find((row) => row.id === 'chapters')?.action).toBeUndefined()
+    expect(listed.find((row) => row.id === 'feed')).toMatchObject({
+      action: 'rerun',
+      rerunFrom: 'feed',
+    })
+    expect(listed.find((row) => row.id === 'podstr')?.rerunFrom).toBe('podstr')
+    expect(listed.find((row) => row.id === 'announcement')?.rerunFrom).toBe('announcement')
+    expect(listed.some((row) => row.primary)).toBe(false)
+  })
+
+  it('completedBefore keeps earlier worker steps', () => {
+    expect(completedBefore('audio')).toEqual([])
+    expect(completedBefore('feed')).toEqual(['audio', 'chapters'])
+    expect(completedBefore('announcement')).toEqual(['audio', 'chapters', 'feed', 'podstr'])
   })
 
   it('offers an https or local origin feed', () => {

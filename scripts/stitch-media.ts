@@ -66,6 +66,54 @@ function ff(args: string[]): void {
   }
 }
 
+/** Podcast target: EBU R128 / YouTube-style speech, -16 LUFS, true peak -1.5 dB. */
+const LOUDNORM = 'loudnorm=I=-16:TP=-1.5:LRA=11'
+/** Measure and apply on the same layout the stitcher concatenates. */
+const STEREO_48K = 'aformat=sample_rates=48000:channel_layouts=stereo'
+
+export interface LoudnormMeasurement {
+  input_i: string
+  input_tp: string
+  input_lra: string
+  input_thresh: string
+  target_offset: string
+}
+
+const MEASURED_FIELDS = ['input_i', 'input_tp', 'input_lra', 'input_thresh', 'target_offset'] as const
+
+/**
+ * loudnorm's JSON is on stderr after the filter log line. A first `{` in the
+ * banner or progress dump is not that object — require `input_i`.
+ */
+export function parseLoudnormMeasurement(stderr: string): LoudnormMeasurement {
+  const match = stderr.match(/\{\s*"input_i"\s*:\s*"[^"]+"[\s\S]*?\}/)
+  if (!match) {
+    throw new Error(`ffmpeg loudnorm measurement produced no JSON:\n${stderr}`)
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(match[0])
+  } catch (cause) {
+    throw new Error(`ffmpeg loudnorm measurement JSON is invalid:\n${match[0]}`, { cause })
+  }
+  if (typeof parsed !== 'object' || parsed === null) {
+    throw new Error(`ffmpeg loudnorm measurement JSON is invalid:\n${match[0]}`)
+  }
+  const record = parsed as Record<string, unknown>
+  for (const field of MEASURED_FIELDS) {
+    if (typeof record[field] !== 'string') {
+      throw new Error(`ffmpeg loudnorm measurement is missing ${field}:\n${match[0]}`)
+    }
+  }
+  return {
+    input_i: record.input_i as string,
+    input_tp: record.input_tp as string,
+    input_lra: record.input_lra as string,
+    input_thresh: record.input_thresh as string,
+    target_offset: record.target_offset as string,
+  }
+}
+
 /**
  * A recording that captured no signal measures an integrated loudness of -inf,
  * which loudnorm's second pass rejects. Normalising it is not an option either:
@@ -78,46 +126,36 @@ export class SilentClipError extends Error {
   }
 }
 
+/**
+ * Two-pass EBU R128. A single loudnorm pass is dynamic and pumps on speech;
+ * the apply pass needs the measured values from a full read of the clip.
+ */
 export function loudnorm(inputPath: string, outDir: string, stem?: string): string {
   const outPath = join(outDir, `${stem ?? basename(inputPath).replace(/\.[^.]+$/, '')}_norm.wav`)
   const pass1 = spawnSync(
     'ffmpeg',
-    ['-i', inputPath, '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json', '-f', 'null', '-'],
+    ['-i', inputPath, '-af', `${STEREO_48K},${LOUDNORM}:print_format=json`, '-f', 'null', '-'],
     { encoding: 'utf8' },
   )
   if (pass1.error || pass1.status !== 0) {
     throw new Error(`ffmpeg loudnorm measurement failed:\n${pass1.stderr ?? pass1.error?.message}`)
   }
 
-  const jsonMatch = (pass1.stderr ?? '').match(/\{[\s\S]*?\}/)
-  if (!jsonMatch) {
-    // Preserve the worker's tolerant fallback for ffmpeg versions/builds that
-    // normalize correctly but omit loudnorm's measurement JSON.
-    ff(['-i', inputPath, '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11', '-ar', '48000', '-ac', '2', outPath])
-    return outPath
-  }
-
-  const measured = JSON.parse(jsonMatch[0]) as {
-    input_i: string
-    input_tp: string
-    input_lra: string
-    input_thresh: string
-    target_offset: string
-  }
+  const measured = parseLoudnormMeasurement(pass1.stderr ?? '')
   if (!Number.isFinite(Number(measured.input_i))) {
     throw new SilentClipError(basename(inputPath))
   }
-  const filter = [
-    'loudnorm=I=-16:TP=-1.5:LRA=11',
+  const filter = `${STEREO_48K},${[
+    LOUDNORM,
     `measured_I=${measured.input_i}`,
     `measured_TP=${measured.input_tp}`,
     `measured_LRA=${measured.input_lra}`,
     `measured_thresh=${measured.input_thresh}`,
     `offset=${measured.target_offset}`,
     'linear=true',
-  ].join(':')
+  ].join(':')}`
 
-  ff(['-i', inputPath, '-af', filter, '-ar', '48000', '-ac', '2', outPath])
+  ff(['-i', inputPath, '-af', filter, outPath])
   return outPath
 }
 

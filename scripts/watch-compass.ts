@@ -68,6 +68,8 @@ async function pollCuttingManifests(
       console.error(`[watch-compass] stitch.ts failed for ${result.issueId}`)
     } else if (result.outcome === 'publish-failed') {
       console.error(`[watch-compass] publish-rss.ts failed for ${result.issueId}`)
+    } else if (result.outcome === 'publish-unacknowledged') {
+      console.error(`[watch-compass] ${result.issueId} publish-rss exited but Compass has no published event for this lock`)
     } else {
       console.log(`[watch-compass] Episode ${result.issueId} published successfully`)
     }
@@ -81,6 +83,7 @@ async function main(): Promise<void> {
   console.log('[watch-compass] Drafts start from a producer in the PWA; watching for cutting manifests')
   await withPool(materializeOriginFeed)
 
+  /** Lock event ids whose release finished. A later lock of the same episode still runs. */
   const completedIssueIds = new Set<string>()
   const stitchedRevisions = new Set<string>()
 

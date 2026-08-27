@@ -31,6 +31,19 @@ function isCutting(event: ManifestEvent): boolean {
   return isStatus(event, 'cutting')
 }
 
+function previousIds(event: ManifestEvent): string[] {
+  return event.tags
+    .filter((tag) => tag[0] === 'previous' && typeof tag[1] === 'string' && tag[1].length > 0)
+    .map((tag) => tag[1])
+}
+
+/** A published event for a different lock of this episode is not this release. */
+export function publishedThisLock(events: readonly ManifestEvent[], lockId: string): boolean {
+  return events.some((event) => (
+    isStatus(event, 'published') && previousIds(event).includes(lockId)
+  ))
+}
+
 function cutSections(event: ManifestEvent): { issueRef?: unknown; sections?: unknown } {
   try {
     const parsed = JSON.parse(event.content) as { issueRef?: unknown; sections?: unknown }
@@ -64,6 +77,7 @@ function audioCompleted(event: ManifestEvent): boolean {
  * stitch/publish process is started.
  */
 export async function runWatcherCycle(
+  /** Lock event ids whose release was acknowledged. A later lock of the same episode is a new id. */
   completed: Set<string>,
   dependencies: WatcherCycleDependencies,
   /** Revision event ids whose stitch already succeeded. Publish retries must
@@ -79,7 +93,8 @@ export async function runWatcherCycle(
 
   for (const candidate of candidates) {
     const issueId = dTag(candidate)
-    if (!issueId || completed.has(issueId)) continue
+    if (!issueId) continue
+    if (completed.has(candidate.id)) continue
 
     const candidateIsCurrent = async (): Promise<boolean> => {
       const fresh = await dependencies.fetchManifests()
@@ -94,35 +109,34 @@ export async function runWatcherCycle(
       continue
     }
 
-    // Record only a fully acknowledged publication and key it by the stable
-    // addressable d-tag, not a replaceable manifest revision ID.
-    completed.add(issueId)
+    // A later lock of this episode must be able to run; remember this revision,
+    // not the d-tag.
+    completed.add(candidate.id)
     if (!audioCompleted(candidate) && !stitchedRevisions.has(candidate.id)) {
       if (dependencies.runStitch(issueId) !== 0) {
-        completed.delete(issueId)
+        completed.delete(candidate.id)
         results.push({ issueId, outcome: 'stitch-failed' })
         continue
       }
       stitchedRevisions.add(candidate.id)
     }
     if (!(await candidateIsCurrent())) {
-      completed.delete(issueId)
+      completed.delete(candidate.id)
       results.push({ issueId, outcome: 'stale' })
       continue
     }
     if (dependencies.runPublish(issueId) !== 0) {
-      completed.delete(issueId)
+      completed.delete(candidate.id)
       results.push({ issueId, outcome: 'publish-failed' })
       continue
     }
     // A child process exit is not an acknowledgement. Only durably suppress
     // retries after relays expose a newer verified terminal revision.
-    const acknowledged = latestVerifiedManifest(await dependencies.fetchManifests(), issueId, {
-      expectedPubkey: dependencies.expectedPubkey,
-      verify: dependencies.verify,
-    })
-    if (!acknowledged || !isStatus(acknowledged, 'published')) {
-      completed.delete(issueId)
+    const released = (await dependencies.fetchManifests()).filter((event) => (
+      dTag(event) === issueId && dependencies.verify(event)
+    ))
+    if (!publishedThisLock(released, candidate.id)) {
+      completed.delete(candidate.id)
       results.push({ issueId, outcome: 'publish-unacknowledged' })
       continue
     }

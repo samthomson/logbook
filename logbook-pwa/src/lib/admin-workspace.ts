@@ -181,7 +181,9 @@ export function validateManifestReferences(
 
   return {
     issues,
-    canLock: content.episodeStatus === 'draft' && activeCount > 0 && !issues.some((item) => item.active),
+    canLock: (content.episodeStatus === 'draft' || content.episodeStatus === 'published')
+      && activeCount > 0
+      && !issues.some((item) => item.active),
   }
 }
 

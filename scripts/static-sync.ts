@@ -24,20 +24,12 @@ export async function acknowledgeStaticSync(expectedFeedDigest: string, sync: St
 }
 
 /**
- * URL the worker GETs to confirm origin nginx is serving the feed.
- * Loopback BASE_URL is the host browser; inside compose that is the origin service.
+ * URL the worker GETs to confirm origin nginx is serving the feed it just wrote.
+ * Public BASE_URL is the link in the XML, not the acknowledgement host — a CDN
+ * or host-loopback rewrite is a different file than the compose volume.
  */
-export function originFeedReadbackUrl(baseUrl: string): string {
-  const url = new URL(baseUrl)
-  if (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]') {
-    url.hostname = 'origin'
-    url.protocol = 'http:'
-    if (!url.port) url.port = '8080'
-  }
-  url.pathname = '/feed.xml'
-  url.search = ''
-  url.hash = ''
-  return url.toString()
+export function originFeedReadbackUrl(_baseUrl: string): string {
+  return 'http://origin:8080/feed.xml'
 }
 
 /** GET the hosted feed and hash the bytes. That is the acknowledgement. */

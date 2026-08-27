@@ -78,6 +78,21 @@ describe('admin save controller', () => {
     expect(delay).toHaveBeenNthCalledWith(2, 500)
   })
 
+  it('acknowledges the signed revision even when another event would otherwise be selected', async () => {
+    const latest = vi.fn(async (prefer?: string | null) => {
+      if (prefer === SAVED_ID) return manifest(SAVED_ID)
+      return manifest(OTHER_ID)
+    })
+    const controller = createAdminSaveController({
+      fetchLatest: latest,
+      publish: vi.fn().mockResolvedValue(event(SAVED_ID)),
+      delay: vi.fn(),
+    })
+    await expect(controller.save(manifest(OTHER_ID), content())).resolves.toMatchObject({
+      event: { id: SAVED_ID },
+    })
+  })
+
   it('reports a competing post-publish revision and does not treat the draft as saved', async () => {
     const controller = createAdminSaveController({
       fetchLatest: vi.fn()

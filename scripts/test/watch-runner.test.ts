@@ -4,12 +4,12 @@ import type { ManifestEvent } from '../watch-state.ts'
 import { runWatcherCycle } from '../watch-runner.ts'
 
 const COMPASS = 'compass'
-function manifest(id: string, created_at: number, status: string): ManifestEvent {
+function manifest(id: string, created_at: number, status: string, extraTags: string[][] = []): ManifestEvent {
   return {
     id,
     created_at,
     pubkey: COMPASS,
-    tags: [['d', 'logbook-31']],
+    tags: [['d', 'logbook-31'], ...extraTags],
     content: JSON.stringify({ episodeStatus: status }),
   }
 }
@@ -34,7 +34,7 @@ test('watcher cycle revalidates the exact latest cutting revision before side ef
 
 test('watcher cycle runs stitch then publish once for an exact revalidated revision', async () => {
   const cutting = manifest('cutting', 1, 'cutting')
-  const published = manifest('published', 2, 'published')
+  const published = manifest('published', 2, 'published', [['previous', 'cutting']])
   let acknowledged = false
   const calls: string[] = []
   const stitched = new Set<string>()
@@ -51,16 +51,33 @@ test('watcher cycle runs stitch then publish once for an exact revalidated revis
   assert.deepEqual(calls, ['stitch:logbook-31', 'publish:logbook-31'])
   assert.deepEqual(await runWatcherCycle(stitched, deps), [])
 
-  const replacement = manifest('replacement-cutting', 2, 'cutting')
-  const replacementDeps = { ...deps, fetchManifests: async () => [cutting, replacement] }
-  assert.deepEqual(await runWatcherCycle(stitched, replacementDeps), [])
-  assert.equal(stitched.has('logbook-31'), true)
+  const again = manifest('again', 3, 'cutting')
+  again.pubkey = 'producer'
+  const publishedAgain = manifest('published-2', 4, 'published', [['previous', 'again']])
+  let republished = false
+  const republishDeps = {
+    ...deps,
+    expectedPubkey: new Set([COMPASS, 'producer']),
+    fetchManifests: async () => [published, republished ? publishedAgain : again],
+    runStitch: (issueId: string) => { calls.push(`stitch:${issueId}`); return 0 },
+    runPublish: (issueId: string) => { calls.push(`publish:${issueId}`); republished = true; return 0 },
+  }
+  assert.deepEqual(await runWatcherCycle(stitched, republishDeps), [
+    { issueId: 'logbook-31', outcome: 'published' },
+  ])
+  assert.deepEqual(calls, [
+    'stitch:logbook-31',
+    'publish:logbook-31',
+    'stitch:logbook-31',
+    'publish:logbook-31',
+  ])
+  assert.equal(stitched.has('again'), true)
 })
 
-test('watcher deduplicates acknowledged publications by stable d-tag across replacement revisions', async () => {
+test('watcher does not treat a later lock of the same episode as already done', async () => {
   const original = manifest('cutting-a', 1, 'cutting')
   const replacement = manifest('cutting-b', 2, 'cutting')
-  const terminal = manifest('published', 3, 'published')
+  const terminal = manifest('published', 3, 'published', [['previous', 'cutting-b']])
   let acknowledged = false
   const calls: string[] = []
   const completed = new Set<string>()
@@ -72,14 +89,14 @@ test('watcher deduplicates acknowledged publications by stable d-tag across repl
     runPublish: (issueId: string) => { calls.push(`publish:${issueId}`); acknowledged = true; return 0 },
   }
   await runWatcherCycle(completed, deps)
-  assert.deepEqual(completed, new Set(['logbook-31']))
+  assert.equal(completed.has('cutting-b'), true)
   assert.deepEqual(await runWatcherCycle(completed, deps), [])
   assert.deepEqual(calls, ['stitch:logbook-31', 'publish:logbook-31'])
 })
 
 test('watcher cycle retries publish without stitching again', async () => {
   const cutting = manifest('cutting', 1, 'cutting')
-  const published = manifest('published', 2, 'published')
+  const published = manifest('published', 2, 'published', [['previous', 'cutting']])
   const completed = new Set<string>()
   const stitchedRevisions = new Set<string>()
   let publishStatus = 1
@@ -112,7 +129,7 @@ test('watcher cycle retries a failed stitch on a later cycle', async () => {
   const stitched = new Set<string>()
   let stitchStatus = 1
   let acknowledged = false
-  const published = manifest('published', 2, 'published')
+  const published = manifest('published', 2, 'published', [['previous', 'cutting']])
   const deps = {
     fetchManifests: async () => acknowledged ? [published] : [cutting],
     expectedPubkey: COMPASS,
@@ -152,7 +169,7 @@ test('watcher cycle continues publish after a progress rewrite of the same lock'
   const cutting = manifest('cutting', 1, 'cutting')
   const progressed = manifest('progress', 2, 'cutting')
   progressed.content = JSON.stringify({ episodeStatus: 'cutting', release: { completed: ['audio'] } })
-  const published = manifest('published', 3, 'published')
+  const published = manifest('published', 3, 'published', [['previous', 'cutting']])
   let phase: 'pre' | 'stitched' | 'done' = 'pre'
   const calls: string[] = []
   const stitched = new Set<string>()
@@ -179,7 +196,7 @@ test('watcher cycle skips stitch when audio is already on the manifest', async (
     episodeStatus: 'cutting',
     release: { completed: ['audio'] },
   })
-  const published = manifest('published', 2, 'published')
+  const published = manifest('published', 2, 'published', [['previous', 'cutting']])
   let acknowledged = false
   const calls: string[] = []
   const deps = {
@@ -193,4 +210,20 @@ test('watcher cycle skips stitch when audio is already on the manifest', async (
     { issueId: 'logbook-31', outcome: 'published' },
   ])
   assert.deepEqual(calls, ['publish:logbook-31'])
+})
+
+test('an older Compass publish does not acknowledge a later lock of the same episode', async () => {
+  const lock = manifest('lock-2', 3, 'cutting')
+  lock.pubkey = 'producer'
+  const stalePublished = manifest('old-pub', 2, 'published', [['previous', 'lock-1']])
+  const calls: string[] = []
+  const result = await runWatcherCycle(new Set(), {
+    fetchManifests: async () => [stalePublished, lock],
+    expectedPubkey: new Set([COMPASS, 'producer']),
+    verify: () => true,
+    runStitch: (issueId) => { calls.push(`stitch:${issueId}`); return 0 },
+    runPublish: (issueId) => { calls.push(`publish:${issueId}`); return 0 },
+  })
+  assert.deepEqual(calls, ['stitch:logbook-31', 'publish:logbook-31'])
+  assert.deepEqual(result, [{ issueId: 'logbook-31', outcome: 'publish-unacknowledged' }])
 })

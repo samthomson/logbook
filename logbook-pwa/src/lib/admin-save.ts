@@ -1,7 +1,7 @@
 import type { IssueManifest, ManifestContent, NostrEvent } from '../types/nostr'
 
 export interface AdminSaveDependencies {
-  fetchLatest: () => Promise<IssueManifest | null>
+  fetchLatest: (preferEventId?: string | null) => Promise<IssueManifest | null>
   publish: (
     content: ManifestContent,
     previousEventId: string | null,
@@ -66,7 +66,7 @@ export function createAdminSaveController(dependencies: AdminSaveDependencies): 
       assertActive?.()
       let acknowledged: IssueManifest | null
       try {
-        acknowledged = await dependencies.fetchLatest()
+        acknowledged = await dependencies.fetchLatest(published.id)
         assertActive?.()
       } catch (error) {
         assertActive?.()

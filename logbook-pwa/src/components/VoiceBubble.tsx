@@ -178,6 +178,7 @@ export default function VoiceBubble({
                 type="checkbox"
                 checked={cut.inCut}
                 disabled={!cut.eligible}
+                onMouseDown={(event) => event.preventDefault()}
                 onChange={cut.onToggleInCut}
               />
               <span>
@@ -193,6 +194,7 @@ export default function VoiceBubble({
                     type="button"
                     className="btn btn--ghost btn--xs"
                     disabled={!cut.canMoveUp}
+                    onMouseDown={(event) => event.preventDefault()}
                     onClick={cut.onMoveUp}
                   >
                     <span aria-hidden="true">↑</span> Earlier
@@ -201,6 +203,7 @@ export default function VoiceBubble({
                     type="button"
                     className="btn btn--ghost btn--xs"
                     disabled={!cut.canMoveDown}
+                    onMouseDown={(event) => event.preventDefault()}
                     onClick={cut.onMoveDown}
                   >
                     <span aria-hidden="true">↓</span> Later
@@ -211,7 +214,12 @@ export default function VoiceBubble({
                   className="bubble__cut-check"
                   title="Your own mark that you have listened to this one. It changes nothing in the audio."
                 >
-                  <input type="checkbox" checked={cut.reviewed} onChange={cut.onToggleReviewed} />
+                  <input
+                    type="checkbox"
+                    checked={cut.reviewed}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onChange={cut.onToggleReviewed}
+                  />
                   <span>Reviewed</span>
                 </label>
               </>

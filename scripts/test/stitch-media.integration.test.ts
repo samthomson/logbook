@@ -6,8 +6,11 @@ import { join } from 'node:path'
 import test from 'node:test'
 import {
   assertHasAudioStream,
+  loudnorm,
   MIN_FFMPEG_MAJOR,
   parseFfmpegMajor,
+  parseLoudnormMeasurement,
+  SilentClipError,
   stitchAudioSections,
 } from '../stitch-media.ts'
 
@@ -89,6 +92,66 @@ test('native ffmpeg pipeline stitches generated clips into a valid MP3', () => {
       Math.abs(duration - expectedDuration) < 0.25,
       `expected duration near ${expectedDuration}s, got ${duration}s`,
     )
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true })
+  }
+})
+
+function measureIntegrated(path: string): number {
+  const result = spawnSync(
+    'ffmpeg',
+    ['-i', path, '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json', '-f', 'null', '-'],
+    { encoding: 'utf8' },
+  )
+  assert.equal(result.status, 0, `loudness measure failed:\n${result.stderr}`)
+  const inputI = Number(parseLoudnormMeasurement(result.stderr ?? '').input_i)
+  assert.ok(Number.isFinite(inputI), `expected a finite integrated loudness, got ${inputI}`)
+  return inputI
+}
+
+test('two-pass loudnorm brings a quiet clip and a loud clip to the same -16 LUFS target', () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), 'logbook-loudnorm-'))
+  try {
+    const quiet = join(fixtureDir, 'quiet.wav')
+    const loud = join(fixtureDir, 'loud.wav')
+    run('ffmpeg', [
+      '-y', '-f', 'lavfi',
+      '-i', 'sine=frequency=440:sample_rate=48000:duration=2',
+      '-af', 'volume=-20dB', quiet,
+    ])
+    run('ffmpeg', [
+      '-y', '-f', 'lavfi',
+      '-i', 'sine=frequency=440:sample_rate=48000:duration=2',
+      '-af', 'volume=-6dB', loud,
+    ])
+
+    const quietI = measureIntegrated(quiet)
+    const loudI = measureIntegrated(loud)
+    assert.ok(loudI - quietI > 10, `fixtures must differ in level: quiet ${quietI} loud ${loudI}`)
+
+    const quietNorm = loudnorm(quiet, fixtureDir, 'quiet')
+    const loudNorm = loudnorm(loud, fixtureDir, 'loud')
+    const quietOut = measureIntegrated(quietNorm)
+    const loudOut = measureIntegrated(loudNorm)
+
+    assert.ok(Math.abs(quietOut - (-16)) < 1.5, `quiet clip landed at ${quietOut} LUFS`)
+    assert.ok(Math.abs(loudOut - (-16)) < 1.5, `loud clip landed at ${loudOut} LUFS`)
+    assert.ok(Math.abs(quietOut - loudOut) < 1.5, `clips still differ: ${quietOut} vs ${loudOut}`)
+  } finally {
+    rmSync(fixtureDir, { recursive: true, force: true })
+  }
+})
+
+test('loudnorm refuses a clip whose integrated loudness is -inf', () => {
+  const fixtureDir = mkdtempSync(join(tmpdir(), 'logbook-silent-clip-'))
+  try {
+    const silent = join(fixtureDir, 'silent.wav')
+    run('ffmpeg', [
+      '-y', '-f', 'lavfi',
+      '-i', 'anullsrc=r=48000:cl=mono:d=1',
+      silent,
+    ])
+    assert.throws(() => loudnorm(silent, fixtureDir, 'silent'), SilentClipError)
   } finally {
     rmSync(fixtureDir, { recursive: true, force: true })
   }

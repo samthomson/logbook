@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { usePlayback } from '../lib/playback'
 import { clamp, formatDuration } from '../lib/utils'
-import type { ChecklistRow, InspectTarget } from '../lib/release-checklist'
+import { RERUN_LABEL, type ChecklistRow, type InspectTarget } from '../lib/release-checklist'
+import type { ReleaseStep } from '../types/nostr'
 
 interface ReleaseChecklistProps {
   rows: ChecklistRow[]
   saving: boolean
   onLock: () => void
   onRetry: () => void
+  onReopen?: () => void
+  onRerun?: (from: ReleaseStep) => void
   onInspect?: (target: InspectTarget) => void
   onScrollToSegment?: (segmentId: string) => void
 }
@@ -174,6 +177,8 @@ export default function ReleaseChecklist({
   saving,
   onLock,
   onRetry,
+  onReopen,
+  onRerun,
   onInspect,
   onScrollToSegment,
 }: ReleaseChecklistProps) {
@@ -240,6 +245,28 @@ export default function ReleaseChecklist({
                 onClick={onLock}
               >
                 Publish episode
+              </button>
+            )}
+            {row.action === 'reopen' && onReopen && (
+              <button
+                type="button"
+                className="btn"
+                disabled={saving}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={onReopen}
+              >
+                Edit the cut
+              </button>
+            )}
+            {row.action === 'rerun' && row.rerunFrom && onRerun && (
+              <button
+                type="button"
+                className="btn"
+                disabled={saving}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => onRerun(row.rerunFrom!)}
+              >
+                {RERUN_LABEL[row.rerunFrom]}
               </button>
             )}
             {row.action === 'retry' && (
