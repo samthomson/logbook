@@ -9,7 +9,7 @@
 import { useState, useEffect } from 'react'
 import { fetchAllIssues, extractIssueNumber } from '../lib/compass'
 import { fetchAllManifests, subscribeManifests } from '../lib/manifest'
-import { selectNewestManifestRevision } from '../lib/manifest-revision'
+import { selectAuthoritativeManifestRevision } from '../lib/manifest-revision'
 import { startPodcastDraft } from '../lib/start-podcast-draft'
 import { compassArticleUrl, fetchCompassNewsletterLinks, indexRow, isNewsletterAddress } from '../lib/issue-index'
 import { routeHash } from '../lib/route'
@@ -69,7 +69,10 @@ export default function IssuePicker({
       if (!Number.isInteger(number)) return
       setManifestByIssue((current) => {
         const existing = current.get(number)
-        if (existing && selectNewestManifestRevision([existing.event, manifest.event])?.id !== manifest.event.id) {
+        if (
+          existing
+          && selectAuthoritativeManifestRevision([existing.event, manifest.event])?.id !== manifest.event.id
+        ) {
           return current
         }
         const next = new Map(current)
@@ -170,7 +173,7 @@ export default function IssuePicker({
                 <div className="issue-picker__actions">
                   {row.canOpenEpisode && (
                     <a className="btn btn--small" href={routeHash({ kind: 'episode', issueNumber: num })}>
-                      Open episode
+                      View
                     </a>
                   )}
                   {row.episodeDisabled && (
@@ -184,7 +187,7 @@ export default function IssuePicker({
                           ? 'No episode has been started'
                           : 'Still being made'}
                     >
-                      Open episode
+                      View
                     </button>
                   )}
                   {row.canStartDraft && (

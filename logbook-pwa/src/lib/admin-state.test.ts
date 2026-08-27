@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { ManifestContent } from '../types/nostr'
 import {
   canEditManifest,
+  canReopenPublishedCut,
+  reopenPublishedCut,
   reorderSection,
   includeSegmentInSection,
   addSegmentSection,
@@ -43,8 +45,12 @@ describe('admin manifest invariants', () => {
     expect(canEditManifest(manifest(), producer, producers)).toBe(true)
     expect(canEditManifest(manifest(), producer.toUpperCase(), producers)).toBe(true)
     expect(canEditManifest(manifest(), 'c'.repeat(64), producers)).toBe(false)
-    // A locked episode stays final even for a producer.
+    // A locked episode stays locked even for a producer.
     expect(canEditManifest({ ...manifest(), episodeStatus: 'cutting' }, producer, producers)).toBe(false)
+    expect(canReopenPublishedCut({ ...manifest(), episodeStatus: 'published' }, producer, producers)).toBe(true)
+    expect(canReopenPublishedCut({ ...manifest(), episodeStatus: 'published' }, 'c'.repeat(64), producers)).toBe(false)
+    expect(reopenPublishedCut({ ...manifest(), episodeStatus: 'published' }).episodeStatus).toBe('draft')
+    expect(reopenPublishedCut({ ...manifest(), episodeStatus: 'published' }).release).toBeUndefined()
   })
 
   it('excludes a section without destroying its intro event id', () => {

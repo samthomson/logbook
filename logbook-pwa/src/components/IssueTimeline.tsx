@@ -26,7 +26,9 @@ import { issueAddress } from '../lib/compass'
 import { fetchSegmentsForIssue, parseSegment, publishSegment, fetchTranscripts, selectTrustedSegmentEvents } from '../lib/segment'
 import { orderTimelineSegments } from '../lib/timeline-order'
 import { useEpisodeCut, type ProducerContext } from '../lib/use-episode-cut'
-import { releaseChecklist } from '../lib/release-checklist'
+import { pinWindowScroll } from '../lib/pin-scroll'
+import { releaseChecklist, type InspectTarget } from '../lib/release-checklist'
+import { fetchAnnouncementEvent, fetchPodstrEpisode } from '../lib/release-events'
 import ReleaseChecklist from './ReleaseChecklist'
 import WhitelistPanel from './WhitelistPanel'
 import './Produce.css'
@@ -40,7 +42,7 @@ import { authorLabel, fetchProfiles, type Profile } from '../lib/profiles'
 import { getPool } from '../lib/pool'
 import { deleteDraft, draftBelongsTo, listDrafts, saveDraft, selectDraftsForPrincipal, type RecordingDraft } from '../lib/drafts'
 import type { Filter } from 'nostr-tools'
-import { BLOSSOM_SERVERS, RELAYS, KINDS, ISSUE_PREFIX } from '../config'
+import { BLOSSOM_SERVERS, COMPASS_PUBKEY, RELAYS, KINDS, ISSUE_PREFIX } from '../config'
 import type { LatestRequestGuard } from '../lib/latest-request'
 import { formatDuration } from '../lib/utils'
 
@@ -116,7 +118,12 @@ export default function IssueTimeline({
   const [newSegmentIds, setNewSegmentIds] = useState<Set<string>>(new Set())
   const [profiles, setProfiles] = useState<Map<string, Profile>>(new Map())
   const [transcripts, setTranscripts] = useState<Map<string, string>>(new Map())
-  const [showSource, setShowSource] = useState(false)
+  const [inspect, setInspect] = useState<{
+    event: NostrEvent
+    kindLabel: string
+    authorLabel: string
+    address?: string
+  } | null>(null)
   const knownIdsRef = useRef<Set<string>>(new Set())
   const mountedAtRef = useRef<number>(Math.floor(Date.now() / 1000))
 
@@ -593,15 +600,67 @@ export default function IssueTimeline({
   }, [sections])
 
   const cut = useEpisodeCut(issue, allSegments, producer)
-  const produceRef = useRef<HTMLElement>(null)
-  const previousStatus = useRef(cut.status)
+  const inspectPin = useRef<(() => void) | null>(null)
+  const openInspect = (next: NonNullable<typeof inspect>) => {
+    inspectPin.current ??= pinWindowScroll()
+    setInspect(next)
+  }
   useEffect(() => {
-    const previous = previousStatus.current
-    previousStatus.current = cut.status
-    if (previous === 'draft' && cut.status === 'cutting') {
-      produceRef.current?.scrollIntoView({ block: 'nearest' })
+    if (inspect) return
+    const release = inspectPin.current
+    if (!release) return
+    const id = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        release()
+        if (inspectPin.current === release) inspectPin.current = null
+      })
+    })
+    return () => cancelAnimationFrame(id)
+  }, [inspect])
+  useEffect(() => {
+    if (!cut.saving) return
+    const unpin = pinWindowScroll()
+    return () => {
+      window.setTimeout(unpin, 400)
     }
-  }, [cut.status])
+  }, [cut.saving])
+  const announcementDone = Boolean(
+    cut.status === 'published'
+    || cut.content?.release?.completed?.includes('announcement'),
+  )
+  const [announcementEvent, setAnnouncementEvent] = useState<NostrEvent | null>(null)
+  useEffect(() => {
+    const mp3 = cut.content?.publishedRss?.mp3Url
+    if (!mp3 || !announcementDone) {
+      setAnnouncementEvent(null)
+      return
+    }
+    let alive = true
+    fetchAnnouncementEvent(mp3, cut.content?.publishedRss?.announcementId).then((event) => {
+      if (alive) setAnnouncementEvent(event)
+    }).catch(() => {
+      if (alive) setAnnouncementEvent(null)
+    })
+    return () => { alive = false }
+  }, [cut.content?.publishedRss?.mp3Url, cut.content?.publishedRss?.announcementId, announcementDone])
+  const podstrDone = Boolean(
+    cut.status === 'published'
+    || cut.content?.release?.completed?.includes('podstr'),
+  )
+  const [podstrEvent, setPodstrEvent] = useState<NostrEvent | null>(null)
+  useEffect(() => {
+    if (!podstrDone) {
+      setPodstrEvent(null)
+      return
+    }
+    let alive = true
+    fetchPodstrEpisode(issue.issueNumber).then((event) => {
+      if (alive) setPodstrEvent(event)
+    }).catch(() => {
+      if (alive) setPodstrEvent(null)
+    })
+    return () => { alive = false }
+  }, [issue.issueNumber, podstrDone])
   // Once the running order is final the episode takes no more recordings, so
   // the page stops offering them rather than collecting notes nobody will hear.
   const episodeOpen = cut.status !== 'cutting' && cut.status !== 'published'
@@ -665,11 +724,18 @@ export default function IssueTimeline({
           {leadProse && <SectionExcerpt section={{ id: '__lead', title: '', items: [{ title: '', body: leadProse }] }} profiles={profiles} />}
         </header>
         {!episodeOpen && (
-          <p className="timeline__closed" role="status">
+          <p
+            className={`timeline__closed${
+              cut.status === 'cutting'
+                ? cut.failure ? ' timeline__closed--stopped' : ' timeline__closed--busy'
+                : ' timeline__closed--published'
+            }`}
+            role="status"
+          >
             {cut.status === 'published'
               ? 'This episode is published. The voice notes below are what went into it.'
-              : 'The running order is final. No more recordings for this one.'}
-            {cut.content?.publishedRss?.mp3Url && (
+              : 'Recordings are closed.'}
+            {cut.status === 'published' && cut.content?.publishedRss?.mp3Url && (
               <>
                 {' '}
                 <a href={cut.content.publishedRss.mp3Url} target="_blank" rel="noreferrer">
@@ -742,20 +808,25 @@ export default function IssueTimeline({
           )}
 
           <p className="timeline__source">
-            <button type="button" className="timeline__source-btn" onClick={() => setShowSource(true)}>
+            <button type="button" className="timeline__source-btn" onMouseDown={(event) => event.preventDefault()} onClick={() => openInspect({
+              event: issue.event,
+              address: issueAddress(issue),
+              kindLabel: 'Long-form article (NIP-23) — the Compass newsletter this episode follows.',
+              authorLabel: 'Compass',
+            })}>
               View the newsletter event
             </button>
             <span> · signed by Compass {`${nip19.npubEncode(issue.event.pubkey).slice(0, 12)}…`}</span>
           </p>
         </section>
 
-        {showSource && (
+        {inspect && (
           <EventInspector
-            event={issue.event}
-            address={issueAddress(issue)}
-            kindLabel="Long-form article (NIP-23) — the Compass newsletter this episode follows."
-            authorLabel="Compass"
-            onClose={() => setShowSource(false)}
+            event={inspect.event}
+            address={inspect.address}
+            kindLabel={inspect.kindLabel}
+            authorLabel={inspect.authorLabel}
+            onClose={() => setInspect(null)}
           />
         )}
 
@@ -900,7 +971,7 @@ export default function IssueTimeline({
         ))}
 
         {producer && (
-          <section ref={produceRef} className="timeline__produce" aria-label="Producing this episode">
+          <section className="timeline__produce" aria-label="Producing this episode">
             {cut.notice && <p className="produce__notice">{cut.notice}</p>}
             {cut.error && <p className="produce__error" role="alert">{cut.error}</p>}
             {cut.issues.length > 0 && (
@@ -921,9 +992,25 @@ export default function IssueTimeline({
                     type="button"
                     className={`btn ${cut.dirty ? 'btn--primary' : ''}`}
                     disabled={!cut.dirty || cut.saving}
+                    onMouseDown={(event) => event.preventDefault()}
                     onClick={cut.save}
                   >
                     {cut.saving ? 'Saving…' : 'Save running order'}
+                  </button>
+                </div>
+              </div>
+            ) : cut.canReopen ? (
+              <div className="produce__footer">
+                <p className="produce__next">The published episode stays in the feed until you publish again.</p>
+                <div className="produce__actions">
+                  <button
+                    type="button"
+                    className="btn btn--primary"
+                    disabled={cut.saving}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={cut.reopen}
+                  >
+                    {cut.saving ? 'Opening…' : 'Edit the cut'}
                   </button>
                 </div>
               </div>
@@ -936,6 +1023,9 @@ export default function IssueTimeline({
             <ReleaseChecklist
               rows={releaseChecklist({
                 content: cut.content,
+                manifestEvent: cut.event,
+                podstrEvent,
+                announcementEvent,
                 publishReady: cut.publishReady,
                 waitingReason: cut.editable && (!cut.publishReady || cut.dirty) ? '' : cut.nextStep,
                 saving: cut.saving,
@@ -943,6 +1033,32 @@ export default function IssueTimeline({
               saving={cut.saving}
               onLock={cut.publish}
               onRetry={cut.retryRelease}
+              onInspect={(target: InspectTarget) => {
+                const event = target === 'lock'
+                  ? cut.event
+                  : target === 'podstr'
+                    ? podstrEvent
+                    : announcementEvent
+                if (!event) return
+                const identifier = event.tags.find((tag) => tag[0] === 'd')?.[1]
+                openInspect({
+                  event,
+                  kindLabel: target === 'lock'
+                    ? 'Episode cut (kind 34200).'
+                    : target === 'podstr'
+                      ? 'Podcast listing (kind 30054).'
+                      : 'Compass note (kind 1).',
+                  authorLabel: event.pubkey === COMPASS_PUBKEY ? 'Compass' : 'Producer',
+                  address: identifier
+                    ? nip19.naddrEncode({
+                      kind: event.kind,
+                      pubkey: event.pubkey,
+                      identifier,
+                      relays: RELAYS,
+                    })
+                    : undefined,
+                })
+              }}
               onScrollToSegment={(segmentId) => document
                 .getElementById(`voice-note-${segmentId}`)
                 ?.scrollIntoView({ behavior: 'smooth', block: 'center' })}

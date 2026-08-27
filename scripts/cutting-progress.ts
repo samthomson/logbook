@@ -72,6 +72,16 @@ export function releaseFailure(
   return { at, reason: failureReason(error), stage }
 }
 
+/** A failure on a step already in `completed` is the next unfinished one. */
+export function unfinishedReleaseStep(
+  completed: unknown,
+  claimed: ReleaseStep | null | undefined,
+): ReleaseStep {
+  const done = new Set(mergeCompleted(completed, []))
+  if (claimed && STEP_SET.has(claimed) && !done.has(claimed)) return claimed
+  return RELEASE_STEPS.find((step) => !done.has(step)) ?? 'announcement'
+}
+
 /** Compass-signed progress on a locked cut. Same d-tag; newer created_at. */
 export async function writeCuttingProgress<T extends CuttingManifest>(params: {
   issueId: string

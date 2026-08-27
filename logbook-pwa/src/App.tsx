@@ -18,10 +18,10 @@ import { loadCachedIssue } from './lib/issue-cache'
 import { fetchProfiles, type Profile } from './lib/profiles'
 import { avatarInitials, avatarStyle } from './lib/avatar'
 import { nip19 } from 'nostr-tools'
-import type { CompassIssue, NostrEvent } from './types/nostr'
+import type { CompassIssue, ManifestContent, NostrEvent } from './types/nostr'
 import { loadAccessSnapshot, saveAccessSnapshot, clearAccessSnapshot } from './lib/access-cache'
-import { fetchManifest } from './lib/manifest'
-import type { ManifestContent } from './types/nostr'
+import { fetchManifest, subscribeManifest } from './lib/manifest'
+import { selectAuthoritativeManifestRevision } from './lib/manifest-revision'
 import './App.css'
 
 export default function App() {
@@ -47,7 +47,8 @@ export default function App() {
   const [isProducerKey, setIsProducerKey] = useState(false)
   const [stageManifest, setStageManifest] = useState<ManifestContent | null>(null)
   const [stageLoading, setStageLoading] = useState(false)
-  const [stageRevision, setStageRevision] = useState(0)
+  const stagedIssueRef = useRef<number | null>(null)
+  const stageEventRef = useRef<NostrEvent | null>(null)
   const keyboardOffset = useKeyboardOffset()
   const [issueRequests] = useState(createLatestRequestGuard)
   const [stageRequests] = useState(createLatestRequestGuard)
@@ -364,24 +365,49 @@ export default function App() {
   // yet), so a failed lookup leaves the bar on its recording stage.
   useEffect(() => {
     if (!issue) {
+      stagedIssueRef.current = null
+      stageEventRef.current = null
       setStageManifest(null)
       setStageLoading(false)
       return
     }
     const request = stageRequests.begin()
-    setStageLoading(true)
+    const switching = stagedIssueRef.current !== issue.issueNumber
+    stagedIssueRef.current = issue.issueNumber
+    if (switching) {
+      stageEventRef.current = null
+      setStageManifest(null)
+      setStageLoading(true)
+    }
     fetchManifest(issue.issueNumber)
       .then((manifest) => {
-        if (stageRequests.isCurrent(request)) setStageManifest(manifest?.content ?? null)
+        if (!stageRequests.isCurrent(request)) return
+        stageEventRef.current = manifest?.event ?? null
+        setStageManifest(manifest?.content ?? null)
       })
       .catch(() => {
-        if (stageRequests.isCurrent(request)) setStageManifest(null)
+        if (!stageRequests.isCurrent(request)) return
+        stageEventRef.current = null
+        setStageManifest(null)
       })
       .finally(() => {
         if (stageRequests.isCurrent(request)) setStageLoading(false)
       })
-    return () => stageRequests.invalidate()
-  }, [issue, stageRequests, stageRevision])
+    const unsubscribe = subscribeManifest(issue.issueNumber, (manifest) => {
+      if (!stageRequests.isCurrent(request)) return
+      const current = stageEventRef.current
+      if (
+        current
+        && selectAuthoritativeManifestRevision([manifest.event, current])?.id !== manifest.event.id
+      ) return
+      stageEventRef.current = manifest.event
+      setStageManifest(manifest.content)
+    })
+    return () => {
+      unsubscribe()
+      stageRequests.invalidate()
+    }
+  }, [issue, stageRequests])
 
   // A signed-in visitor has no business on the login screen (bookmark, back button).
   useEffect(() => {
@@ -567,11 +593,6 @@ export default function App() {
             <p>
               This episode is still being made. It opens to everyone once it is published.
             </p>
-            {!auth && (
-              <button className="btn btn--primary btn--small" onClick={goToLogin}>
-                Log in as a contributor
-              </button>
-            )}
           </div>
         )}
 
@@ -594,7 +615,7 @@ export default function App() {
               whitelistWriteRequests,
               capabilityRequests: adminCapabilityRequests,
               capabilityRequest: adminCapabilityRequest,
-              onPublished: () => setStageRevision((revision) => revision + 1),
+              onPublished: (content) => setStageManifest(content),
             } : null}
           />
         )}
@@ -613,6 +634,15 @@ export default function App() {
         )}
 
       </div>
+
+      {!auth && route.kind !== 'login' && !restoringAuth && (
+        <div className="app-signin" role="region" aria-label="Sign in">
+          <p>Recording and producing are not on this page.</p>
+          <button type="button" className="btn btn--primary" onClick={goToLogin}>
+            Log in
+          </button>
+        </div>
+      )}
     </div>
   )
 }

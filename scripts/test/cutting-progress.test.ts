@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { withReleaseProgress } from '../cutting-progress.ts'
+import { unfinishedReleaseStep, withReleaseProgress } from '../cutting-progress.ts'
 
 test('release progress appends completed steps in order and clears a failed stage', () => {
   const start = {
@@ -33,4 +33,9 @@ test('release progress records a failed stage without unlocking the cut', () => 
   assert.equal(next.episodeStatus, 'cutting')
   assert.equal(next.release?.failed, 'feed')
   assert.equal(next.lastFailure?.reason, 'Blossom rejected the feed.')
+})
+
+test('a claimed failure on a completed step is the next unfinished step', () => {
+  assert.equal(unfinishedReleaseStep(['audio', 'chapters'], 'chapters'), 'feed')
+  assert.equal(unfinishedReleaseStep(['audio'], 'chapters'), 'chapters')
 })

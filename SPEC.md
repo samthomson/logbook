@@ -250,10 +250,9 @@ is the only remaining collision risk.
 Default relays (configurable in `src/config.ts`):
 
 ```
-wss://relay.damus.io
-wss://relay.nostr.band
 wss://nos.lol
-wss://relay.snort.social
+wss://relay.ditto.pub
+wss://relay.primal.net
 ```
 
 All manifest queries MUST include `authors: [compassPubkey]` filter.

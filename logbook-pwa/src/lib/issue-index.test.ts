@@ -125,5 +125,9 @@ describe('indexRow', () => {
       episodeDisabled: true,
     })
     expect(indexRow(event(), 'draft', { showUnpublished: true, producer: false }).canOpenEpisode).toBe(true)
+    expect(indexRow(event(), 'cutting', { showUnpublished: true, producer: true })).toMatchObject({
+      state: 'cutting',
+      label: 'Making the episode',
+    })
   })
 })

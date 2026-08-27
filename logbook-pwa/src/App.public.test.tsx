@@ -45,6 +45,7 @@ describe('public application shell', () => {
 
     expect(html).toContain('Episodes')
     expect(html).toContain('Log in')
+    expect(html).toContain('Recording and producing are not on this page.')
     expect(html).not.toContain('Advanced options')
   })
 
@@ -56,6 +57,7 @@ describe('public application shell', () => {
     try {
       const html = renderToStaticMarkup(<App />)
       expect(html).toContain('Loading episode…')
+      expect(html).toContain('Recording and producing are not on this page.')
       expect(html).not.toContain('Advanced options')
     } finally {
       Reflect.deleteProperty(globalThis, 'location')
@@ -77,6 +79,7 @@ describe('public application shell', () => {
 
     expect(html).toContain('Public chapter')
     expect(html).not.toContain('Record a voice note')
+    expect(html).not.toContain('Recording and producing are not on this page.')
   })
 
   it('keeps a saved draft but disables resume without authorization', () => {

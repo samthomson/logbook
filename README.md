@@ -11,14 +11,17 @@ cp .env.example .env   # Compass, ADMIN_PUBKEYS, relays, blossom, bunker
 docker compose --profile dev up --build
 ```
 
-PWA: `http://localhost:$PWA_DEV_PORT`. Optional fake issue:
+PWA: `http://localhost:$PWA_DEV_PORT`. Feed origin: `$LOGBOOK_BASE_URL/feed.xml`
+(compose `origin` nginx, same as Dokploy).
+
+`--profile prod` serves the built PWA on `$PWA_PORT` (not the feed origin port).
 
 ```sh
 docker compose run --rm worker npm run seed -- 1
 ```
 
 `--profile prod` serves the built PWA on `$PWA_PORT`. Dokploy with no profile
-starts the worker only.
+starts the worker and the feed origin.
 
 ## Publish the PWA (nsite)
 

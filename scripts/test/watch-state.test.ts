@@ -52,13 +52,63 @@ test('latestCuttingManifests respects terminal and replacement manifest states',
 
 test('latestVerifiedManifest selects the newest verified addressable revision deterministically', () => {
   const selected = latestVerifiedManifest([
-    manifest('old', 10, 'logbook-32', 'cutting'),
-    manifest('forged', 20, 'logbook-32', 'draft'),
-    manifest('newer', 11, 'logbook-32', 'published'),
+    manifest('old', 10, 'logbook-32', 'draft'),
+    manifest('forged', 40, 'logbook-32', 'draft'),
     manifest('same-time-a', 30, 'logbook-32', 'draft'),
-    manifest('same-time-b', 30, 'logbook-32', 'cutting'),
+    manifest('same-time-b', 30, 'logbook-32', 'draft'),
   ], 'logbook-32', { expectedPubkey: COMPASS, verify: (event) => event.id !== 'forged' })
   assert.equal(selected?.id, 'same-time-b')
+})
+
+test('an older producer lock does not hide a Compass publish', () => {
+  const producers = new Set([COMPASS, 'producer'])
+  const events = [
+    manifest('published', 50, 'logbook-34', 'published'),
+    manifest('lock', 10, 'logbook-34', 'cutting', 'producer'),
+  ]
+  const verify = () => true
+  assert.equal(
+    latestVerifiedManifest(events, 'logbook-34', { expectedPubkey: producers, verify })?.id,
+    'published',
+  )
+  assert.deepEqual(
+    latestCuttingManifests(events, { expectedPubkey: producers, verify }).map((event) => event.id),
+    [],
+  )
+})
+
+test('a producer lock newer than publish is the live cut', () => {
+  const producers = new Set([COMPASS, 'producer'])
+  const events = [
+    manifest('published', 10, 'logbook-34', 'published'),
+    manifest('lock', 50, 'logbook-34', 'cutting', 'producer'),
+  ]
+  const verify = () => true
+  assert.equal(
+    latestVerifiedManifest(events, 'logbook-34', { expectedPubkey: producers, verify })?.id,
+    'lock',
+  )
+  assert.deepEqual(
+    latestCuttingManifests(events, { expectedPubkey: producers, verify }).map((event) => event.id),
+    ['lock'],
+  )
+})
+
+test('a producer draft newer than publish reopens the cut', () => {
+  const producers = new Set([COMPASS, 'producer'])
+  const events = [
+    manifest('published', 10, 'logbook-34', 'published'),
+    manifest('reopen', 11, 'logbook-34', 'draft', 'producer'),
+  ]
+  const verify = () => true
+  assert.equal(
+    latestVerifiedManifest(events, 'logbook-34', { expectedPubkey: producers, verify })?.id,
+    'reopen',
+  )
+  assert.deepEqual(
+    latestCuttingManifests(events, { expectedPubkey: producers, verify }).map((event) => event.id),
+    [],
+  )
 })
 
 test('a manifest is trusted from a Compass-appointed producer and from nobody else', () => {

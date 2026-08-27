@@ -67,6 +67,7 @@ export interface PublishedRss {
   chaptersUrl?: string
   feedUrl?: string
   publishedAt?: number
+  announcementId?: string
 }
 
 export interface PodcastChapter {

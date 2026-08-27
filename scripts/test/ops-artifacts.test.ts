@@ -51,6 +51,10 @@ test('container worker reproduces the systemd sandbox and pins an ffmpeg the sti
   assert.doesNotMatch(compose, /compass-publish/)
   // Untrusted audio is downloaded into scratch space, which must not be executable.
   assert.match(compose, /- \/tmp:noexec/)
+  assert.match(compose, /logbook-www:\/var\/www\/logbook/)
+  assert.match(compose, /127\.0\.0\.1:8080:8080/)
+  assert.match(await read('deploy/origin-nginx.conf'), /root \/var\/www\/logbook/)
+  assert.doesNotMatch(await read('scripts/watch-compass.ts'), /origin-server/)
   // No key material in the tracked file.
   assert.doesNotMatch(compose, /COMPASS_NSEC/)
   assert.doesNotMatch(compose, /nsec1[0-9a-z]{20,}/)

@@ -1,9 +1,10 @@
 # Logbook stack.
 #
 #   local dev  (Vite HMR):  docker compose --profile dev up --build
-#   local prod (nginx):     docker compose --profile prod up --build
-#   Dokploy:                no profile — starts the worker only
+#   local prod (nginx PWA): docker compose --profile prod up --build
+#   Dokploy:                no profile — worker + feed origin
 #
+# Worker writes /var/www/logbook; origin nginx serves LOGBOOK_BASE_URL.
 # Signing is NIP-46 bunker only (COMPASS_BUNKER_URI + COMPASS_BUNKER_CLIENT_KEY).
 
 x-hardening: &hardening
@@ -12,13 +13,30 @@ x-hardening: &hardening
   security_opt: [no-new-privileges:true]
   restart: on-failure
 
+volumes:
+  logbook-www:
+
 services:
+  # Named volumes are root-owned; the worker cannot chown them under cap_drop.
+  www-init:
+    image: busybox:1.37
+    user: "0:0"
+    volumes:
+      - logbook-www:/var/www/logbook
+    command: ["chown", "-R", "1001:1001", "/var/www/logbook"]
+    restart: "no"
+
   worker:
     <<: *hardening
     build:
       context: .
       dockerfile: scripts/Dockerfile
     user: "1001:1001"
+    depends_on:
+      www-init:
+        condition: service_completed_successfully
+      origin:
+        condition: service_started
     # Dokploy injects these as project env; local uses `.env` the same way.
     environment:
       COMPASS_PUBKEY: ${COMPASS_PUBKEY}
@@ -31,16 +49,34 @@ services:
       COMPASS_BUNKER_CLIENT_KEY: ${COMPASS_BUNKER_CLIENT_KEY}
       LOGBOOK_STATIC_DIR: /var/www/logbook
       LOGBOOK_AUDIO_DIR: /var/www/logbook/audio
+    volumes:
+      - logbook-www:/var/www/logbook
+      # tsx reads this tree; without it a worker fix stays trapped in a stale image.
+      - ./scripts:/opt/logbook/scripts
+      - /opt/logbook/scripts/node_modules
     tmpfs:
       - /tmp:noexec,mode=1777
       # phonemizer needs an executable scratch dir for libespeak-ng.
       - /run/kokoro:exec,mode=0700,uid=1001,gid=1001
-      # cap_drop ALL cannot chmod a named volume, so these are tmpfs owned by
-      # the worker. Episode audio still lives on Blossom; this is only the
-      # stitch scratch and the generated feed file.
-      - /var/www/logbook:mode=0755,uid=1001,gid=1001
       - /var/lib/logbook:mode=0755,uid=1001,gid=1001
       - /var/cache/logbook:mode=0755,uid=1001,gid=1001
+
+  origin:
+    <<: *hardening
+    image: nginxinc/nginx-unprivileged:1.29-alpine
+    depends_on:
+      www-init:
+        condition: service_completed_successfully
+    ports:
+      # Host-loopback only: TLS stays on the host proxy in prod.
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - logbook-www:/var/www/logbook:ro
+      - ./deploy/origin-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
 
   pwa-dev:
     <<: *hardening

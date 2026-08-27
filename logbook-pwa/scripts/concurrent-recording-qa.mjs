@@ -285,7 +285,7 @@ try {
   await page.waitForSelector('.irec__idle[role="status"]')
   await clickButton(page, 'All episodes')
   await page.waitForSelector('.issue-picker__item')
-  await clickButton(page, 'Open episode')
+  await clickButton(page, 'View')
   await page.waitForFunction(() => document.querySelector('.timeline__issue-title')?.textContent?.includes('33'))
   await page.evaluate(() => { globalThis.__qaDeferMedia = false; globalThis.__qaReleaseMedia?.() })
   await new Promise((resolve) => setTimeout(resolve, 50))

@@ -14,12 +14,13 @@
 import { SimplePool } from 'nostr-tools/pool'
 import { readFileSync, writeFileSync, statSync, existsSync, mkdirSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { join, basename, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join, dirname, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   COMPASS_PUBKEY,
   RELAYS,
   KINDS,
+  D_PODSTR,
   AUDIO_DIR,
   RSS_PATH,
   STATIC_DIR,
@@ -33,8 +34,8 @@ import { latestVerifiedManifest, type ManifestEvent } from './watch-state.ts'
 import { fetchProducerPubkeys } from './producers.ts'
 import { assertPublishableManifest, selectTrustedReleaseMetadata } from './rss-state.ts'
 import { FileReleaseLedger, assertRunMatchesManifest, manifestRevision, runReleaseStages, type ManifestRevision } from './release-state.ts'
-import { acknowledgeStaticSync, readBackHostedFeed } from './static-sync.ts'
-import { releaseFailure, writeCuttingProgress, type ReleaseStep } from './cutting-progress.ts'
+import { acknowledgeStaticSync, originFeedReadbackUrl, readBackHostedFeed } from './static-sync.ts'
+import { releaseFailure, unfinishedReleaseStep, writeCuttingProgress, type ReleaseStep } from './cutting-progress.ts'
 
 // ── npubs.yml loading ─────────────────────────────────────────────────────────
 
@@ -159,8 +160,25 @@ function escapeXml(str: string): string {
     .replace(/'/g, '&apos;')
 }
 
-function rfc822(date: Date): string {
-  return date.toUTCString()
+export function rfc822(value: unknown): string {
+  return coercePubDate(value).toUTCString()
+}
+
+/** episodes.json round-trips through JSON, so this accepts a Date, unix seconds, or ISO string. */
+export function coercePubDate(value: unknown): Date {
+  if (value instanceof Date && Number.isFinite(value.getTime())) return value
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return new Date(value > 1e12 ? value : value * 1000)
+  }
+  if (typeof value === 'string' && value) {
+    const parsed = new Date(value)
+    if (Number.isFinite(parsed.getTime())) return parsed
+  }
+  return new Date(0)
+}
+
+function pubDateUnix(value: unknown): number {
+  return Math.floor(coercePubDate(value).getTime() / 1000)
 }
 
 function formatDuration(seconds: number): string {
@@ -173,22 +191,41 @@ function formatDuration(seconds: number): string {
 
 // ── relay helpers ─────────────────────────────────────────────────────────────
 
-async function fetchManifest(issueId: string, pool: SimplePool): Promise<{ manifest: ManifestContent; event: ManifestEvent }> {
+async function fetchManifest(issueId: string, pool: SimplePool): Promise<{
+  manifest: ManifestContent
+  event: ManifestEvent
+  knownCreatedAt: number
+}> {
   const producers = await fetchProducerPubkeys(pool)
-  const events = await pool.querySync(RELAYS, {
-    kinds: [KINDS.MANIFEST],
-    authors: [...producers],
-    '#d': [issueId],
-    limit: 50,
-  })
+  const compass = COMPASS_PUBKEY.toLowerCase()
+  const others = [...producers].filter((pubkey) => pubkey.toLowerCase() !== compass)
+  const base = { kinds: [KINDS.MANIFEST], '#d': [issueId], limit: 50 }
+  const events = (
+    await Promise.all([
+      pool.querySync(RELAYS, { ...base, authors: [COMPASS_PUBKEY] }),
+      others.length > 0
+        ? pool.querySync(RELAYS, { ...base, authors: others })
+        : Promise.resolve([]),
+    ])
+  ).flat()
 
-  const event = latestVerifiedManifest(events as ManifestEvent[], issueId, {
+  const options = {
     expectedPubkey: producers,
-    verify: (candidate) => verifyNostrEvent(candidate as never),
-  })
+    verify: (candidate: ManifestEvent) => verifyNostrEvent(candidate as never),
+  }
+  const event = latestVerifiedManifest(events as ManifestEvent[], issueId, options)
   if (!event) throw new Error(`No verified manifest found for ${issueId}`)
 
-  return { manifest: JSON.parse(event.content) as ManifestContent, event }
+  const knownCreatedAt = (events as ManifestEvent[]).reduce((max, candidate) => {
+    if (!options.verify(candidate)) return max
+    const d = candidate.tags.find((tag) => tag[0] === 'd')?.[1]
+    if (d !== issueId) return max
+    const pubkey = candidate.pubkey.toLowerCase()
+    if (!producers.has(pubkey)) return max
+    return Math.max(max, candidate.created_at ?? 0)
+  }, 0)
+
+  return { manifest: JSON.parse(event.content) as ManifestContent, event, knownCreatedAt }
 }
 
 // ── mp3 duration via ffprobe ──────────────────────────────────────────────────
@@ -214,7 +251,7 @@ interface EpisodeData {
   transcriptUrl: string | null
   mp3Size: number
   durationSeconds: number
-  pubDate: Date
+  pubDate: Date | number | string
   chapters: Chapter[]
   description: string
   participantPubkeys?: string[]
@@ -282,13 +319,50 @@ ${itemsXml}
 </rss>`
 }
 
+export function writeRss(episodes: EpisodeData[]): void {
+  mkdirSync(STATIC_DIR, { recursive: true })
+  const stored = episodes.map((ep) => ({ ...ep, pubDate: pubDateUnix(ep.pubDate) }))
+  const xml = buildFeedXml(
+    FEED_META,
+    stored,
+    [...new Set(stored.flatMap((ep) => ep.participantPubkeys ?? []))],
+  )
+  writeFileSync(join(STATIC_DIR, 'episodes.json'), JSON.stringify(stored, null, 2))
+  writeFileSync(RSS_PATH, Buffer.from(xml, 'utf-8'))
+}
+
+export function episodeFromPublished(issueId: string, manifest: ManifestContent): EpisodeData | null {
+  if (manifest.episodeStatus !== 'published') return null
+  const rss = manifest.publishedRss
+  if (!rss || typeof rss !== 'object' || Array.isArray(rss)) return null
+  const mp3Url = (rss as { mp3Url?: unknown }).mp3Url
+  if (typeof mp3Url !== 'string' || !mp3Url) return null
+  const chaptersUrl = (rss as { chaptersUrl?: unknown }).chaptersUrl
+  const publishedAt = (rss as { publishedAt?: unknown }).publishedAt
+  const parsed = Number.parseInt(issueId.replace(/^\D+/, ''), 10)
+  const issueNumber = manifest.issueNumber ?? (Number.isFinite(parsed) ? parsed : 0)
+  return {
+    issueId,
+    issueNumber,
+    issueTitle: manifest.title ?? `Logbook Episode ${issueNumber}`,
+    mp3Url,
+    chaptersUrl: typeof chaptersUrl === 'string' ? chaptersUrl : '',
+    transcriptUrl: null,
+    mp3Size: 0,
+    durationSeconds: 0,
+    pubDate: typeof publishedAt === 'number' ? publishedAt : 0,
+    chapters: [],
+    description: `Async voice notes from Nostr Compass contributors on issue #${issueNumber}.`,
+  }
+}
+
 // ── publish kind 1 note ───────────────────────────────────────────────────────
 
 async function publishAnnouncement(
   ep: EpisodeData,
   signer: CompassSigner,
   pool: SimplePool,
-): Promise<void> {
+): Promise<string> {
   const content = `🎙️ ${ep.issueTitle} is live on Logbook!\n\n${ep.description}\n\nListen: ${ep.mp3Url}\nRSS: ${BASE_URL}/feed.xml`
 
   const event = await signer.signEvent({
@@ -303,6 +377,7 @@ async function publishAnnouncement(
 
   await Promise.allSettled(RELAYS.map((r) => pool.publish([r], event)))
   console.log(`[publish-rss] Published kind 1 announcement: ${event.id}`)
+  return event.id
 }
 
 // ── manifest status write-back ────────────────────────────────────────────────
@@ -326,9 +401,12 @@ async function publishManifestStatus(
     // A reason from an earlier failed run does not describe a published episode.
     lastFailure: null,
     publishedRss: {
-      feedUrl: `${BASE_URL}/feed.xml`,
+      ...(manifest.publishedRss && typeof manifest.publishedRss === 'object'
+        ? manifest.publishedRss as Record<string, unknown>
+        : {}),
       mp3Url: ep.mp3Url,
       chaptersUrl: ep.chaptersUrl || undefined,
+      feedUrl: `${BASE_URL}/feed.xml`,
       publishedAt: Math.floor(Date.now() / 1000),
     },
     release: {
@@ -366,9 +444,9 @@ async function publishPodstrEpisode(
   pool: SimplePool,
 ): Promise<void> {
   const tags: string[][] = [
-    ['d', `logbook-${ep.issueId}`],
+    ['d', D_PODSTR(ep.issueId)],
     ['title', ep.issueTitle],
-    ['published', String(Math.floor(ep.pubDate.getTime() / 1000))],
+    ['published', String(pubDateUnix(ep.pubDate))],
     ['summary', ep.description],
     ['image', FEED_META.imageUrl],
     ['audio', ep.mp3Url, 'audio/mpeg'],
@@ -384,7 +462,7 @@ async function publishPodstrEpisode(
   for (const pk of ep.participantPubkeys ?? []) tags.push(['p', pk])
 
   const event = await signer.signEvent({
-    kind: 30054,
+    kind: KINDS.PODSTR_EPISODE,
     created_at: Math.floor(Date.now() / 1000),
     tags,
     content: `<p>${ep.description}</p>`,
@@ -423,12 +501,14 @@ async function main(): Promise<void> {
   const pool = new SimplePool()
   let failedStage: ReleaseStep = 'feed'
   let live: { manifest: ManifestContent; event: ManifestEvent } | null = null
+  let knownCreatedAt = 0
 
   try {
     console.log(`[publish-rss] Fetching manifest for ${issueId}…`)
     const fetched = await fetchManifest(issueId, pool)
     assertPublishableManifest(fetched.manifest)
     live = fetched
+    knownCreatedAt = fetched.knownCreatedAt
 
     const note = async (
       completed: ReleaseStep[],
@@ -529,7 +609,7 @@ async function main(): Promise<void> {
       transcriptUrl,
       mp3Size: run.mp3Size,
       durationSeconds: run.durationSeconds,
-      pubDate: new Date(run.stitchedAt * 1000),
+      pubDate: pubDateUnix(run.stitchedAt),
       chapters,
       description: `Async voice notes from Nostr Compass contributors on issue #${issueNumber}.`,
       participantPubkeys,
@@ -537,11 +617,18 @@ async function main(): Promise<void> {
 
     // Episode state file → regenerate feed from scratch (idempotent). Ensure the
     // configured static root exists before the first episode writes its state.
+    failedStage = 'feed'
     mkdirSync(STATIC_DIR, { recursive: true })
     const episodeStatePath = join(STATIC_DIR, 'episodes.json')
     let existingEpisodes: EpisodeData[] = []
     if (existsSync(episodeStatePath)) {
-      existingEpisodes = JSON.parse(readFileSync(episodeStatePath, 'utf-8')) as EpisodeData[]
+      const raw = JSON.parse(readFileSync(episodeStatePath, 'utf-8')) as unknown
+      existingEpisodes = Array.isArray(raw)
+        ? raw.map((item) => {
+          const episode = item as EpisodeData
+          return { ...episode, pubDate: pubDateUnix(episode.pubDate) }
+        })
+        : []
     }
     const filtered = existingEpisodes.filter((e) => e.issueId !== issueId)
     const allEpisodes = [ep, ...filtered].slice(0, 50)
@@ -565,8 +652,10 @@ async function main(): Promise<void> {
         feed: async () => {
           failedStage = 'feed'
           const blob = await uploadToBlossom(xmlBytes, 'application/rss+xml', signer)
-          console.log(`[publish-rss] Feed hosted: ${blob.url}`)
-          await acknowledgeStaticSync(feedDigest, () => readBackHostedFeed(blob.url))
+          console.log(`[publish-rss] Feed blob: ${blob.url}`)
+          const originFeed = originFeedReadbackUrl(BASE_URL)
+          await acknowledgeStaticSync(feedDigest, () => readBackHostedFeed(originFeed))
+          console.log(`[publish-rss] Feed hosted: ${originFeed}`)
           await note(
             ['audio', 'chapters', 'feed'],
             { mp3Url: run.mp3Url, chaptersUrl: chaptersUrl || undefined, feedUrl: `${BASE_URL}/feed.xml` },
@@ -579,8 +668,11 @@ async function main(): Promise<void> {
         },
         announcement: async () => {
           failedStage = 'announcement'
-          await publishAnnouncement(ep, signer, pool)
-          await note(['audio', 'chapters', 'feed', 'podstr', 'announcement'])
+          const announcementId = await publishAnnouncement(ep, signer, pool)
+          await note(
+            ['audio', 'chapters', 'feed', 'podstr', 'announcement'],
+            { announcementId },
+          )
         },
         manifest: async () => publishManifestStatus(
           issueId,
@@ -588,7 +680,7 @@ async function main(): Promise<void> {
           ep,
           signer,
           pool,
-          live!.event.created_at ?? 0,
+          Math.max(knownCreatedAt, live!.event.created_at ?? 0),
         ),
       },
     })
@@ -598,16 +690,17 @@ async function main(): Promise<void> {
     console.error('[publish-rss] Fatal:', err)
     if (live) {
       try {
+        const failed = unfinishedReleaseStep(live.manifest.release?.completed, failedStage)
         await writeCuttingProgress({
           issueId,
           manifest: live.manifest,
           event: live.event,
           signer,
           pool,
-          lastFailure: releaseFailure(err, failedStage),
-          failed: failedStage,
+          lastFailure: releaseFailure(err, failed),
+          failed,
         })
-        console.log(`[publish-rss] Manifest still cutting; ${failedStage} is the step that failed`)
+        console.log(`[publish-rss] Manifest still cutting; ${failed} is the step that failed`)
       } catch (writeErr) {
         console.error('[publish-rss] Could not write the failure on the manifest:', writeErr)
       }
@@ -618,7 +711,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
-  console.error('[publish-rss] Fatal:', err)
-  process.exit(1)
-})
+if (import.meta.url === pathToFileURL(resolve(process.argv[1] ?? '')).href) {
+  main().catch((err) => {
+    console.error('[publish-rss] Fatal:', err)
+    process.exit(1)
+  })
+}

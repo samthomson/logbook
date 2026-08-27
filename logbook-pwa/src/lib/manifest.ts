@@ -8,7 +8,7 @@ import { getPool } from './pool'
  * sign the admin list, so authority always originates from Compass.
  */
 
-import { RELAYS, KINDS, ISSUE_PREFIX } from '../config'
+import { RELAYS, KINDS, ISSUE_PREFIX, COMPASS_PUBKEY } from '../config'
 import { fetchProducerPubkeys } from './whitelist'
 import type {
   NostrEvent,
@@ -24,6 +24,19 @@ import { selectNewestAddressableRevision, selectNewestPerDTag } from './manifest
 import { withSignerTimeout } from './signer-timeout'
 import { assertEventSignedByExpected, assertSignerStillExpected } from './signer-identity'
 
+function manifestFilters(
+  producers: ReadonlySet<string>,
+  extra: { '#d'?: string[] } = {},
+): { kinds: number[]; authors: string[]; limit: number; '#d'?: string[] }[] {
+  const compass = COMPASS_PUBKEY.toLowerCase()
+  const others = [...producers].filter((pubkey) => pubkey !== compass)
+  const base = { kinds: [KINDS.MANIFEST], limit: 50, ...extra }
+  return [
+    { ...base, authors: [compass] },
+    ...(others.length > 0 ? [{ ...base, authors: others }] : []),
+  ]
+}
+
 
 /** Fetch the manifest for a given issue number. Returns null if not found. */
 export async function fetchManifest(
@@ -31,15 +44,11 @@ export async function fetchManifest(
   relays: string[] = RELAYS,
 ): Promise<IssueManifest | null> {
   const issueId = `${ISSUE_PREFIX}-${issueNumber}`
-  const pool = getPool()
   const producers = await fetchProducerPubkeys(relays)
-
-  const events = await pool.querySync(relays, {
-    kinds: [KINDS.MANIFEST],
-    authors: [...producers],  // REQUIRED — never query unpinned
-    '#d': [issueId],
-    limit: 50,
-  })
+  const pool = getPool()
+  const events = (
+    await Promise.all(manifestFilters(producers, { '#d': [issueId] }).map((filter) => pool.querySync(relays, filter)))
+  ).flat()
 
   const event = selectNewestAddressableRevision(
     filterVerified(events).filter((candidate) => producers.has(candidate.pubkey.toLowerCase())),
@@ -68,7 +77,7 @@ export function subscribeManifest(
     if (cancelled) return
     const sub = getPool().subscribeMany(
       relays,
-      { kinds: [KINDS.MANIFEST], authors: [...producers], '#d': [issueId] },
+      manifestFilters(producers, { '#d': [issueId] }),
       {
         onevent: (event) => {
           if (!producers.has(event.pubkey.toLowerCase())) return
@@ -100,7 +109,7 @@ export function subscribeManifests(
     if (cancelled) return
     const sub = getPool().subscribeMany(
       relays,
-      { kinds: [KINDS.MANIFEST], authors: [...producers] },
+      manifestFilters(producers),
       {
         onevent: (event) => {
           if (!producers.has(event.pubkey.toLowerCase())) return
@@ -127,11 +136,9 @@ export async function fetchAllManifests(
   const pool = getPool()
   const producers = await fetchProducerPubkeys(relays)
 
-  const events = await pool.querySync(relays, {
-    kinds: [KINDS.MANIFEST],
-    authors: [...producers],  // REQUIRED
-    limit: 50,
-  })
+  const events = (
+    await Promise.all(manifestFilters(producers).map((filter) => pool.querySync(relays, filter)))
+  ).flat()
 
   return selectNewestPerDTag(
     filterVerified(events).filter((e) => producers.has(e.pubkey.toLowerCase())),

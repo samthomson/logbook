@@ -9,7 +9,7 @@ last_mapped_commit: 93cb11b31fd03332a9a9854fa102c9c5e211b685
 ## APIs & External Services
 
 **Nostr relays:**
-- Defaults: `wss://nos.lol`, `wss://relay.damus.io`, and `wss://relay.primal.net` in both `logbook-pwa/src/config.ts` and `scripts/config.ts`.
+- Relays come from `RELAYS` / `DISCOVERY_RELAYS` in `.env`. Discovery example: `wss://nos.lol`, `wss://relay.ditto.pub`, `wss://relay.primal.net`.
 - Used for Compass kind `30023` newsletters, kind `4200` voice segments, kind `1111` transcripts, kind `34200` manifests, kind `34201` access lists, and release events.
 - Client/worker pin trusted authors, verify signatures locally, validate d-tags, and select replaceable revisions deterministically.
 - Writes require relay acknowledgement for trusted terminal paths; `scripts/publish-rss.ts` currently treats the kind `1` announcement more weakly via completed relay attempts.

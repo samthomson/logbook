@@ -1,4 +1,4 @@
-import type { ManifestContent, ReleaseStep } from '../types/nostr'
+import type { ManifestContent, NostrEvent, ReleaseStep } from '../types/nostr'
 
 export const RELEASE_STEPS = [
   { id: 'lock', label: 'The cut is locked' },
@@ -11,7 +11,8 @@ export const RELEASE_STEPS = [
 ] as const
 
 export type ChecklistStepId = (typeof RELEASE_STEPS)[number]['id']
-export type ChecklistState = 'waiting' | 'ready' | 'happening' | 'done' | 'failed'
+export type ChecklistState = 'waiting' | 'ready' | 'happening' | 'queued' | 'locked' | 'done' | 'failed'
+export type InspectTarget = 'lock' | 'podstr' | 'announcement'
 
 const WORKER_STEPS: readonly ReleaseStep[] = ['audio', 'chapters', 'feed', 'podstr', 'announcement']
 
@@ -33,9 +34,19 @@ const NOT_YET: Record<ChecklistStepId, string> = {
   published: 'This episode is not published',
 }
 
+const QUEUED: Record<Exclude<ChecklistStepId, 'lock'>, string> = {
+  audio: 'Episode audio is queued',
+  chapters: 'Chapters file is queued',
+  feed: 'RSS feed is queued',
+  podstr: 'Episode listing is queued',
+  announcement: 'Compass note is queued',
+  published: 'This episode is queued',
+}
+
 function stepLabel(id: ChecklistStepId, state: ChecklistState): string {
   if (state === 'happening' && id !== 'lock' && id !== 'published') return IN_PROGRESS[id]
-  if (state === 'done') return RELEASE_STEPS.find((step) => step.id === id)!.label
+  if (state === 'queued' && id !== 'lock') return QUEUED[id]
+  if (state === 'done' || state === 'locked') return RELEASE_STEPS.find((step) => step.id === id)!.label
   return NOT_YET[id]
 }
 
@@ -45,6 +56,8 @@ export interface ChecklistRow {
   state: ChecklistState
   detail: string
   href?: string
+  chaptersUrl?: string
+  inspect?: InspectTarget
   action?: 'lock' | 'retry'
   primary?: boolean
   scrollToSegmentId?: string
@@ -52,6 +65,9 @@ export interface ChecklistRow {
 
 export interface ChecklistInput {
   content: ManifestContent | null
+  manifestEvent: NostrEvent | null
+  podstrEvent?: NostrEvent | null
+  announcementEvent?: NostrEvent | null
   publishReady: boolean
   waitingReason: string
   saving: boolean
@@ -63,25 +79,38 @@ function completedSet(content: ManifestContent | null): Set<ReleaseStep> {
 }
 
 function failedStep(content: ManifestContent | null): ReleaseStep | null {
-  const marked = content?.release?.failed
-  if (marked && WORKER_STEPS.includes(marked)) return marked
   if (content?.episodeStatus === 'draft' && content.lastFailure) return 'audio'
-  if (content?.episodeStatus === 'cutting' && content.lastFailure) {
-    return marked && WORKER_STEPS.includes(marked) ? marked : firstIncomplete(completedSet(content))
-  }
-  return null
+  if (content?.episodeStatus !== 'cutting' || !content.lastFailure) return null
+  const completed = completedSet(content)
+  const marked = content.release?.failed
+  if (marked && WORKER_STEPS.includes(marked) && !completed.has(marked)) return marked
+  return firstIncomplete(completed)
 }
 
 function firstIncomplete(completed: ReadonlySet<ReleaseStep>): ReleaseStep {
   return WORKER_STEPS.find((step) => !completed.has(step)) ?? 'announcement'
 }
 
-function hrefFor(id: ChecklistStepId, content: ManifestContent | null): string | undefined {
+/** Public URL the browser can open. Loopback is the local origin, not a dead host. */
+export function reachableHref(url: string | undefined): string | undefined {
+  if (!url) return undefined
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return undefined
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return undefined
+  return url
+}
+
+function hrefFor(
+  id: ChecklistStepId,
+  content: ManifestContent | null,
+): string | undefined {
   const rss = content?.publishedRss
-  if (!rss) return undefined
-  if (id === 'audio') return rss.mp3Url
-  if (id === 'chapters') return rss.chaptersUrl
-  if (id === 'feed') return rss.feedUrl
+  if (id === 'audio') return rss?.mp3Url
+  if (id === 'feed') return reachableHref(rss?.feedUrl)
   return undefined
 }
 
@@ -91,6 +120,9 @@ function hrefFor(id: ChecklistStepId, content: ManifestContent | null): string |
  */
 export function releaseChecklist({
   content,
+  manifestEvent,
+  podstrEvent,
+  announcementEvent,
   publishReady,
   waitingReason,
   saving,
@@ -106,35 +138,41 @@ export function releaseChecklist({
   const rows: ChecklistRow[] = RELEASE_STEPS.map((step) => {
     const href = hrefFor(step.id, content)
     if (step.id === 'lock') {
-      const state: ChecklistState = cutting || published
-        ? 'done'
-        : publishReady
-          ? 'ready'
-          : 'waiting'
+      const state: ChecklistState = cutting
+        ? 'locked'
+        : published
+          ? 'done'
+          : publishReady
+            ? 'ready'
+            : 'waiting'
       return {
         id: step.id,
         label: stepLabel(step.id, state),
         state,
         detail: state === 'ready'
-          ? 'The worker will make the audio and the feed from this running order. It cannot be undone.'
+          ? 'The worker will make the audio and the feed from this running order.'
           : state === 'waiting'
             ? waitingReason
-            : '',
+            : state === 'locked' && !failed
+              ? 'The worker is making the episode.'
+              : '',
+        inspect: (state === 'done' || state === 'locked') && manifestEvent ? 'lock' : undefined,
         action: state === 'ready' || state === 'waiting' ? 'lock' : undefined,
       }
     }
 
     if (step.id === 'published') {
+      const state: ChecklistState = published ? 'done' : cutting ? 'queued' : 'waiting'
       return {
         id: step.id,
-        label: stepLabel(step.id, published ? 'done' : 'waiting'),
-        state: published ? 'done' : 'waiting',
-        detail: published ? '' : 'Earlier steps first.',
+        label: stepLabel(step.id, state),
+        state,
+        detail: state === 'waiting' ? 'Earlier steps first.' : '',
       }
     }
 
     const id = step.id
-    let state: ChecklistState = 'waiting'
+    let state: ChecklistState = cutting ? 'queued' : 'waiting'
     if (published || completed.has(id)) state = 'done'
     else if (failed === id) state = 'failed'
     else if (happening === id) state = 'happening'
@@ -151,6 +189,14 @@ export function releaseChecklist({
       state,
       detail,
       href: state === 'done' ? href : undefined,
+      chaptersUrl: id === 'chapters' && state === 'done'
+        ? content?.publishedRss?.chaptersUrl
+        : undefined,
+      inspect: state === 'done' && id === 'podstr' && podstrEvent
+        ? 'podstr'
+        : state === 'done' && id === 'announcement' && announcementEvent
+          ? 'announcement'
+          : undefined,
       action: state === 'failed' && cutting ? 'retry' : undefined,
       scrollToSegmentId: id === 'audio' && state === 'failed'
         ? content?.lastFailure?.segmentId

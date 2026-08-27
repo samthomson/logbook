@@ -4,7 +4,7 @@
   "description": "Async voice podcast for Nostr Compass",
   "relays": [
     "wss://nos.lol",
-    "wss://relay.damus.io",
+    "wss://relay.ditto.pub",
     "wss://relay.primal.net"
   ],
   "servers": [

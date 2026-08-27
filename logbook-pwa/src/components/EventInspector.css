@@ -3,10 +3,11 @@
 .ev-overlay {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: 200;
   display: grid;
   place-items: center;
   padding: 16px;
+  overflow-anchor: none;
   background: var(--overlay);
 }
 
@@ -143,4 +144,61 @@
 .ev__note {
   color: var(--muted);
   font-style: italic;
+}
+
+.ev__cut {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.ev__cut-status {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ev__chapter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ev__chapter-title {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.ev__recordings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ev__recordings li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 0.75rem;
+}
+
+.ev__recordings code {
+  overflow-wrap: anywhere;
+}
+
+.ev__rec-n {
+  flex: 0 0 1.25rem;
+  color: var(--muted);
+}
+
+.ev__recordings--out code {
+  color: var(--muted);
 }

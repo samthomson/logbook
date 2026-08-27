@@ -5,6 +5,7 @@ import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { COMPASS_PUBKEY, RELAYS, KINDS } from './config.ts'
 import { assertCompassSignerConfigured } from './amber-signer.ts'
+import { materializeOriginFeed } from './origin-feed.ts'
 import { runWatcherCycle } from './watch-runner.ts'
 import { verifyNostrEvent } from './segment-security.ts'
 import { fetchProducerPubkeys } from './producers.ts'
@@ -26,11 +27,16 @@ async function pollCuttingManifests(
   const fetchManifests = async (): Promise<NostrEvent[]> => {
     const pool = new SimplePool()
     try {
-      return await pool.querySync(RELAYS, {
-        kinds: [KINDS.MANIFEST],
-        authors: [...producers],
-        limit: 20,
-      })
+      const compass = COMPASS_PUBKEY.toLowerCase()
+      const others = [...producers].filter((pubkey) => pubkey.toLowerCase() !== compass)
+      const base = { kinds: [KINDS.MANIFEST], limit: 50 }
+      const batches = await Promise.all([
+        pool.querySync(RELAYS, { ...base, authors: [COMPASS_PUBKEY] }),
+        others.length > 0
+          ? pool.querySync(RELAYS, { ...base, authors: others })
+          : Promise.resolve([]),
+      ])
+      return batches.flat()
     } finally {
       pool.close(RELAYS)
     }
@@ -73,12 +79,21 @@ async function main(): Promise<void> {
   console.log(`[watch-compass] Compass ${COMPASS_PUBKEY.slice(0, 12)}… signing via NIP-46 bunker`)
   console.log(`[watch-compass] Relays: ${RELAYS.join(', ')}`)
   console.log('[watch-compass] Drafts start from a producer in the PWA; watching for cutting manifests')
+  await withPool(materializeOriginFeed)
 
   const completedIssueIds = new Set<string>()
   const stitchedRevisions = new Set<string>()
 
+  let inFlight = false
   const tick = () => {
-    pollCuttingManifests(completedIssueIds, stitchedRevisions).catch(console.error)
+    if (inFlight) {
+      console.log('[watch-compass] Previous cycle still running — skip')
+      return
+    }
+    inFlight = true
+    pollCuttingManifests(completedIssueIds, stitchedRevisions)
+      .catch(console.error)
+      .finally(() => { inFlight = false })
   }
   tick()
   setInterval(tick, 60 * 1000)

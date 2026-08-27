@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { acknowledgeStaticSync, readBackHostedFeed } from '../static-sync.ts'
+import { acknowledgeStaticSync, originFeedReadbackUrl, readBackHostedFeed } from '../static-sync.ts'
 
 test('local feed output is not treated as hosted without an explicit matching upload acknowledgement', async () => {
   await assert.rejects(
@@ -31,4 +31,15 @@ test('hosted acknowledgement is the bytes read back from the public URL', async 
   )
   assert.equal(ack.hosted, true)
   assert.equal(ack.feedDigest.length, 64)
+})
+
+test('origin feed read-back uses the compose nginx service for loopback BASE_URL', () => {
+  assert.equal(
+    originFeedReadbackUrl('http://localhost:8080'),
+    'http://origin:8080/feed.xml',
+  )
+  assert.equal(
+    originFeedReadbackUrl('https://podcast.nostrcompass.org'),
+    'https://podcast.nostrcompass.org/feed.xml',
+  )
 })

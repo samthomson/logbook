@@ -48,9 +48,12 @@ export const KINDS = {
   TRANSCRIPT: 1111,
   REACTION: 7,
   WHITELIST: 34201,
+  PODSTR_EPISODE: 30054,
 } as const
 
 export const ISSUE_PREFIX = 'logbook'
+export const D_ISSUE = (issueNumber: number): string => `${ISSUE_PREFIX}-${issueNumber}`
+export const D_PODSTR = (issueNumber: number): string => `${ISSUE_PREFIX}-${D_ISSUE(issueNumber)}`
 
 export const D_STANDING = `${ISSUE_PREFIX}-wl-standing`
 export const D_ADMINS = `${ISSUE_PREFIX}-wl-admins`

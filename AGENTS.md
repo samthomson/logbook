@@ -53,8 +53,8 @@
   controls with the viewer: a contributor gets record rows, a producer also gets
   the in/out and ordering controls on each voice note plus the release bar at the
   end. Never build a second view of the same episode.
-- An episode is either being made or published, never both. Once published it is
-  finished: no record rows, and the finished audio is linked from the page.
+- An episode is either being made or published, never both. A published page has
+  no record rows until a producer opens the cut again.
 - Show people, not keys: kind 0 name and picture from `DISCOVERY_RELAYS`, with a
   short npub only as a last resort. Never cache a failed profile lookup.
 - Actions live where the decision is made (release actions at the end of the
@@ -371,7 +371,9 @@ logbook-pwa/
 - Episode audio and RSS feed live on the VPS, not GitHub Pages.
 - iOS recording floor: 18.4.
 - Intro segment is always position 0 in its section's manifest order.
-- Published episode is immutable (`episodeStatus: published` is terminal).
+- A producer can open a published cut again (`draft`). Recordings and order can
+  change; the next publish stitches a replacement. Previous audio stays in the
+  feed until that publish lands. `cutting` is still a lock the worker owns.
 - A stitch run that fails hands the episode back: the worker republishes the
   manifest as `draft` with `lastFailure` (one-line reason + time), which the
   episode page shows to the producer. `cutting` is therefore not terminal, and

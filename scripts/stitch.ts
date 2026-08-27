@@ -13,7 +13,7 @@
  */
 
 import { SimplePool } from 'nostr-tools/pool'
-import { nip19, type NostrEvent } from 'nostr-tools'
+import { type NostrEvent } from 'nostr-tools'
 
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
@@ -21,6 +21,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import fetch from 'node-fetch'
 import {
+  COMPASS_PUBKEY,
   RELAYS,
   DISCOVERY_RELAYS,
   KINDS,
@@ -117,12 +118,17 @@ async function downloadBlob(url: string, destPath: string, expectedSha256: strin
 
 async function fetchManifest(issueId: string, pool: SimplePool): Promise<{ manifest: ManifestContent; event: ManifestEvent }> {
   const producers = await fetchProducerPubkeys(pool)
-  const events = await pool.querySync(RELAYS, {
-    kinds: [KINDS.MANIFEST],
-    authors: [...producers],
-    '#d': [issueId],
-    limit: 50,
-  })
+  const compass = COMPASS_PUBKEY.toLowerCase()
+  const others = [...producers].filter((pubkey) => pubkey.toLowerCase() !== compass)
+  const base = { kinds: [KINDS.MANIFEST], '#d': [issueId], limit: 50 }
+  const events = (
+    await Promise.all([
+      pool.querySync(RELAYS, { ...base, authors: [COMPASS_PUBKEY] }),
+      others.length > 0
+        ? pool.querySync(RELAYS, { ...base, authors: others })
+        : Promise.resolve([]),
+    ])
+  ).flat()
 
   const event = latestVerifiedManifest(events as ManifestEvent[], issueId, {
     expectedPubkey: producers,
@@ -143,30 +149,26 @@ async function fetchRequiredChapterIds(
     throw new Error(`[stitch] Cannot determine newsletter number for ${issueId}`)
   }
 
-  let identifier = String(issueNumber)
-  try {
-    const decoded = nip19.decode(manifest.issueRef)
-    if (decoded.type === 'naddr') {
-      const address = decoded.data
-      if (address.kind === KINDS.COMPASS_ISSUE && address.pubkey === REAL_COMPASS_PUBKEY) {
-        identifier = address.identifier
-      }
-    }
-  } catch {
-    // Older manifests may not have a valid naddr. The issue-number fallback is
-    // deterministic; the fetched newsletter is still signature checked.
-  }
-
-  const candidates = await pool.querySync(DISCOVERY_RELAYS, {
-    kinds: [KINDS.COMPASS_ISSUE],
-    authors: [REAL_COMPASS_PUBKEY],
-    '#d': [...new Set([identifier, String(issueNumber), issueId])],
-    limit: 20,
-  })
+  // Compass publishes d=newsletter-N. Querying 34 or logbook-34 never matches.
+  const dTag = `newsletter-${issueNumber}`
+  const candidates = await pool.querySync(
+    DISCOVERY_RELAYS,
+    {
+      kinds: [KINDS.COMPASS_ISSUE],
+      authors: [REAL_COMPASS_PUBKEY],
+      '#d': [dTag],
+      limit: 20,
+    },
+    { maxWait: 8_000 },
+  )
   const issue = (candidates as NostrEvent[])
     .filter((event) => event.pubkey === REAL_COMPASS_PUBKEY && verifyNostrEvent(event as never))
     .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))[0]
-  if (!issue) throw new Error(`[stitch] No verified Compass newsletter found for ${issueId}`)
+  if (!issue) {
+    throw new Error(
+      `[stitch] No verified Compass newsletter found for ${issueId} (d=${dTag} on DISCOVERY_RELAYS)`,
+    )
+  }
 
   const targets = requiredChapterTargets(issue.content, issueNumber)
   if (!targets.length) throw new Error(`[stitch] Newsletter ${issueId} has no recording chapters`)
@@ -258,6 +260,10 @@ async function main(): Promise<void> {
 
   console.log(`[stitch] Fetching manifest for ${issueId}…`)
   const { manifest, event: manifestEvent } = await fetchManifest(issueId, pool)
+  // Set before newsletter lookup: that fetch can throw, and cutting must not retry forever.
+  if (manifest.episodeStatus === 'cutting' && !dryRun) {
+    handBack = { issueId, manifest, event: manifestEvent, signer }
+  }
   const force = args.includes('--force')
   const requiredChapterIds = manifest.episodeStatus === 'cutting' || force
     ? await fetchRequiredChapterIds(issueId, manifest, pool)
@@ -271,12 +277,6 @@ async function main(): Promise<void> {
     console.log('[stitch] Episode already published. Use --force to re-stitch.')
     pool.close([...RELAYS, ...DISCOVERY_RELAYS])
     return
-  }
-
-  // From here on the episode is locked for cutting, so a fatal error owes the
-  // producer the cut back.
-  if (manifest.episodeStatus === 'cutting' && !dryRun) {
-    handBack = { issueId, manifest, event: manifestEvent, signer }
   }
 
   // Collect all segment ids referenced in non-excluded sections.

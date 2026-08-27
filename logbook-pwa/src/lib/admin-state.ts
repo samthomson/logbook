@@ -27,6 +27,25 @@ export function canEditManifest(
   return content.episodeStatus === 'draft' && producers.has(pubkey.toLowerCase())
 }
 
+export function canReopenPublishedCut(
+  content: ManifestContent,
+  pubkey: string,
+  producers: ReadonlySet<string> = new Set([COMPASS_PUBKEY]),
+): boolean {
+  return content.episodeStatus === 'published' && producers.has(pubkey.toLowerCase())
+}
+
+/** Published audio stays in the feed until the next publish lands. */
+export function reopenPublishedCut(content: ManifestContent): ManifestContent {
+  if (content.episodeStatus !== 'published') return content
+  return {
+    ...content,
+    episodeStatus: 'draft',
+    lastFailure: null,
+    release: undefined,
+  }
+}
+
 /** A chapter is in the stitch when it has a recording and was not left out. */
 export function sectionInCut(section: ManifestSection): boolean {
   if (section.sectionExcluded === true || section.introEventId === 'excluded') return false

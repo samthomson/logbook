@@ -18,6 +18,7 @@ import type {
   IssueManifest,
   ManifestContent,
   ManifestFailure,
+  NostrEvent,
   NostrSigner,
   Segment,
 } from '../types/nostr'
@@ -26,8 +27,10 @@ import { areRequestScopesCurrent, type LatestRequestGuard } from './latest-reque
 import {
   canEditManifest,
   canLockEpisode,
+  canReopenPublishedCut,
   includeAllChapters,
   moveSectionRecording,
+  reopenPublishedCut,
   toggleSegmentExcluded,
   toggleSegmentReviewed,
 } from './admin-state'
@@ -40,7 +43,8 @@ import {
 } from './admin-workspace'
 import { issueAddress } from './compass'
 import { buildInitialManifest, fetchManifest, subscribeManifest, updateManifest } from './manifest'
-import { selectNewestManifestRevision } from './manifest-revision'
+import { selectAuthoritativeManifestRevision } from './manifest-revision'
+import { pinWindowScroll } from './pin-scroll'
 import {
   canMoveInCut,
   cutStateOf,
@@ -63,7 +67,7 @@ export interface ProducerContext {
   /** The producer capability, never the recording one. */
   capabilityRequests: LatestRequestGuard
   capabilityRequest: number | null
-  onPublished?: () => void
+  onPublished?: (content: ManifestContent) => void
 }
 
 export type { CutState }
@@ -82,6 +86,8 @@ export interface EpisodeCut {
   publishReady: boolean
   /** Why the worker handed this episode back, if it did. */
   failure: ManifestFailure | null
+  /** Signed kind 34200 currently on the relay, if any. */
+  event: NostrEvent | null
   issues: WorkspaceReferenceIssue[]
   stateOf: (segmentId: string) => CutState
   isReviewed: (segmentId: string) => boolean
@@ -92,8 +98,10 @@ export interface EpisodeCut {
   toggleReviewed: (segmentId: string) => void
   save: () => void
   publish: () => void
+  reopen: () => void
   retryRelease: () => void
   reload: () => void
+  canReopen: boolean
 }
 
 export function useEpisodeCut(
@@ -154,7 +162,10 @@ export function useEpisodeCut(
   useEffect(() => {
     return subscribeManifest(issue.issueNumber, (incoming) => {
       const current = baseRef.current
-      if (current && selectNewestManifestRevision([incoming.event, current.event])?.id !== incoming.event.id) return
+      if (
+        current
+        && selectAuthoritativeManifestRevision([incoming.event, current.event])?.id !== incoming.event.id
+      ) return
       baseRef.current = incoming
       setBase(incoming)
       if (dirtyRef.current) {
@@ -208,6 +219,7 @@ export function useEpisodeCut(
     }
     if (!isActive()) return
 
+    const unpin = pinWindowScroll()
     const controller = createAdminSaveController({
       fetchLatest: () => fetchManifest(issue.issueNumber),
       publish: (next, previousEventId, previousCreatedAt, assert) => updateManifest(
@@ -230,12 +242,14 @@ export function useEpisodeCut(
       setBase(acknowledged)
       setDraft(acknowledged.content)
       setNotice(message)
-      producer.onPublished?.()
+      producer.onPublished?.(acknowledged.content)
     } catch (cause) {
       if (!isActive()) return
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       if (isActive()) setSaving(false)
+      if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') unpin()
+      else window.requestAnimationFrame(() => window.requestAnimationFrame(unpin))
     }
   }, [base, issue.issueNumber, producer, pubkey, signer])
 
@@ -285,7 +299,40 @@ export function useEpisodeCut(
         ? 'Nothing in the cut.'
         : !validation.canLock
           ? 'Resolve the flagged recordings before you can publish.'
-          : 'Running order saved. Publishing makes the audio file and the podcast feed. It cannot be undone.'
+          : 'Running order saved. Publishing makes the audio file and the podcast feed.'
+
+  const canReopen = Boolean(
+    draft && producer && canReopenPublishedCut(draft, producer.pubkey, producer.producerPubkeys),
+  )
+
+  const publish = () => {
+    if (!draft || !publishReady) return
+    void save(
+      { ...draft, episodeStatus: 'cutting', lastFailure: null, release: undefined },
+      'The worker is making the audio and the feed.',
+    )
+  }
+
+  const reopen = () => {
+    if (!draft || !producer || !canReopenPublishedCut(draft, producer.pubkey, producer.producerPubkeys)) return
+    void save(
+      reopenPublishedCut(draft),
+      'The cut is open. Add recordings, then publish again.',
+    )
+  }
+
+  const retryRelease = () => {
+    if (!base || base.content.episodeStatus !== 'cutting') return
+    const completed = base.content.release?.completed ?? []
+    void save(
+      {
+        ...base.content,
+        lastFailure: null,
+        release: completed.length > 0 ? { completed } : undefined,
+      },
+      'Trying the remaining publish steps again.',
+    )
+  }
 
   return {
     content: draft,
@@ -299,6 +346,7 @@ export function useEpisodeCut(
     nextStep,
     publishReady,
     failure: base?.content.lastFailure ?? null,
+    event: base?.event ?? null,
     issues: validation.issues,
     stateOf,
     isReviewed,
@@ -310,26 +358,10 @@ export function useEpisodeCut(
     save: () => {
       if (draft && editable && dirty) void save(draft, 'Running order saved and verified on the relay.')
     },
-    publish: () => {
-      if (!draft || !publishReady) return
-      // A new attempt owns its own outcome: the previous failure goes with it.
-      void save(
-        { ...draft, episodeStatus: 'cutting', lastFailure: null, release: undefined },
-        'The worker is making the audio and the feed.',
-      )
-    },
-    retryRelease: () => {
-      if (!base || base.content.episodeStatus !== 'cutting') return
-      const completed = base.content.release?.completed ?? []
-      void save(
-        {
-          ...base.content,
-          lastFailure: null,
-          release: completed.length > 0 ? { completed } : undefined,
-        },
-        'Trying the remaining publish steps again.',
-      )
-    },
+    publish,
+    reopen,
+    retryRelease,
     reload: () => setReloads((count) => count + 1),
+    canReopen,
   }
 }

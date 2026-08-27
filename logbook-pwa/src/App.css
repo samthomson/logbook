@@ -18,6 +18,10 @@ html,
   overflow-x: hidden;
 }
 
+html.scroll-pinned {
+  overflow-anchor: none;
+}
+
 /* ── Layout ─────────────────────────────────────────────────────────────────── */
 
 .app {
@@ -25,6 +29,34 @@ html,
   flex-direction: column;
   min-height: 100dvh;
   padding-bottom: env(safe-area-inset-bottom);
+}
+
+.app:has(.app-signin) {
+  padding-bottom: calc(4.75rem + env(safe-area-inset-bottom));
+}
+
+.app-signin {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 90;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 12px var(--pad) calc(12px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.app-signin p {
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--muted);
 }
 
 .app-header {
@@ -541,13 +573,34 @@ html,
 .timeline__closed {
   margin: 0 0 4px;
   padding: 10px 12px;
-  border: 1px solid var(--accent);
+  border: 1px solid var(--line);
   border-left-width: 4px;
   border-radius: var(--radius);
   background: var(--surface);
   font-size: 0.875rem;
   font-weight: 600;
   color: var(--fg);
+}
+
+.timeline__closed--busy {
+  border-color: var(--warning-border);
+  border-left-color: var(--warning-fg);
+  background: var(--warning-bg);
+  color: var(--warning-fg);
+}
+
+.timeline__closed--stopped {
+  border-color: var(--danger);
+  border-left-color: var(--danger);
+  background: var(--error-bg);
+  color: var(--danger);
+}
+
+.timeline__closed--published {
+  border-color: var(--success-border);
+  border-left-color: var(--success-fg);
+  background: var(--success-bg);
+  color: var(--success-fg);
 }
 
 .timeline__chapter-state {

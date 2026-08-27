@@ -60,8 +60,13 @@ function readCompassBunker(): { bunkerUri: string; clientKey: string } {
   return { bunkerUri, clientKey }
 }
 
-/** Ask the Compass NIP-46 bunker to sign one event without exposing its key. */
-export async function signWithCompassAmber(unsigned: UnsignedNostrEvent): Promise<SignedNostrEvent> {
+/** Bunker dropped this RPC; the same sign is still required. */
+export function isRetryableBunkerError(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error)
+  return /context canceled/i.test(text)
+}
+
+async function signOnce(unsigned: UnsignedNostrEvent): Promise<SignedNostrEvent> {
   const { bunkerUri, clientKey } = readCompassBunker()
   const nak = process.env.NAK_BIN ?? join(homedir(), '.local', 'bin', 'nak')
   const output = await new Promise<string>((resolve, reject) => {
@@ -83,6 +88,21 @@ export async function signWithCompassAmber(unsigned: UnsignedNostrEvent): Promis
     child.stdin.end(JSON.stringify(unsigned))
   })
   return validateCompassSignature(JSON.parse(output) as SignedNostrEvent)
+}
+
+/** Ask the Compass NIP-46 bunker to sign one event without exposing its key. */
+export async function signWithCompassAmber(unsigned: UnsignedNostrEvent): Promise<SignedNostrEvent> {
+  let last: unknown
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await signOnce(unsigned)
+    } catch (error) {
+      last = error
+      if (!isRetryableBunkerError(error) || attempt === 3) throw error
+      console.warn(`[amber] bunker sign canceled, retrying (${attempt}/2)`)
+    }
+  }
+  throw last
 }
 
 /**

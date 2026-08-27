@@ -37,9 +37,11 @@ export const KINDS = {
   BLOSSOM_AUTH: 24242,
   TRANSCRIPT: 1111,
   REACTION: 7,
+  PODSTR_EPISODE: 30054,
 } as const
 
 export const ISSUE_PREFIX = 'logbook'
+export const D_PODSTR = (issueId: string): string => `${ISSUE_PREFIX}-${issueId}`
 export const D_STANDING = `${ISSUE_PREFIX}-wl-standing`
 export const D_ADMINS = `${ISSUE_PREFIX}-wl-admins`
 

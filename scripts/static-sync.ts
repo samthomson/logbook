@@ -23,6 +23,23 @@ export async function acknowledgeStaticSync(expectedFeedDigest: string, sync: St
   }
 }
 
+/**
+ * URL the worker GETs to confirm origin nginx is serving the feed.
+ * Loopback BASE_URL is the host browser; inside compose that is the origin service.
+ */
+export function originFeedReadbackUrl(baseUrl: string): string {
+  const url = new URL(baseUrl)
+  if (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]') {
+    url.hostname = 'origin'
+    url.protocol = 'http:'
+    if (!url.port) url.port = '8080'
+  }
+  url.pathname = '/feed.xml'
+  url.search = ''
+  url.hash = ''
+  return url.toString()
+}
+
 /** GET the hosted feed and hash the bytes. That is the acknowledgement. */
 export async function readBackHostedFeed(
   url: string,

@@ -77,7 +77,7 @@ export function indexRow(
   if (addressable && (status === 'draft' || status === 'cutting')) {
     return {
       state: status,
-      label: status === 'cutting' ? 'Making the audio' : 'Recording',
+      label: status === 'cutting' ? 'Making the episode' : 'Recording',
       canOpenEpisode: opts.showUnpublished,
       episodeDisabled: !opts.showUnpublished,
       canStartDraft: false,
