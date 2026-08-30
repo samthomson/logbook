@@ -213,7 +213,9 @@ html.scroll-pinned {
 
 .btn--ghost {
   border: 1px solid var(--line);
-  background: var(--card);
+  /* --bg, not --card: ghost buttons mostly sit on cards, where a card-coloured
+     body erases the button. The page-tone surface keeps it a visible control. */
+  background: var(--bg);
   color: var(--fg);
 }
 
@@ -672,6 +674,19 @@ html.scroll-pinned {
   color: var(--muted);
 }
 
+.bubble__transcribe {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.bubble__transcribe-note {
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
 .timeline__publish-error,
 .timeline__publish-status {
   padding: 8px 12px;
@@ -897,6 +912,21 @@ html.scroll-pinned {
   border-top: 1px solid var(--line);
   font-size: 0.875rem;
   color: var(--muted);
+}
+
+.transcript__chunk {
+  border-radius: 3px;
+  padding: 1px 2px;
+  transition: background 0.1s, color 0.1s;
+}
+
+.transcript__chunk:hover {
+  background: var(--line);
+}
+
+.transcript__chunk--active {
+  background: rgba(124, 58, 237, 0.2);
+  color: #a78bfa;
 }
 
 .bubble--upload .bubble__body {

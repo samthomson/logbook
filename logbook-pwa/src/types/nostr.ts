@@ -129,10 +129,18 @@ export interface CompassIssue {
 
 // ─── Transcript companion (kind 1111 scoped) ─────────────────────────────────
 
+/** One sentence-level transcript unit; timestamps are seconds into the note. */
+export interface TranscriptChunk {
+  text: string
+  timestamp: [number, number | null]
+}
+
 export interface TranscriptEvent {
   event: NostrEvent
   segmentEventId: string
   text: string
+  /** Empty on plain-text transcripts; drives tap-to-seek highlighting. */
+  chunks: TranscriptChunk[]
 }
 
 // ─── Auth / identity ──────────────────────────────────────────────────────────

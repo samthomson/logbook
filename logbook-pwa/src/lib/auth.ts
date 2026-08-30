@@ -33,13 +33,14 @@ export interface AuthState {
   session?: string
 }
 
-// Kinds Logbook signs: segments, Blossom auth, transcripts, manifests, reactions.
+// Kinds Logbook signs: segments, Blossom auth, transcripts, manifests,
+// retranscribe requests.
 const SIGNING_KINDS = [
   KINDS.SEGMENT,
   KINDS.BLOSSOM_AUTH,
   KINDS.TRANSCRIPT,
   KINDS.MANIFEST,
-  KINDS.REACTION,
+  KINDS.RETRANSCRIBE,
 ]
 
 // ─── NIP-46 transport wiring ──────────────────────────────────────────────────

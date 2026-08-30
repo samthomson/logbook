@@ -4,10 +4,11 @@
  */
 
 import { nip19 } from 'nostr-tools'
+import { TranscriptCard } from './TranscriptCard'
 import { usePlayback } from '../lib/playback'
-import type { Segment } from '../types/nostr'
-import { authorLabel, type Profile } from '../lib/profiles'
+import type { Segment, TranscriptChunk } from '../types/nostr'
 import { avatarInitials, avatarStyle } from '../lib/avatar'
+import { authorLabel, type Profile } from '../lib/profiles'
 import { formatDuration, clamp } from '../lib/utils'
 import { useState } from 'react'
 
@@ -24,11 +25,21 @@ export interface BubbleCutControls {
   onToggleReviewed: () => void
 }
 
+/** Producer-only: ask the worker to produce or redo this note's transcript. */
+export interface BubbleTranscribeControl {
+  /** A request newer than the transcript is already in flight on the worker. */
+  requested: boolean
+  busy: boolean
+  error?: string
+  onRetranscribe: () => void
+}
+
 interface Props {
   segment: Segment
   profile?: Profile
   parentName?: string | null
   transcript?: string
+  transcriptChunks?: TranscriptChunk[]
   isNew?: boolean
   isOwn?: boolean
   justPublished?: boolean
@@ -36,6 +47,7 @@ interface Props {
   problem?: string
   onAudioReply?: (segment: Segment) => void
   cut?: BubbleCutControls
+  transcribe?: BubbleTranscribeControl
 }
 
 export default function VoiceBubble({
@@ -43,12 +55,14 @@ export default function VoiceBubble({
   profile,
   parentName,
   transcript,
+  transcriptChunks,
   isNew,
   isOwn,
   justPublished,
   problem,
   onAudioReply,
   cut,
+  transcribe,
 }: Props) {
   const playback = usePlayback()
   const isCurrent = playback.currentId === segment.event.id
@@ -165,7 +179,35 @@ export default function VoiceBubble({
           <p className="bubble__problem" role="alert">{problem}</p>
         )}
         {transcript && (
-          <p className="bubble__transcript">{transcript}</p>
+          <TranscriptCard
+            text={transcript}
+            chunks={transcriptChunks}
+            currentTime={isCurrent ? elapsed : 0}
+            onChunkClick={(seconds) => {
+              if (!isCurrent) playback.play(segment.event.id)
+              playback.seek(seconds)
+            }}
+          />
+        )}
+
+        {transcribe && (
+          <div className="bubble__transcribe">
+            <button
+              type="button"
+              className="btn btn--ghost btn--xs"
+              disabled={transcribe.requested || transcribe.busy}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={transcribe.onRetranscribe}
+            >
+              {transcript ? 'Transcribe again' : 'Transcribe'}
+            </button>
+            {transcribe.requested && !transcribe.busy && (
+              <span className="bubble__transcribe-note">Transcribing — the new text appears here in about a minute.</span>
+            )}
+            {transcribe.error && (
+              <span className="bubble__transcribe-note" role="alert">{transcribe.error}</span>
+            )}
+          </div>
         )}
 
         {cut && (

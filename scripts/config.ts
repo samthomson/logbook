@@ -34,6 +34,7 @@ export const KINDS = {
   SEGMENT: 4200,
   MANIFEST: 34200,
   WHITELIST: 34201,
+  RETRANSCRIBE: 34202,
   BLOSSOM_AUTH: 24242,
   TRANSCRIPT: 1111,
   REACTION: 7,
@@ -48,6 +49,11 @@ export const D_ADMINS = `${ISSUE_PREFIX}-wl-admins`
 export const STATIC_DIR = process.env.LOGBOOK_STATIC_DIR ?? '/var/www/logbook'
 export const RSS_PATH = `${STATIC_DIR}/feed.xml`
 export const AUDIO_DIR = process.env.LOGBOOK_AUDIO_DIR ?? `${STATIC_DIR}/audio`
+
+/** whisper.cpp small.en weights for segment transcription. Baked into the worker image. */
+export const WHISPER_MODEL_PATH = process.env.LOGBOOK_WHISPER_MODEL
+  ?? new URL('./models/ggml-small.en.bin', import.meta.url).pathname
+
 
 export const BASE_URL = (() => {
   const raw = process.env.LOGBOOK_BASE_URL?.trim()

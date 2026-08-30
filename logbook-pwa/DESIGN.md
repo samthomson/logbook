@@ -42,7 +42,7 @@ Weight: `400` body, `600` emphasis/headings. No black/`800`.
 ## Components (essentials)
 
 - **Button** `.btn` — text button; `.btn--primary` filled accent; `.btn--ghost`
-  bordered; `.btn--small` denser hit target.
+  bordered on a page-tone surface (the secondary action); `.btn--small` denser hit target.
 - **Header** `.app-header` — brand + nav + auth, same measure as content.
 - **Notice** `.notice` — one-line status; warning/error/episode variants.
 - **Timeline** `.timeline` — issue head, groups, sections, notes.

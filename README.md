@@ -41,6 +41,26 @@ Compass npub. Changing `COMPASS_PUBKEY` needs a rebuild; Vite inlines it.
 
 `PLAN.md` is the locked event schema. `AGENTS.md` is for agents, not operators.
 
+## Nostr protocol
+
+Logbook's kinds are its own (the 342xx band); only Logbook publishes and reads
+them. Producers are named on the Compass-signed producer list (34201); every
+manifest query pins and re-verifies authors against that set.
+
+| Kind | What it is | Who signs it |
+|---|---|---|
+| 4200 | Voice-note segment (audio JSON, `x` sha256 tag) | Contributor |
+| 34200 | Episode manifest / cut (addressable; the stitcher's only order input) | Producer |
+| 34201 | Producer + contributor lists (`d=logbook-wl-admins`, `logbook-wl-standing`, `logbook-wl-<n>`) | Compass only |
+| 34202 | Retranscribe request (one `e` tag naming a 4200) | Producer |
+| 1111 | Transcript companion (sentence chunks, `e` → 4200, `k` → 4200) | Worker (Compass npub) |
+
+The worker subscribes live to 4200/34200/34202 on `RELAYS` and reacts
+immediately (transcribe, stitch, retranscribe); a once-a-minute poll of stored
+events is the fallback, so nothing published while the worker was down is
+missed. Transcription itself never runs in a browser — whisper.cpp (small.en,
+pinned) runs only in the worker container.
+
 ## Later
 
 - Seed issues reuse one stub outline (same H2/H3 every time). A real test is a
@@ -54,7 +74,7 @@ Compass npub. Changing `COMPASS_PUBKEY` needs a rebuild; Vite inlines it.
 - [x] Producer UI: browse real Compass kind 30023 issues on relays → pick one → “Start podcast draft” → publish kind 34200 manifest from that newsletter’s sections (not seed stub)
 - [x] normalise audio levels in ffmpeg when stitching a podcast together
 - [ ] mobile ux ui++ (recorder, tap targets, sticky release bar)
-- [ ] ai transcription of uploads
+- [x] ai transcription of uploads (worker whisper.cpp small.en; producer retranscribe button; live response)
 - [x] make publishing feel more robust, for each episode show a checklist of sorts of what tasks get done and are done (ie producing various xml files and publishing to blossom). have individual states/buttons for each
 - [ ] Whitelist Derek/MrBlack + run the test — ops actions, fair to omit from a code todo list
 - [ ] Prove release end-to-end on staging — the actual milestone blocker, not in README

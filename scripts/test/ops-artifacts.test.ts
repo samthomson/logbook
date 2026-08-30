@@ -39,7 +39,14 @@ test('container worker reproduces the systemd sandbox and pins an ffmpeg the sti
   assert.doesNotMatch(dockerfile, /^FROM (?!\$\{NODE_IMAGE\})/m)
   assert.match(dockerfile, /USER logbook/)
   // nak sits on the signing path; an unverified download would be a supply-chain hole.
-  assert.match(dockerfile, /sha256sum -c -/)
+  assert.match(dockerfile, /COPY --from=nak \/usr\/local\/bin\/nak/)
+  // whisper-cli is on the transcript-publishing path; its source tarball and
+  // model weights are pinned and baked in so a release never waits on a
+  assert.match(dockerfile, /COPY --from=whisper \/opt\/whisper-model\/ggml-small\.en\.bin/)
+  assert.match(dockerfile, /ARG WHISPER_MODEL_SHA256=[0-9a-f]{64}/)
+  assert.match(dockerfile, /COPY --from=whisper \/usr\/local\/bin\/whisper-cli/)
+  assert.match(dockerfile, /LOGBOOK_WHISPER_MODEL=\/opt\/whisper-model\/ggml-small\.en\.bin/)
+  assert.match(await read('scripts/watch-compass.ts'), /assertWhisperConfigured/)
 
   assert.match(compose, /read_only: true/)
   assert.match(compose, /cap_drop: \[ALL\]/)

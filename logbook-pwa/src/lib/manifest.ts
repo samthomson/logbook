@@ -9,6 +9,7 @@ import { getPool } from './pool'
  */
 
 import { RELAYS, KINDS, ISSUE_PREFIX, COMPASS_PUBKEY } from '../config'
+import type { Filter } from 'nostr-tools'
 import { fetchProducerPubkeys } from './whitelist'
 import type {
   NostrEvent,
@@ -28,11 +29,10 @@ import {
 import { releaseOverlayKey, withReleaseOverlay } from './release-overlay'
 import { withSignerTimeout } from './signer-timeout'
 import { assertEventSignedByExpected, assertSignerStillExpected } from './signer-identity'
-
 function manifestFilters(
   producers: ReadonlySet<string>,
   extra: { '#d'?: string[] } = {},
-): { kinds: number[]; authors: string[]; limit: number; '#d'?: string[] }[] {
+): Filter[] {
   const compass = COMPASS_PUBKEY.toLowerCase()
   const others = [...producers].filter((pubkey) => pubkey !== compass)
   const scoped = Boolean(extra['#d']?.length)
@@ -41,6 +41,15 @@ function manifestFilters(
     { ...base, authors: [compass] },
     ...(others.length > 0 ? [{ ...base, authors: others }] : []),
   ]
+}
+
+/** A live subscription has no per-author limit to preserve, so the producer
+ * batches merge into the single filter nostr-tools subscribes with. */
+function manifestSubscriptionFilter(
+  producers: ReadonlySet<string>,
+  extra: { '#d'?: string[] } = {},
+): Filter {
+  return { kinds: [KINDS.MANIFEST], authors: [...producers], limit: 50, ...extra }
 }
 
 
@@ -103,7 +112,7 @@ export function subscribeManifest(
     let emittedKey: string | null = null
     const sub = getPool().subscribeMany(
       relays,
-      manifestFilters(producers, { '#d': [issueId] }),
+      manifestSubscriptionFilter(producers, { '#d': [issueId] }),
       {
         onevent: (event) => {
           if (!producers.has(event.pubkey.toLowerCase())) return
@@ -152,7 +161,7 @@ export function subscribeManifests(
     const emittedByIssue = new Map<string, string>()
     const sub = getPool().subscribeMany(
       relays,
-      manifestFilters(producers),
+      manifestSubscriptionFilter(producers),
       {
         onevent: (event) => {
           if (!producers.has(event.pubkey.toLowerCase())) return

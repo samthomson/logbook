@@ -20,10 +20,11 @@ import type {
   IssueSectionItem,
   NostrSigner,
   NostrEvent,
+  TranscriptEvent,
 } from '../types/nostr'
 import { nip19 } from 'nostr-tools'
 import { issueAddress } from '../lib/compass'
-import { fetchSegmentsForIssue, parseSegment, publishSegment, fetchTranscripts, selectTrustedSegmentEvents } from '../lib/segment'
+import { fetchSegmentsForIssue, parseSegment, publishSegment, fetchTranscripts, selectTrustedSegmentEvents, fetchRetranscribeRequests, publishRetranscribeRequest } from '../lib/segment'
 import { orderTimelineSegments } from '../lib/timeline-order'
 import { useEpisodeCut, type ProducerContext } from '../lib/use-episode-cut'
 import { pinWindowScroll } from '../lib/pin-scroll'
@@ -108,6 +109,10 @@ export default function IssueTimeline({
   const recordingEnabled = canRecord && signer !== null
   const publishCapabilityRef = useRef({ issueNumber: issue.issueNumber, myPubkey, recordingEnabled, signer })
   publishCapabilityRef.current = { issueNumber: issue.issueNumber, myPubkey, recordingEnabled, signer }
+  // The load effect below must not re-run when the producer capability
+  // changes; it reads the latest context through this ref instead.
+  const producerRef = useRef(producer)
+  producerRef.current = producer
   const [sections, setSections] = useState<Map<string, SectionState>>(new Map())
   const [recordTarget, setRecordTarget] = useState<RecordTarget | null>(null)
   const [draftErrors, setDraftErrors] = useState<Map<string, string>>(new Map())
@@ -117,7 +122,10 @@ export default function IssueTimeline({
   const [justPublished, setJustPublished] = useState<Set<string>>(new Set())
   const [newSegmentIds, setNewSegmentIds] = useState<Set<string>>(new Set())
   const [profiles, setProfiles] = useState<Map<string, Profile>>(new Map())
-  const [transcripts, setTranscripts] = useState<Map<string, string>>(new Map())
+  const [transcripts, setTranscripts] = useState<Map<string, TranscriptEvent>>(new Map())
+  const [retranscribeRequests, setRetranscribeRequests] = useState<Map<string, number>>(new Map())
+  const [retranscribeBusy, setRetranscribeBusy] = useState<Set<string>>(new Set())
+  const [retranscribeErrors, setRetranscribeErrors] = useState<Map<string, string>>(new Map())
   const [inspect, setInspect] = useState<{
     event: NostrEvent
     kindLabel: string
@@ -215,10 +223,19 @@ export default function IssueTimeline({
             if (!mounted) return
             setTranscripts((prev) => {
               const next = new Map(prev)
-              for (const [id, transcript] of map) next.set(id, transcript.text)
+              for (const [id, transcript] of map) next.set(id, transcript)
               return next
             })
           })
+          // A producer's view also needs to know which notes already have a
+          // retranscribe request in flight, so the button can say so.
+          const producer = producerRef.current
+          if (producer?.producerPubkeys.size) {
+            fetchRetranscribeRequests(allParsed, producer.producerPubkeys).then((map) => {
+              if (!mounted) return
+              setRetranscribeRequests(map)
+            })
+          }
         }
       })
       .catch((err: unknown) => {
@@ -286,6 +303,35 @@ export default function IssueTimeline({
     }
     setRecordTarget({ sectionId: home, respondingTo: segment.event.id })
   }, [sections])
+
+  /** Producer-only: ask the worker to produce or redo this note's transcript.
+   *  Publishing a second request is harmless — the worker honors the newest. */
+  const requestRetranscribe = useCallback(async (segment: Segment) => {
+    const producer = producerRef.current
+    if (!producer) return
+    setRetranscribeBusy((prev) => new Set(prev).add(segment.event.id))
+    setRetranscribeErrors((prev) => {
+      if (!prev.has(segment.event.id)) return prev
+      const next = new Map(prev)
+      next.delete(segment.event.id)
+      return next
+    })
+    try {
+      await publishRetranscribeRequest(segment.event, producer.signer, producer.pubkey)
+      setRetranscribeRequests((prev) => new Map(prev).set(segment.event.id, Math.floor(Date.now() / 1000)))
+    } catch (err) {
+      setRetranscribeErrors((prev) => new Map(prev).set(
+        segment.event.id,
+        err instanceof Error ? err.message : String(err),
+      ))
+    } finally {
+      setRetranscribeBusy((prev) => {
+        const next = new Set(prev)
+        next.delete(segment.event.id)
+        return next
+      })
+    }
+  }, [])
 
   const pendingRef = useRef<Map<string, PendingTake>>(new Map())
   const activePublishAttemptsRef = useRef<Map<string, symbol>>(new Map())
@@ -610,13 +656,37 @@ export default function IssueTimeline({
     const release = inspectPin.current
     if (!release) return
     const id = requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        release()
-        if (inspectPin.current === release) inspectPin.current = null
-      })
+      release()
+      if (inspectPin.current === release) inspectPin.current = null
     })
     return () => cancelAnimationFrame(id)
   }, [inspect])
+
+  // A retranscribed companion lands minutes after the request, once the
+  // worker's next tick runs whisper; refresh that note's transcript live so
+  // the producer sees the new text without reloading.
+  useEffect(() => {
+    const ids = [...allSegments.values()].map((segment) => segment.event.id)
+    if (!ids.length) return
+    const pool = getPool()
+    const sub = pool.subscribeMany(
+      RELAYS,
+      { kinds: [KINDS.TRANSCRIPT], '#e': ids, since: mountedAtRef.current } as Filter,
+      {
+        onevent(event: NostrEvent) {
+          const segmentId = event.tags.find(([key]) => key === 'e')?.[1]
+          const segment = allSegments.get(segmentId ?? '')
+          if (!segment) return
+          fetchTranscripts([segment]).then((map) => {
+            const transcript = map.get(segment.event.id)
+            if (!transcript) return
+            setTranscripts((prev) => new Map(prev).set(segment.event.id, transcript))
+          })
+        },
+      },
+    )
+    return () => sub.close()
+  }, [allSegments])
   useEffect(() => {
     if (!cut.saving) return
     const unpin = pinWindowScroll()
@@ -881,7 +951,8 @@ export default function IssueTimeline({
                               parentName={parent
                                 ? authorLabel(profiles.get(parent.event.pubkey), parent.event.pubkey)
                                 : null}
-                              transcript={transcripts.get(id)}
+                              transcript={transcripts.get(id)?.text}
+                              transcriptChunks={transcripts.get(id)?.chunks}
                               isNew={newSegmentIds.has(id)}
                               isOwn={seg.event.pubkey === myPubkey}
                               justPublished={justPublished.has(id)}
@@ -897,6 +968,13 @@ export default function IssueTimeline({
                                 onMoveUp: () => cut.move(id, -1),
                                 onMoveDown: () => cut.move(id, 1),
                                 onToggleReviewed: () => cut.toggleReviewed(id),
+                              } : undefined}
+                              transcribe={producer && producer.producerPubkeys.has(producer.pubkey.toLowerCase()) ? {
+                                requested: (retranscribeRequests.get(id) ?? 0)
+                                  > (transcripts.get(id)?.event.created_at ?? 0),
+                                busy: retranscribeBusy.has(id),
+                                error: retranscribeErrors.get(id),
+                                onRetranscribe: () => void requestRetranscribe(seg),
                               } : undefined}
                             />
                             {canRecordHere && isReplyingToThis && (

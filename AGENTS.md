@@ -99,9 +99,10 @@ frozen GSD import — do not treat it as current runtime or UI.
 ## Project Summary
 
 Logbook is an async voice-podcast PWA for Nostr Compass. Contributors leave voice notes on
-Nostr (kind 4200 segments), the VPS assembles them into a Podcasting 2.0 episode. Stack:
-React + Vite + TypeScript, Nostr (nostr-tools), Blossom (BUD-01/BUD-04), transformers.js
-(v2 only), ffmpeg (VPS stitcher). Static build, GitHub Pages or nsite hosting.
+Nostr (kind 4200 segments), the VPS assembles them into a Podcasting 2.0 episode and
+transcribes every upload. Stack: React + Vite + TypeScript, Nostr (nostr-tools), Blossom
+(BUD-01/BUD-04), whisper.cpp (VPS transcription), ffmpeg (VPS stitcher). Static build,
+GitHub Pages or nsite hosting.
 
 ## Pre-conditions (do these BEFORE writing any code)
 
@@ -254,14 +255,33 @@ React + Vite + TypeScript, Nostr (nostr-tools), Blossom (BUD-01/BUD-04), transfo
 
 ---
 
-## Phase 5: v2 — Client-Side Transcription
+## Phase 5: v2 — Transcription
 
-- [ ] **TRANS-01**: add a reviewed, zero-high browser transcription dependency; the worker receives an audio blob and returns transcript text plus word timestamps
-- [ ] **TRANS-02**: Worker uses `env.backends.onnx.wasm.numThreads = 4`; detect WebGPU availability and set backend accordingly
-- [ ] **TRANS-03**: Main thread: after segment event publishes, post audio blob to worker; on result, publish companion transcript event with `["e", segmentId]` + `["k", "4200"]` tags
-- [ ] **TRANS-04**: VPS fallback: cron job checks for segments older than 30 minutes with no companion transcript event; runs `whisper` CLI on downloaded audio; publishes companion event via Compass npub
-- [ ] **TRANS-05**: Timeline: `src/components/TranscriptCard.tsx` — renders transcript text; `<AudioPlayer>` activates on text tap; word-level highlighting during playback if timestamps available
+Transcription runs on the VPS, not in the browser: the worker watch loop picks up every
+verified segment of an issue that has a trusted manifest, downloads the audio from the
+configured Blossom origins, and publishes a kind 1111 companion (sentence-level chunks in
+the content JSON) from the Compass npub. Browser-side transcription was built once and
+removed in 93cb11b — `@xenova/transformers` had a critical dependency chain and
+`@huggingface/transformers` four no-fix high audit findings plus a 23 MB WASM asset. Do
+not reintroduce either without a clean audit.
+
+- [x] **TRANS-01**: `scripts/transcribe-segments.ts` — sweep core; scope = manifest issues,
+      coverage = verified author-or-Compass companions only (spam cannot suppress), capped
+      at 5 segments per tick; data failures skip, signer/relay failures abort the sweep
+- [x] **TRANS-02**: obsolete — no browser engine; whisper-cli + small.en are baked into the
+      worker image, pinned by tarball and model sha256 (base.en produced unusable
+      transcripts on domain speech and was replaced)
+- [x] **TRANS-03**: obsolete — the PWA never transcribes; the worker publishes companions
+- [x] **TRANS-04**: `watch-compass.ts` runs the sweep each tick after the release cycle;
+      `npm run transcribe-missing -- [--hours N]` remains the manual backfill CLI
+- [x] **TRANS-05**: `TranscriptCard` renders sentence chunks with tap-to-seek and
+      active-sentence highlighting inside `VoiceBubble`; plain text still renders as text
 - [ ] **TRANS-06**: `src/lib/search.ts` — local full-text search over cached transcripts using `MiniSearch`; results highlight matching segment cards
+- [x] **TRANS-07**: Producer-only "Transcribe" / "Transcribe again" on each voice note
+      (`VoiceBubble`): publishes a kind 34202 retranscribe request on the segment. The
+      worker listens live and transcribes when a request is newer than the companion
+      (the once-a-minute sweep stays as fallback). After a model bump,
+      `transcribe-missing -- --retranscribe-all` refreshes every companion in one run.
 
 ---
 
@@ -287,7 +307,9 @@ React + Vite + TypeScript, Nostr (nostr-tools), Blossom (BUD-01/BUD-04), transfo
 
 - [ ] **LN-01**: Extend `data/npubs.yml` schema to include optional `lightning` field (LNURL or Lightning address); update whitelist JSON generation to include it
 - [ ] **LN-02**: RSS feed `podcast:value` block with splits derived from whitelist; percentage = equal split across contributors present in episode
-- [ ] **AUTO-01**: VPS: "lock episode" kind 34200 publish triggers stitcher run automatically via webhook or relay subscription
+- [x] **AUTO-01**: the worker's live subscription wakes a cycle on any producer
+      kind 34200 publish; the cycle sees the cutting lock and runs the stitcher.
+      The once-a-minute poll remains the fallback path.
 - [ ] **HOST-01**: Deploy as nsite via `nsite` CLI; configure multi-gateway fallback; test via `wss://relay.nostr.band` nsite resolution
 
 ---
@@ -298,11 +320,11 @@ React + Vite + TypeScript, Nostr (nostr-tools), Blossom (BUD-01/BUD-04), transfo
 |---------|--------|-------|
 | Framework | React 19 + Vite 6 + TypeScript | Static build |
 | Nostr | nostr-tools 2.x | NIP-46, NIP-55, event signing |
-| Blossom | Raw fetch (BUD-01/04) | No heavy SDK needed |
+| Transcription | whisper.cpp (VPS worker) | small.en, pinned sha256, baked into image |
 | Audio recording | MediaRecorder (webm/opus) | iOS 18.4+ floor |
 | Waveform | Web Audio API AnalyserNode | Canvas or SVG |
 | Drag-to-reorder | @dnd-kit/core | Admin mode |
-| Transcription | @xenova/transformers Whisper-base | v2; Web Worker |
+| Transcription | whisper.cpp (VPS worker) | base.en, pinned sha256, baked into image |
 | Search | MiniSearch | v2; local full-text |
 | TTS | kokoro-onnx (VPS) | v2 AI intro; v3 voice changer |
 | Stitcher | ffmpeg (VPS) | EBU R128, acrossfade, mp3 |
@@ -336,7 +358,6 @@ logbook-pwa/
       use-episode-cut.ts    # Manifest state behind the episode page
       cut-rules.ts          # Pure rules: in/out, eligibility, ordering limits
     workers/
-      transcribe.worker.ts  # Whisper (v2)
       voiceChanger.worker.ts # DSP (v3)
   scripts/ (VPS, run via ts-node or node --esm)
     watch-compass.ts        # Cron: detect new issue, create manifest
@@ -382,3 +403,19 @@ logbook-pwa/
 - A recording that captured no sound is refused at the microphone (true peak
   below −66 dBFS). Silence cannot be normalised — loudness normalisation would
   apply ~80 dB of gain to the noise floor — so it must never reach the cut.
+- Transcription is VPS-only (whisper.cpp, small.en) and covers every verified
+  segment of a manifested issue; the transcript companion carries sentence-level
+  chunks. Browser-side transcription is a hard line, not an audit outcome: the
+  browser is an uncontrolled runtime, and config-as-code plus a containerized,
+  pinned worker is the reproducibility bar. Both browser transformer packages
+  also failed dependency review and were removed (93cb11b) — do not reintroduce
+  them or any successor engine. Only a verified author or Compass companion
+  marks a segment as covered — third-party or forged companions never suppress
+  the sweep.
+- Retranscription is requested, never executed client-side: a producer's kind
+  34202 event on a segment (Logbook's own application kind, sibling of the
+  34200 manifest — not a Nostr reaction) orders the worker to republish the
+  companion once the request is newer than it. The worker subscribes to these
+  requests live and keeps the minute sweep as fallback, so a click transcribes
+  in seconds; producers only, and the sweep's newest-wins rule makes repeats
+  and racing triggers idempotent.

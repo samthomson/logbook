@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { finalizeEvent, generateSecretKey } from 'nostr-tools'
+import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools'
 import { publishToRelays } from './relay'
-import { parseSegment, publishSegment, publishTranscript, selectTrustedSegmentEvents, selectTrustedTranscripts } from './segment'
+import { parseSegment, publishSegment, publishTranscript, selectRetranscribeRequests, selectTrustedSegmentEvents, selectTrustedTranscripts } from './segment'
 import type { NostrEvent, NostrSigner } from '../types/nostr'
 
 vi.mock('./relay', async (importOriginal) => {
@@ -98,6 +98,48 @@ describe('selectTrustedTranscripts', () => {
       [parsedSegment],
       [wrongAuthor, forged, older, newest],
     ).get(segmentEvent.id)?.text).toBe('newest')
+  })
+
+  it('surfaces sentence chunks from worker transcripts and drops malformed timestamps', () => {
+    const fallback = generateSecretKey()
+    const segmentEvent = segment()
+    const parsedSegment = parseSegment(segmentEvent)!
+    const transcript = finalizeEvent({
+      kind: 1111,
+      created_at: 2,
+      tags: [['e', segmentEvent.id, '', 'root'], ['k', '4200']],
+      content: JSON.stringify({
+        text: 'hello world',
+        chunks: [
+          { text: 'hello', timestamp: [0, 1.5] },
+          { text: 'dropped', timestamp: ['x', 2] },
+          { text: 'world', timestamp: [1.5, 2.6] },
+        ],
+      }),
+    }, fallback)
+
+    const selected = selectTrustedTranscripts([parsedSegment], [transcript], getPublicKey(fallback)).get(segmentEvent.id)!
+
+    expect(selected.text).toBe('hello world')
+    expect(selected.chunks).toEqual([
+      { text: 'hello', timestamp: [0, 1.5] },
+      { text: 'world', timestamp: [1.5, 2.6] },
+    ])
+  })
+
+  it('treats a plain-text transcript as chunkless', () => {
+    const segmentEvent = segment()
+    const fallback = generateSecretKey()
+    const transcript = finalizeEvent({
+      kind: 1111,
+      created_at: 2,
+      tags: [['e', segmentEvent.id, '', 'root'], ['k', '4200']],
+      content: 'spoken words',
+    }, fallback)
+
+    const selected = selectTrustedTranscripts([parseSegment(segmentEvent)!], [transcript], getPublicKey(fallback)).get(segmentEvent.id)!
+    expect(selected.text).toBe('spoken words')
+    expect(selected.chunks).toEqual([])
   })
 
   it('rejects a transcript with the wrong target-kind relationship', () => {
@@ -390,5 +432,47 @@ describe('publishSegment authorization', () => {
       },
     })).rejects.toThrow('Publishing authorization was revoked.')
     expect(relayPublish).toHaveBeenCalledOnce()
+  })
+})
+
+describe('selectRetranscribeRequests', () => {
+  const producer = generateSecretKey()
+  const producers = new Set([getPublicKey(producer)])
+  function retranscribeRequest(author: Uint8Array, segmentId: string, created_at: number): NostrEvent {
+    return finalizeEvent({
+      kind: 34202,
+      created_at,
+      tags: [['e', segmentId]],
+      content: '',
+    }, author)
+  }
+
+  it('keeps the newest verified producer request per segment', () => {
+    const seg = parseSegment(segment())!
+    const newest = retranscribeRequest(producer, seg.event.id, 3000)
+
+    const map = selectRetranscribeRequests(
+      [seg],
+      [retranscribeRequest(producer, seg.event.id, 2000), newest],
+      producers,
+    )
+
+    expect(map.get(seg.event.id)).toBe(3000)
+  })
+
+  it('ignores requests from outside the producer set and kind 7 reactions', () => {
+    const seg = parseSegment(segment())!
+    const outsider = retranscribeRequest(generateSecretKey(), seg.event.id, 3000)
+    const reaction = finalizeEvent({
+      kind: 7,
+      created_at: 3000,
+      tags: [['e', seg.event.id]],
+      content: '🔁',
+    }, producer)
+    const otherNote = retranscribeRequest(producer, 'f'.repeat(64), 3000)
+
+    const map = selectRetranscribeRequests([seg], [outsider, reaction, otherNote], producers)
+
+    expect(map.size).toBe(0)
   })
 })

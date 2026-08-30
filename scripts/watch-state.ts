@@ -141,6 +141,24 @@ export function latestVerifiedManifest(
   )
 }
 
+/**
+ * Every issue d-tag that has at least one verified manifest from a trusted
+ * producer, in any state — the scope for which segments deserve VPS compute.
+ */
+export function verifiedManifestIssueIds(
+  events: ManifestEvent[],
+  { expectedPubkey, verify }: ManifestSelectionOptions,
+): string[] {
+  const issueIds = new Set<string>()
+  for (const event of events) {
+    const issueId = manifestDTag(event)
+    if (!issueId || issueIds.has(issueId)) continue
+    if (!authoredByTrusted(event, expectedPubkey) || !verify(event)) continue
+    issueIds.add(issueId)
+  }
+  return [...issueIds]
+}
+
 function issueNumber(event: TaggedEvent): number | null {
   const dTag = event.tags.find((tag) => tag[0] === 'd')?.[1] ?? ''
   const match = dTag.match(/(\d+)$/)

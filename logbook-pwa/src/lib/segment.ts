@@ -12,6 +12,7 @@ import type {
   NostrSigner,
   BlobDescriptor,
   Segment,
+  TranscriptChunk,
   TranscriptEvent,
 } from '../types/nostr'
 import { getTag, parseSegmentContent } from '../types/nostr'
@@ -217,20 +218,104 @@ export async function fetchTranscripts(
   return selectTrustedTranscripts(segments, events)
 }
 
+/**
+ * Publish a producer's retranscribe request: Logbook's own kind 34202 event on
+ * the segment — an application command like the manifest (34200), not a Nostr
+ * reaction. The worker's sweep honors the newest producer request by
+ * republishing the companion from the Compass npub.
+ */
+export async function publishRetranscribeRequest(
+  segmentEvent: NostrEvent,
+  signer: NostrSigner,
+  expectedPubkey: string,
+  relays: string[] = RELAYS,
+): Promise<NostrEvent> {
+  if (relays.length === 0) throw new Error('No relays configured')
+  const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Signer identity request')
+  assertExpectedSignerPubkey(pubkey, expectedPubkey)
+
+  const event = await withSignerTimeout(
+    signer.signEvent({
+      kind: KINDS.RETRANSCRIBE,
+      created_at: now(),
+      tags: [['e', segmentEvent.id]],
+      content: '',
+      pubkey,
+    }),
+    'Signer retranscribe signing',
+  )
+  assertEventSignedByExpected(event, expectedPubkey)
+  await publishToRelays(event, relays)
+  return event
+}
+/** Newest verified producer retranscribe request per segment id. The worker
+ * applies the same kind and author rules, so what this shows is what it
+ * will honor. */
+export function selectRetranscribeRequests(
+  segments: Segment[],
+  candidates: NostrEvent[],
+  producers: ReadonlySet<string>,
+): Map<string, number> {
+  const segmentIds = new Set(segments.map((segment) => segment.event.id))
+  const newest = new Map<string, number>()
+  for (const event of filterVerified(candidates)) {
+    if (event.kind !== KINDS.RETRANSCRIBE) continue
+    if (!producers.has(event.pubkey.toLowerCase())) continue
+    const segmentId = event.tags.find(([key, value]) => key === 'e' && value)?.[1]
+    if (!segmentId || !segmentIds.has(segmentId)) continue
+    const at = newest.get(segmentId)
+    if (at === undefined || event.created_at > at) newest.set(segmentId, event.created_at)
+  }
+  return newest
+}
+
+export async function fetchRetranscribeRequests(
+  segments: Segment[],
+  producers: ReadonlySet<string>,
+  relays: string[] = RELAYS,
+): Promise<Map<string, number>> {
+  if (!segments.length) return new Map()
+  const pool = getPool()
+  const events = await pool.querySync(relays, {
+    kinds: [KINDS.RETRANSCRIBE],
+    '#e': segments.map((segment) => segment.event.id),
+    authors: [...producers],
+  })
+  return selectRetranscribeRequests(segments, events, producers)
+}
+
 const MAX_TRANSCRIPT_CHARS = 200_000
 
-function parseTranscriptText(content: string): string | null {
+/** Chunk timestamps are untrusted relay content; malformed rows are dropped. */
+function parseTranscriptChunks(value: unknown): TranscriptChunk[] {
+  if (!Array.isArray(value)) return []
+  const chunks: TranscriptChunk[] = []
+  for (const row of value) {
+    if (!row || typeof row !== 'object') continue
+    const { text, timestamp } = row as { text?: unknown; timestamp?: unknown }
+    if (typeof text !== 'string' || !Array.isArray(timestamp) || timestamp.length !== 2) continue
+    const [start, end] = timestamp as [unknown, unknown]
+    if (typeof start !== 'number' || !Number.isFinite(start)) continue
+    if (end !== null && (typeof end !== 'number' || !Number.isFinite(end))) continue
+    chunks.push({ text, timestamp: [start, end] })
+  }
+  return chunks
+}
+
+function parseTranscriptContent(content: string): { text: string; chunks: TranscriptChunk[] } | null {
   if (content.length > MAX_TRANSCRIPT_CHARS) return null
   try {
     const parsed = JSON.parse(content) as unknown
     if (parsed && typeof parsed === 'object' && 'text' in parsed) {
-      const text = (parsed as { text: unknown }).text
-      return typeof text === 'string' && text.length <= MAX_TRANSCRIPT_CHARS ? text : null
+      const text = parsed.text
+      if (typeof text !== 'string' || text.length > MAX_TRANSCRIPT_CHARS) return null
+      const chunks = 'chunks' in parsed ? parseTranscriptChunks(parsed.chunks) : []
+      return { text, chunks }
     }
   } catch {
-    // Current transcript events use plain text.
+    // Worker transcripts carry sentence chunks; author transcripts are plain text.
   }
-  return content
+  return { text: content, chunks: [] }
 }
 
 /** Select transcripts independent of relay ordering and reject forged linkage. */
@@ -253,8 +338,8 @@ export function selectTrustedTranscripts(
     if (eTags.length !== 1 || kTags.length !== 1 || kTags[0][1] !== String(KINDS.SEGMENT)) continue
     const segmentId = eTags[0][1]
     const segment = byId.get(segmentId)
-    const text = parseTranscriptText(event.content)
-    if (!segment || text === null) continue
+    const transcript = parseTranscriptContent(event.content)
+    if (!segment || transcript === null) continue
     // A verified Compass fallback is authoritative only when the segment's
     // author has not supplied a verified companion transcript.
     const selected = event.pubkey === segment.event.pubkey
@@ -272,11 +357,11 @@ export function selectTrustedTranscripts(
   return new Map([...byId.keys()].flatMap((segmentId) => {
     const event = selectedPrimary.get(segmentId) ?? selectedFallback.get(segmentId)
     return event ? [[segmentId, event] as const] : []
-  }).map(([segmentId, event]) => [segmentId, {
-    event,
-    segmentEventId: segmentId,
-    text: parseTranscriptText(event.content)!,
-  }]))
+  }).map(([segmentId, event]) => {
+    // Re-parsing the same content that passed the selection loop's check.
+    const { text, chunks } = parseTranscriptContent(event.content)!
+    return [segmentId, { event, segmentEventId: segmentId, text, chunks }] as const
+  }))
 }
 
 /**
