@@ -77,6 +77,13 @@ Never plan to fail. Code has one intended path: it works, or it hard-errors so
 the operator can fix the root cause. Do not add "backup" options, silent
 fallbacks, secondary lists, or soft defaults that paper over misconfiguration.
 
+No fallbacks, anywhere, ever — config or code. No `${VAR:-default}`
+substitutions in compose files, Dockerfiles, or scripts: an unset variable is
+an error at load, naming the variable. A genuinely optional value's unset
+state is itself the answer; never invent a default to keep going. The only
+acceptable `${VAR:-}` use is an empty-default presence check for a documented
+optional override whose required alternative is still validated separately.
+
 - Two relay roles, two names, both required (no silent defaults):
   - `RELAYS` — Logbook write/query (segments, manifests, whitelists, publish).
   - `DISCOVERY_RELAYS` — read-only discovery (kind 0 profiles, NIP-05 hints, Compass kind 30023).
