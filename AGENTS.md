@@ -4,6 +4,10 @@
 
 - Fewest words that carry the information. No preamble, no recap, no summary of
   work already visible in the diff. Prose, not headed sections, unless asked.
+- Short answers, always. One direct answer, the decision, the risk — expand
+  only when strictly necessary. No essays, no multi-section analyses, no lists
+  of generic recommendations. If asked to recommend, give the ONE you'd bet on
+  and why, in a line or two; name what you'd drop.
 - Only three things earn space: the operator's next action, a direct answer to
   what was asked, or a specific question with the trade-off of each option.
 - A found problem is reported once, in one line, with what it costs. Never
@@ -320,7 +324,6 @@ not reintroduce either without a clean audit.
 |---------|--------|-------|
 | Framework | React 19 + Vite 6 + TypeScript | Static build |
 | Nostr | nostr-tools 2.x | NIP-46, NIP-55, event signing |
-| Transcription | whisper.cpp (VPS worker) | small.en, pinned sha256, baked into image |
 | Audio recording | MediaRecorder (webm/opus) | iOS 18.4+ floor |
 | Waveform | Web Audio API AnalyserNode | Canvas or SVG |
 | Drag-to-reorder | @dnd-kit/core | Admin mode |

@@ -2,12 +2,15 @@ import { nip19 } from 'nostr-tools'
 
 const COMPASS_ISSUE_KIND = 30_023
 
+/** The production Compass author the route validator accepts
+ * (src/lib/config-env.ts REAL_COMPASS_PUBKEY) — not the test COMPASS_PUBKEY. */
+const REAL_COMPASS_PUBKEY = '775954f7314112489a4a29ec692b72386fd60bcceb0308d423101ea979c57a80'
+
 /** Hash route for a Compass newsletter episode. */
-export function episodeHref(origin, issueNumber, pubkey = process.env.COMPASS_PUBKEY) {
-  if (!pubkey) throw new Error('COMPASS_PUBKEY is required to build an episode URL')
+export function episodeHref(origin, issueNumber) {
   const naddr = nip19.naddrEncode({
     kind: COMPASS_ISSUE_KIND,
-    pubkey,
+    pubkey: REAL_COMPASS_PUBKEY,
     identifier: `newsletter-${issueNumber}`,
   })
   return `${String(origin).replace(/\/$/, '')}/#/episode/${naddr}`

@@ -121,6 +121,8 @@ const fixturePlugin = {
       }
       export function parseSegment(event) { return segments.find((segment) => segment.event.id === event.id) ?? null }
       export async function fetchTranscripts() { return new Map() }
+      export async function fetchRetranscribeRequests() { return new Map() }
+      export async function publishRetranscribeRequest() { throw new Error('unavailable in QA') }
       export function selectTrustedSegmentEvents(events) { return events }
       export async function publishSegment() { throw new Error('Publishing is unavailable in playback QA') }
     `

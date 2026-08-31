@@ -71,6 +71,8 @@ const modules = new Map([
   ['segment', `
     export async function fetchSegmentsForIssue(){return new Map()}
     export async function fetchTranscripts(){return new Map()}
+    export async function fetchRetranscribeRequests(){return new Map()}
+    export async function publishRetranscribeRequest(){throw new Error("unavailable in QA")}
     export function parseSegment(){return null}
     export function selectTrustedSegmentEvents(){return []}
     export async function publishSegment(){throw new Error('unexpected publish')}
@@ -122,7 +124,7 @@ try {
   await server.listen()
   const address = server.httpServer?.address()
   if (!address || typeof address === 'string') throw new Error('Vite QA server did not expose a port')
-  const appUrl = episodeHref(`http://127.0.0.1:${address.port}/`, 32, compassPubkey)
+  const appUrl = episodeHref(`http://127.0.0.1:${address.port}/`, 32)
   browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-gpu'] })
   const page = await browser.newPage()
   page.on('pageerror', (error) => console.error('PAGEERROR', error.message))

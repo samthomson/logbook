@@ -48,6 +48,8 @@ const modules = new Map([
   ['segment', `
     export async function fetchSegmentsForIssue(){throw new Error('relay offline')}
     export async function fetchTranscripts(){return new Map()}
+    export async function fetchRetranscribeRequests(){return new Map()}
+    export async function publishRetranscribeRequest(){throw new Error("unavailable in QA")}
     export function parseSegment(event){return {event,sectionId:'${sectionId}',respondingTo:null,isIntro:false,audio:{url:'https://example.test/audio.webm',sha256:'${'4'.repeat(64)}',mime:'audio/webm',duration:7,waveform:[0.2,0.4]}}}
     export function selectTrustedSegmentEvents(){return []}
     export async function publishSegment(){throw new Error('unexpected publish')}
