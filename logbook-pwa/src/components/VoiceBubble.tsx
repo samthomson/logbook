@@ -87,6 +87,11 @@ export default function VoiceBubble({
   const avatarColors = avatarStyle(segment.event.pubkey)
   const npub = profile?.name?.trim() ? nip19.npubEncode(segment.event.pubkey) : null
 
+  // The worker transcribes every upload automatically; only while that is
+  // still plausibly in flight do we say so instead of "No transcript."
+  const transcribingNow =
+    !transcript && Date.now() / 1000 - segment.event.created_at < 5 * 60
+
   return (
     <div
       id={`voice-note-${segment.event.id}`}
@@ -178,19 +183,25 @@ export default function VoiceBubble({
         {problem && (
           <p className="bubble__problem" role="alert">{problem}</p>
         )}
-        {(transcript || transcribe) && (
-          <section className="transcript-box">
-            {transcript && (
-              <TranscriptCard
-                text={transcript}
-                chunks={transcriptChunks}
-                currentTime={isCurrent ? elapsed : 0}
-                onChunkClick={(seconds) => {
-                  if (!isCurrent) playback.play(segment.event.id)
-                  playback.seek(seconds)
-                }}
-              />
-            )}
+        <section className="transcript-box">
+          {transcript ? (
+            <TranscriptCard
+              text={transcript}
+              chunks={transcriptChunks}
+              currentTime={isCurrent ? elapsed : 0}
+              onChunkClick={(seconds) => {
+                if (!isCurrent) playback.play(segment.event.id)
+                playback.seek(seconds)
+              }}
+            />
+          ) : transcribingNow ? (
+            <p className="transcript-box__pending" role="status">
+              <span className="spinner spinner--xs" aria-hidden="true" />
+              Transcribing — the text appears here in about a minute.
+            </p>
+          ) : (
+            <p className="transcript-box__pending">No transcript.</p>
+          )}
 
             {transcribe && (
               <div className="bubble__transcribe">
@@ -214,8 +225,7 @@ export default function VoiceBubble({
                 )}
               </div>
             )}
-          </section>
-        )}
+        </section>
 
         {cut && (
           <div className="bubble__cut">

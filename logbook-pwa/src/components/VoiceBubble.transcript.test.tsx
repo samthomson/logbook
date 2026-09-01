@@ -27,10 +27,13 @@ const chunks: TranscriptChunk[] = [
   { text: '1, 2, 3.', timestamp: [2.1, 3.0] },
 ]
 
-function render(extra: Partial<Parameters<typeof VoiceBubble>[0]> = {}) {
+function render(
+  extra: Partial<Parameters<typeof VoiceBubble>[0]> = {},
+  seg: Segment = segment,
+) {
   return renderToStaticMarkup(
-    <PlaybackProvider segments={[segment]}>
-      <VoiceBubble segment={segment} {...extra} />
+    <PlaybackProvider segments={[seg]}>
+      <VoiceBubble segment={seg} {...extra} />
     </PlaybackProvider>,
   )
 }
@@ -48,10 +51,17 @@ describe('VoiceBubble transcript', () => {
     expect(html).toContain('bubble__transcript')
     expect(html).not.toContain('transcript__chunk')
   })
+  it('says the automatic transcript is on its way for a fresh upload', () => {
+    const fresh = { ...segment, event: { ...segment.event, created_at: Math.floor(Date.now() / 1000) - 30 } }
+    const html = render({}, fresh)
+    expect(html).toContain('Transcribing — the text appears here in about a minute.')
+    expect(html).toContain('transcript-box__pending')
+  })
 
-  it('renders no transcript block when the note has none', () => {
+  it('states plainly when an old note has no transcript', () => {
     const html = render()
-    expect(html).not.toContain('transcript')
+    expect(html).toContain('No transcript.')
+    expect(html).not.toContain('transcript__chunk')
   })
 })
 
