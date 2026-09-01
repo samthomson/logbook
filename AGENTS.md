@@ -33,6 +33,12 @@
   operator owns (Dokploy env included). Report the exact variable and value
   needed; the operator applies it. Repo files (`.env.example`) are the place to
   document required values.
+- Publish targets are exactly what the env vars say — no more, no less.
+  `NSYTE_RELAYS` and `NSYTE_BLOSSOM_SERVERS` are the complete target list for
+  an nsite publish; never add a relay or server, never widen a target, never
+  override or work around an env definition (inline env included). The
+  operator's infrastructure choices are not an agent decision and are never
+  relitigated.
 - One compose file. One `.env`. Same variable names in `.env`, PWA, and worker.
 - Comments record a non-obvious constraint or why, never what the next line
   already says. Do not annotate a variable with a restatement of its name.
