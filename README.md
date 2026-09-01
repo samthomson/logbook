@@ -20,8 +20,20 @@ PWA: `http://localhost:$PWA_DEV_PORT`. Feed origin: `$LOGBOOK_BASE_URL/feed.xml`
 docker compose run --rm worker npm run seed -- 1
 ```
 
-`--profile prod` serves the built PWA on `$PWA_PORT`. Dokploy with no profile
-starts the worker and the feed origin.
+Dokploy with no profile starts the worker and the feed origin.
+
+## Compass signer (bunker)
+
+The worker and nsite publish sign through a NIP-46 bunker holding the Compass
+key. Run it in a terminal you keep open whenever you're testing:
+
+```sh
+./scripts/start-bunker.sh
+```
+
+One-time: put the Compass hex sec in `.secrets/compass-publish/sec` (gitignored,
+`chmod 600`). The script derives `-k`/`-s` from `.env`, so restarts change
+nothing else.
 
 ## Publish the PWA (nsite)
 
