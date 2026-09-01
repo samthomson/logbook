@@ -300,6 +300,12 @@ html.scroll-pinned {
   height: 16px;
 }
 
+.spinner--xs {
+  width: 12px;
+  height: 12px;
+  border-width: 1.5px;
+}
+
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
@@ -674,6 +680,40 @@ html.scroll-pinned {
   color: var(--muted);
 }
 
+.transcript-box {
+  margin-top: 10px;
+  padding: 10px 12px 8px 14px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--surface);
+}
+
+/* Quote treatment: the transcript reads as quoted speech, not body text. */
+.transcript-box .bubble__transcript {
+  margin: 0;
+  padding: 0 0 0 20px;
+  border-top: none;
+  color: var(--fg);
+  font-style: italic;
+  position: relative;
+}
+
+.transcript-box .bubble__transcript::before {
+  content: '\201C';
+  position: absolute;
+  left: -4px;
+  top: -8px;
+  font-size: 2.25rem;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent);
+}
+
+.transcript-box .bubble__transcribe {
+  margin-top: 8px;
+}
+
 .bubble__transcribe {
   margin-top: 8px;
   display: flex;
@@ -683,6 +723,9 @@ html.scroll-pinned {
 }
 
 .bubble__transcribe-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 0.8125rem;
   color: var(--muted);
 }
@@ -792,9 +835,7 @@ html.scroll-pinned {
 .bubble__npub {
   font-size: 0.75rem;
   color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-all;
 }
 
 .bubble__new,

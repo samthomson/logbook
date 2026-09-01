@@ -108,15 +108,14 @@ export function shortKey(pubkey: string): string {
 }
 
 /**
- * Display name for a recording's author. Falls back to a truncated npub rather
+ * Display name for a recording's author. Falls back to the full npub rather
  * than a generic word, so two unknown authors never look like the same person.
  */
 export function authorLabel(profile: Profile | null | undefined, pubkey: string): string {
   const name = profile?.name?.trim()
   if (name) return name
   try {
-    const npub = nip19.npubEncode(pubkey)
-    return `${npub.slice(0, 12)}…${npub.slice(-4)}`
+    return nip19.npubEncode(pubkey)
   } catch {
     return shortKey(pubkey)
   }

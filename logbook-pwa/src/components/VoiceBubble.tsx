@@ -178,36 +178,43 @@ export default function VoiceBubble({
         {problem && (
           <p className="bubble__problem" role="alert">{problem}</p>
         )}
-        {transcript && (
-          <TranscriptCard
-            text={transcript}
-            chunks={transcriptChunks}
-            currentTime={isCurrent ? elapsed : 0}
-            onChunkClick={(seconds) => {
-              if (!isCurrent) playback.play(segment.event.id)
-              playback.seek(seconds)
-            }}
-          />
-        )}
+        {(transcript || transcribe) && (
+          <section className="transcript-box">
+            {transcript && (
+              <TranscriptCard
+                text={transcript}
+                chunks={transcriptChunks}
+                currentTime={isCurrent ? elapsed : 0}
+                onChunkClick={(seconds) => {
+                  if (!isCurrent) playback.play(segment.event.id)
+                  playback.seek(seconds)
+                }}
+              />
+            )}
 
-        {transcribe && (
-          <div className="bubble__transcribe">
-            <button
-              type="button"
-              className="btn btn--ghost btn--xs"
-              disabled={transcribe.requested || transcribe.busy}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={transcribe.onRetranscribe}
-            >
-              {transcript ? 'Transcribe again' : 'Transcribe'}
-            </button>
-            {transcribe.requested && !transcribe.busy && (
-              <span className="bubble__transcribe-note">Transcribing — the new text appears here in about a minute.</span>
+            {transcribe && (
+              <div className="bubble__transcribe">
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--xs"
+                  disabled={transcribe.requested || transcribe.busy}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={transcribe.onRetranscribe}
+                >
+                  {transcript ? 'Transcribe again' : 'Transcribe'}
+                </button>
+                {transcribe.requested && !transcribe.busy && (
+                  <span className="bubble__transcribe-note" role="status">
+                    <span className="spinner spinner--xs" aria-hidden="true" />
+                    Transcribing — the new text appears here in about a minute.
+                  </span>
+                )}
+                {transcribe.error && (
+                  <span className="bubble__transcribe-note" role="alert">{transcribe.error}</span>
+                )}
+              </div>
             )}
-            {transcribe.error && (
-              <span className="bubble__transcribe-note" role="alert">{transcribe.error}</span>
-            )}
-          </div>
+          </section>
         )}
 
         {cut && (
