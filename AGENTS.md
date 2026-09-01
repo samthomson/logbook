@@ -29,6 +29,10 @@
 - Never commit, amend, or push. The operator does all git writes, always, even
   when the work is finished and tests pass. Read-only git (status, diff, log) is
   fine.
+- Never edit the operator's `.env`, `.secrets/`, or any environment the
+  operator owns (Dokploy env included). Report the exact variable and value
+  needed; the operator applies it. Repo files (`.env.example`) are the place to
+  document required values.
 - One compose file. One `.env`. Same variable names in `.env`, PWA, and worker.
 - Comments record a non-obvious constraint or why, never what the next line
   already says. Do not annotate a variable with a restatement of its name.
