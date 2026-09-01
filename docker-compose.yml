@@ -48,9 +48,9 @@ services:
       COMPASS_BUNKER_URI: ${COMPASS_BUNKER_URI}
       COMPASS_BUNKER_CLIENT_KEY: ${COMPASS_BUNKER_CLIENT_KEY}
       LOGBOOK_STATIC_DIR: /var/www/logbook
-      # nak (spawned per sign) caches DBs under $XDG_CONFIG_HOME; the
-      # container home is read-only, so point it at writable tmpfs.
-      XDG_CONFIG_HOME: /var/cache/logbook
+      # nak builds its cache path from $HOME/.config/nak (XDG is ignored) and
+      # the container home is read-only, so HOME must point at writable tmpfs.
+      HOME: /var/cache/logbook
     volumes:
       - logbook-www:/var/www/logbook
       # tsx reads this tree; without it a worker fix stays trapped in a stale image.
