@@ -89,4 +89,4 @@ pinned) runs only in the worker container.
 - [x] ai transcription of uploads (worker whisper.cpp small.en; producer retranscribe button; live response)
 - [x] make publishing feel more robust, for each episode show a checklist of sorts of what tasks get done and are done (ie producing various xml files and publishing to blossom). have individual states/buttons for each
 - [ ] Whitelist Derek/MrBlack + run the test — ops actions, fair to omit from a code todo list
-- [ ] Prove release end-to-end on staging — the actual milestone blocker, not in README
+- [/] Prove release end-to-end on staging — the actual milestone blocker, not in README
