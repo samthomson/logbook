@@ -5,15 +5,15 @@
  * from Blossom, applies EBU R128 loudness normalisation + silence trim, then
  * stitches sections together with acrossfade and encodes to mp3 128 kbps.
  *
- * Usage:
- *   COMPASS_NSEC=nsec1... node --loader ts-node/esm stitch.ts --issue logbook-31
- *   COMPASS_NSEC=nsec1... node --loader ts-node/esm stitch.ts --issue logbook-31 --dry-run
+ * Usage (NIP-46 via COMPASS_BUNKER_URI + COMPASS_BUNKER_CLIENT_KEY):
+ *   npm run stitch -- --issue logbook-31
+ *   npm run stitch -- --issue logbook-31 --dry-run
  *
  * Requirements: ffmpeg must be in PATH.
  */
 
 import { SimplePool } from 'nostr-tools/pool'
-import { nip19, type NostrEvent } from 'nostr-tools'
+import { type NostrEvent } from 'nostr-tools'
 
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
@@ -22,7 +22,8 @@ import { tmpdir } from 'node:os'
 import fetch from 'node-fetch'
 import {
   COMPASS_PUBKEY,
-  DEFAULT_RELAYS,
+  RELAYS,
+  DISCOVERY_RELAYS,
   KINDS,
   AUDIO_DIR,
   BLOSSOM_SERVERS,
@@ -42,9 +43,13 @@ import {
   encodeMp3,
   loudnorm,
   requireFfmpeg,
+  SilentClipError,
   trimSilence,
 } from './stitch-media.ts'
-import { createCompassAmberSigner } from './amber-signer.ts'
+import { createCompassAmberSigner, type CompassSigner } from './amber-signer.ts'
+import { fetchProducerPubkeys } from './producers.ts'
+import { draftAfterFailure, SegmentFailure } from './stitch-failure.ts'
+import { writeCuttingProgress } from './cutting-progress.ts'
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -78,6 +83,8 @@ interface ManifestContent {
   sections: ManifestSection[]
   episodeStatus: string
   publishedRss: unknown
+  lastFailure?: unknown
+  release?: { completed?: unknown; failed?: unknown }
 }
 
 interface Segment {
@@ -109,15 +116,21 @@ async function downloadBlob(url: string, destPath: string, expectedSha256: strin
 // ── relay helpers ─────────────────────────────────────────────────────────────
 
 async function fetchManifest(issueId: string, pool: SimplePool): Promise<{ manifest: ManifestContent; event: ManifestEvent }> {
-  const events = await pool.querySync(DEFAULT_RELAYS, {
-    kinds: [KINDS.MANIFEST],
-    authors: [COMPASS_PUBKEY],
-    '#d': [issueId],
-    limit: 50,
-  })
+  const producers = await fetchProducerPubkeys(pool)
+  const compass = COMPASS_PUBKEY.toLowerCase()
+  const others = [...producers].filter((pubkey) => pubkey.toLowerCase() !== compass)
+  const base = { kinds: [KINDS.MANIFEST], '#d': [issueId], limit: 50 }
+  const events = (
+    await Promise.all([
+      pool.querySync(RELAYS, { ...base, authors: [COMPASS_PUBKEY] }),
+      others.length > 0
+        ? pool.querySync(RELAYS, { ...base, authors: others })
+        : Promise.resolve([]),
+    ])
+  ).flat()
 
   const event = latestVerifiedManifest(events as ManifestEvent[], issueId, {
-    expectedPubkey: COMPASS_PUBKEY,
+    expectedPubkey: producers,
     verify: (candidate) => verifyNostrEvent(candidate as never),
   })
   if (!event) throw new Error(`No verified manifest found for issue ${issueId}`)
@@ -135,30 +148,26 @@ async function fetchRequiredChapterIds(
     throw new Error(`[stitch] Cannot determine newsletter number for ${issueId}`)
   }
 
-  let identifier = String(issueNumber)
-  try {
-    const decoded = nip19.decode(manifest.issueRef)
-    if (decoded.type === 'naddr') {
-      const address = decoded.data
-      if (address.kind === KINDS.COMPASS_ISSUE && address.pubkey === COMPASS_PUBKEY) {
-        identifier = address.identifier
-      }
-    }
-  } catch {
-    // Older manifests may not have a valid naddr. The issue-number fallback is
-    // deterministic; the fetched newsletter is still signature checked.
-  }
-
-  const candidates = await pool.querySync(DEFAULT_RELAYS, {
-    kinds: [KINDS.COMPASS_ISSUE],
-    authors: [COMPASS_PUBKEY],
-    '#d': [...new Set([identifier, String(issueNumber), issueId])],
-    limit: 20,
-  })
+  // Compass publishes d=newsletter-N. Querying 34 or logbook-34 never matches.
+  const dTag = `newsletter-${issueNumber}`
+  const candidates = await pool.querySync(
+    DISCOVERY_RELAYS,
+    {
+      kinds: [KINDS.COMPASS_ISSUE],
+      authors: [COMPASS_PUBKEY],
+      '#d': [dTag],
+      limit: 20,
+    },
+    { maxWait: 8_000 },
+  )
   const issue = (candidates as NostrEvent[])
     .filter((event) => event.pubkey === COMPASS_PUBKEY && verifyNostrEvent(event as never))
     .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))[0]
-  if (!issue) throw new Error(`[stitch] No verified Compass newsletter found for ${issueId}`)
+  if (!issue) {
+    throw new Error(
+      `[stitch] No verified Compass newsletter found for ${issueId} (d=${dTag} on DISCOVERY_RELAYS)`,
+    )
+  }
 
   const targets = requiredChapterTargets(issue.content, issueNumber)
   if (!targets.length) throw new Error(`[stitch] Newsletter ${issueId} has no recording chapters`)
@@ -171,7 +180,7 @@ async function fetchSegments(
 ): Promise<Map<string, Segment>> {
   if (!segmentIds.length) return new Map()
 
-  const events = await pool.querySync(DEFAULT_RELAYS, {
+  const events = await pool.querySync(RELAYS, {
     kinds: [KINDS.SEGMENT],
     ids: segmentIds,
   })
@@ -197,6 +206,39 @@ interface Chapter {
   img?: string
 }
 
+// ── failure hand-back ─────────────────────────────────────────────────────────
+
+interface HandBack {
+  issueId: string
+  manifest: ManifestContent
+  event: ManifestEvent
+  signer: CompassSigner
+}
+
+/** Set once the run has taken a locked episode on, cleared by nothing else. */
+let handBack: HandBack | null = null
+
+async function returnEpisodeToProducer(target: HandBack, error: unknown): Promise<void> {
+  const now = Math.floor(Date.now() / 1000)
+  const content = draftAfterFailure(target.manifest, error, now)
+  const event = await target.signer.signEvent({
+    kind: KINDS.MANIFEST,
+    // Addressable event: the hand-back must win over the producer's lock.
+    created_at: Math.max(now, (target.event.created_at ?? 0) + 1),
+    tags: target.event.tags,
+    content: JSON.stringify(content),
+  })
+  const pool = new SimplePool()
+  try {
+    await Promise.any(pool.publish(RELAYS, event))
+  } finally {
+    pool.close(RELAYS)
+  }
+  console.log(
+    `[stitch] Episode ${target.issueId} handed back to the producer as a draft: ${content.lastFailure.reason}`,
+  )
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -217,6 +259,10 @@ async function main(): Promise<void> {
 
   console.log(`[stitch] Fetching manifest for ${issueId}…`)
   const { manifest, event: manifestEvent } = await fetchManifest(issueId, pool)
+  // Set before newsletter lookup: that fetch can throw, and cutting must not retry forever.
+  if (manifest.episodeStatus === 'cutting' && !dryRun) {
+    handBack = { issueId, manifest, event: manifestEvent, signer }
+  }
   const force = args.includes('--force')
   const requiredChapterIds = manifest.episodeStatus === 'cutting' || force
     ? await fetchRequiredChapterIds(issueId, manifest, pool)
@@ -228,7 +274,7 @@ async function main(): Promise<void> {
   })
   if (stitchState === 'already-published') {
     console.log('[stitch] Episode already published. Use --force to re-stitch.')
-    pool.close(DEFAULT_RELAYS)
+    pool.close([...RELAYS, ...DISCOVERY_RELAYS])
     return
   }
 
@@ -241,7 +287,7 @@ async function main(): Promise<void> {
   )
 
   const segments = await fetchSegments(allSegmentIds, pool)
-  pool.close(DEFAULT_RELAYS)
+  pool.close([...RELAYS, ...DISCOVERY_RELAYS])
   assertLockedSegmentsPresent(activeSections, segments)
 
   if (dryRun) {
@@ -286,7 +332,22 @@ async function main(): Promise<void> {
       await downloadBlob(seg.content.audio.url, rawPath, seg.content.audio.sha256)
       assertHasAudioStream(rawPath)
 
-      const normPath = loudnorm(rawPath, workDir)
+      let normPath: string
+      try {
+        normPath = loudnorm(rawPath, workDir)
+      } catch (error) {
+        if (error instanceof SilentClipError) {
+          // The producer reads the reason in the app, where the note itself is
+          // flagged; the ids belong in the operator's log.
+          console.error(`[stitch] Silent segment ${segId} at ${seg.content.audio.url}`)
+          throw new SegmentFailure(
+            `A voice note in “${section.title}” recorded no sound. Take it out of the cut, then publish again.`,
+            segId,
+            section.id,
+          )
+        }
+        throw error
+      }
       const trimPath = trimSilence(normPath, workDir)
       clipWavs.push(trimPath)
     }
@@ -315,8 +376,7 @@ async function main(): Promise<void> {
   }
 
   if (!sectionWavs.length) {
-    console.error('[stitch] No sections to stitch. Aborting.')
-    process.exit(1)
+    throw new Error('[stitch] No chapter produced any audio, so there is nothing to stitch.')
   }
 
   // Acrossfade sections together
@@ -395,6 +455,28 @@ async function main(): Promise<void> {
   )
   console.log(`[stitch] Run metadata → ${metaPath}`)
 
+  if (manifest.episodeStatus === 'cutting') {
+    const progressPool = new SimplePool()
+    try {
+      await writeCuttingProgress({
+        issueId,
+        manifest,
+        event: manifestEvent,
+        signer,
+        pool: progressPool,
+        completed: ['audio'],
+        publishedRss: { mp3Url: blob.url },
+        lastFailure: null,
+        failed: null,
+      })
+      console.log('[stitch] Manifest notes that the episode audio is on Blossom')
+    } catch (error) {
+      console.error('[stitch] Could not write audio progress on the manifest:', error)
+    } finally {
+      progressPool.close(RELAYS)
+    }
+  }
+
   // Cleanup working directory
   rmSync(workDir, { recursive: true, force: true })
 
@@ -420,17 +502,24 @@ async function main(): Promise<void> {
           tags: madeTheCutReactionTags(segId, segments.get(segId)!.pubkey),
           content: '🎙️',
         })
-        await Promise.any(reactPool.publish(DEFAULT_RELAYS, reaction))
+        await Promise.any(reactPool.publish(RELAYS, reaction))
       } catch {
         // fire-and-forget, don't block on reaction failures
       }
     }
-    reactPool.close(DEFAULT_RELAYS)
+    reactPool.close(RELAYS)
     console.log(`[stitch] Reactions published.`)
   }
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error('[stitch] Fatal:', err)
+  if (handBack) {
+    try {
+      await returnEpisodeToProducer(handBack, err)
+    } catch (writeBack) {
+      console.error('[stitch] Could not hand the episode back to the producer:', writeBack)
+    }
+  }
   process.exit(1)
 })

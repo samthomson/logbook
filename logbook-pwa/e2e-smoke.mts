@@ -15,7 +15,7 @@ import { SimplePool } from 'nostr-tools/pool'
 import { bytesToHex } from '@noble/hashes/utils.js'
 
 const COMPASS_PUBKEY = 'baa11ea074871c850de58b626288da51a9e8bb5df7cdb63859dfa19898659b7e'
-const RELAYS = ['wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.primal.net']
+const RELAYS = ['wss://nos.lol', 'wss://relay.ditto.pub', 'wss://relay.primal.net']
 const BLOSSOM_SERVERS = ['https://blossom.band', 'https://blossom.ditto.pub', 'https://blossom.oxtr.dev']
 const KINDS = { COMPASS_ISSUE: 30023, SEGMENT: 4200, BLOSSOM_AUTH: 24242 }
 

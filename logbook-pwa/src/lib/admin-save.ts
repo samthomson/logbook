@@ -1,7 +1,7 @@
 import type { IssueManifest, ManifestContent, NostrEvent } from '../types/nostr'
 
 export interface AdminSaveDependencies {
-  fetchLatest: () => Promise<IssueManifest | null>
+  fetchLatest: (preferEventId?: string | null) => Promise<IssueManifest | null>
   publish: (
     content: ManifestContent,
     previousEventId: string | null,
@@ -66,7 +66,7 @@ export function createAdminSaveController(dependencies: AdminSaveDependencies): 
       assertActive?.()
       let acknowledged: IssueManifest | null
       try {
-        acknowledged = await dependencies.fetchLatest()
+        acknowledged = await dependencies.fetchLatest(published.id)
         assertActive?.()
       } catch (error) {
         assertActive?.()
@@ -77,7 +77,33 @@ export function createAdminSaveController(dependencies: AdminSaveDependencies): 
         assertActive?.()
         continue
       }
-      if (acknowledged?.event.id === published.id) return acknowledged
+      if (acknowledged?.event.id === published.id) {
+        let authoritative: IssueManifest | null
+        try {
+          // The preferred lookup proves our exact event reached a relay. A
+          // separate unpreferred lookup decides which revision is current.
+          authoritative = await dependencies.fetchLatest()
+          assertActive?.()
+        } catch (error) {
+          assertActive?.()
+          if (attempt === propagationDelays.length) {
+            throw new Error('Couldn’t resolve the current episode after saving — your draft is retained', { cause: error })
+          }
+          await delay(propagationDelays[attempt])
+          assertActive?.()
+          continue
+        }
+        if (authoritative?.event.id === published.id) return authoritative
+        if (authoritative && authoritative.event.id !== baseEventId) {
+          throw new Error('Save conflict — your revision reached relays, but another episode revision is current; your draft is retained')
+        }
+        if (attempt < propagationDelays.length) {
+          await delay(propagationDelays[attempt])
+          assertActive?.()
+          continue
+        }
+        throw new Error('Saved revision reached relays but was not selected as current — your draft is retained')
+      }
       if (acknowledged && acknowledged.event.id !== baseEventId) {
         throw new Error('Save conflict — another episode revision became current; your draft is retained')
       }

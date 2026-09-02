@@ -1,0 +1,132 @@
+# Logbook stack.
+#
+#   local dev  (Vite HMR):  docker compose --profile dev up --build
+#   local prod (nginx PWA): docker compose --profile prod up --build
+#   Dokploy:                no profile — worker + feed origin
+#
+# Worker writes /var/www/logbook; origin nginx serves LOGBOOK_BASE_URL.
+# Signing is NIP-46 bunker only (COMPASS_BUNKER_URI + COMPASS_BUNKER_CLIENT_KEY).
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  restart: on-failure
+
+volumes:
+  logbook-www:
+
+services:
+  # Named volumes are root-owned; the worker cannot chown them under cap_drop.
+  www-init:
+    image: busybox:1.37@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
+    user: "0:0"
+    volumes:
+      - logbook-www:/var/www/logbook
+    command: ["chown", "-R", "1001:1001", "/var/www/logbook"]
+    restart: "no"
+
+  worker:
+    <<: *hardening
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile
+    user: "1001:1001"
+    depends_on:
+      www-init:
+        condition: service_completed_successfully
+      origin:
+        condition: service_started
+    # Dokploy injects these as project env; local uses `.env` the same way.
+    environment:
+      COMPASS_PUBKEY: ${COMPASS_PUBKEY}
+      ADMIN_PUBKEYS: ${ADMIN_PUBKEYS}
+      RELAYS: ${RELAYS}
+      DISCOVERY_RELAYS: ${DISCOVERY_RELAYS}
+      BLOSSOM_SERVERS: ${BLOSSOM_SERVERS}
+      LOGBOOK_BASE_URL: ${LOGBOOK_BASE_URL}
+      # Empty means public LOGBOOK_BASE_URL/feed.xml. An origin URL is an
+      # explicit operator override, not evidence that the public host updated.
+      LOGBOOK_FEED_READBACK_URL: ${LOGBOOK_FEED_READBACK_URL:-}
+      COMPASS_BUNKER_URI: ${COMPASS_BUNKER_URI}
+      COMPASS_BUNKER_CLIENT_KEY: ${COMPASS_BUNKER_CLIENT_KEY}
+      LOGBOOK_STATIC_DIR: /var/www/logbook
+      # nak builds its cache path from $HOME/.config/nak (XDG is ignored) and
+      # the container home is read-only, so HOME must point at writable tmpfs.
+      HOME: /var/cache/logbook
+    volumes:
+      - logbook-www:/var/www/logbook
+      # tsx reads this tree; without it a worker fix stays trapped in a stale image.
+      - ./scripts:/opt/logbook/scripts:ro
+      - /opt/logbook/scripts/node_modules
+    tmpfs:
+      - /tmp:noexec,mode=1777
+      # phonemizer needs an executable scratch dir for libespeak-ng.
+      - /run/kokoro:exec,mode=0700,uid=1001,gid=1001
+      - /var/lib/logbook:mode=0755,uid=1001,gid=1001
+      - /var/cache/logbook:mode=0755,uid=1001,gid=1001
+
+  origin:
+    <<: *hardening
+    image: nginxinc/nginx-unprivileged:1.29-alpine@sha256:0c79d56aee561a1d81c63f00eee5fb5fe29279560cdc55e91425133104c7fbe6
+    depends_on:
+      www-init:
+        condition: service_completed_successfully
+    ports:
+      # Host-loopback only: TLS stays on the host proxy in prod.
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - logbook-www:/var/www/logbook:ro
+      - ./deploy/origin-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+
+  pwa-dev:
+    <<: *hardening
+    profiles: [dev]
+    # Vite writes its transform cache into the project directory.
+    read_only: false
+    build:
+      context: .
+      dockerfile: logbook-pwa/Dockerfile
+      target: deps
+    user: "node"
+    environment:
+      COMPASS_PUBKEY: ${COMPASS_PUBKEY}
+      RELAYS: ${RELAYS}
+      DISCOVERY_RELAYS: ${DISCOVERY_RELAYS}
+      BLOSSOM_SERVERS: ${BLOSSOM_SERVERS}
+      PWA_DEV_PORT: ${PWA_DEV_PORT}
+    command: ["sh", "-c", "npm run dev -- --host 0.0.0.0 --port \"$$PWA_DEV_PORT\""]
+    ports:
+      - "${PWA_DEV_PORT}:${PWA_DEV_PORT}"
+    volumes:
+      - ./logbook-pwa/src:/app/src
+      - ./logbook-pwa/index.html:/app/index.html
+      - ./logbook-pwa/vite.config.ts:/app/vite.config.ts
+      - ./logbook-pwa/public:/app/public
+      - ./logbook-pwa/pwa:/app/pwa
+    tmpfs:
+      - /tmp:mode=1777
+      - /app/node_modules/.vite:mode=1777,uid=1000,gid=1000
+      - /app/node_modules/.vite-temp:mode=1777,uid=1000,gid=1000
+
+  pwa:
+    <<: *hardening
+    profiles: [prod]
+    build:
+      context: .
+      dockerfile: logbook-pwa/Dockerfile
+      args:
+        COMPASS_PUBKEY: ${COMPASS_PUBKEY}
+        RELAYS: ${RELAYS}
+        DISCOVERY_RELAYS: ${DISCOVERY_RELAYS}
+        BLOSSOM_SERVERS: ${BLOSSOM_SERVERS}
+    ports:
+      - "${PWA_PORT}:8080"
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run

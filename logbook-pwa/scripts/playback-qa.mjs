@@ -1,8 +1,13 @@
 import { fileURLToPath } from 'node:url'
 import puppeteer from 'puppeteer'
 import { createServer } from 'vite'
+import { episodeHref } from './qa-episode.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
+process.env.COMPASS_PUBKEY ??= 'a'.repeat(64)
+process.env.RELAYS ??= 'wss://relay.test'
+process.env.DISCOVERY_RELAYS ??= 'wss://discovery.test'
+process.env.BLOSSOM_SERVERS ??= 'https://blossom.test'
 const sectionId = 'sec-lead-stories-public-chapter-32'
 const issueEvent = {
   id: '1'.repeat(64),
@@ -63,6 +68,7 @@ const compassId = '\0playback-compass-fixture'
 const segmentId = '\0playback-segment-fixture'
 const profilesId = '\0playback-profiles-fixture'
 const poolId = '\0playback-pool-fixture'
+const manifestId = '\0playback-manifest-fixture'
 const fixturePlugin = {
   name: 'playback-fixtures',
   enforce: 'pre',
@@ -71,8 +77,32 @@ const fixturePlugin = {
     if (source.endsWith('/lib/segment') && importer?.includes('/components/IssueTimeline.tsx')) return segmentId
     if (source.endsWith('/lib/profiles')) return profilesId
     if (source.endsWith('/lib/pool')) return poolId
+    if (source.endsWith('/lib/manifest')) return manifestId
   },
   load(id) {
+    if (id === manifestId) return `
+      export async function fetchManifest() {
+        return {
+          content: {
+            episodeStatus: 'published',
+            publishedRss: null,
+            issueRef: 'naddr1qa',
+            sections: [{
+              id: ${JSON.stringify(sectionId)},
+              order: ${JSON.stringify(fixtureSegments.map((segment) => segment.event.id))},
+              excluded: [],
+            }],
+          },
+        }
+      }
+      export function subscribeManifest() { return () => {} }
+      export function subscribeManifests() { return () => {} }
+      export async function fetchAllManifests() { return [] }
+      export async function updateManifest() { throw new Error('no writes in playback QA') }
+      export function buildInitialManifest() {
+        return { episodeStatus: 'draft', publishedRss: null, issueRef: 'naddr1qa', sections: [] }
+      }
+    `
     if (id === compassId) return `
       const event = ${JSON.stringify(issueEvent)}
       const issue = ${JSON.stringify(fixtureIssue)}
@@ -92,6 +122,8 @@ const fixturePlugin = {
       export function mergeSegmentEventGroups(base) { return new Map(base) }
       export function parseSegment(event) { return segments.find((segment) => segment.event.id === event.id) ?? null }
       export async function fetchTranscripts() { return new Map() }
+      export async function fetchRetranscribeRequests() { return new Map() }
+      export async function publishRetranscribeRequest() { throw new Error('unavailable in QA') }
       export function selectTrustedSegmentEvents(events) { return events }
       export async function publishSegment() { throw new Error('Publishing is unavailable in playback QA') }
     `
@@ -99,6 +131,7 @@ const fixturePlugin = {
       export async function fetchProfiles(pubkeys) {
         return new Map(pubkeys.map((pubkey) => [pubkey, { name: 'Evolve' }]))
       }
+      export function authorLabel(profile, pubkey) { return profile?.name || pubkey.slice(0, 8) }
     `
     if (id === poolId) return `
       const pool = {
@@ -159,19 +192,20 @@ try {
     }
   })
 
-  await page.goto(`http://127.0.0.1:${address.port}/`, { waitUntil: 'domcontentloaded' })
+  const origin = `http://127.0.0.1:${address.port}/`
+  await page.goto(episodeHref(origin, 32), { waitUntil: 'domcontentloaded' })
   await page.waitForSelector('.bubble__play')
   await page.waitForFunction(() => document.querySelectorAll('.bubble__play').length === 3)
-  await page.waitForFunction(() => document.querySelectorAll('.timeline__community-links a').length === 3)
+  await page.waitForFunction(() => document.querySelectorAll('.timeline__community-links button').length === 3)
 
   const failures = []
   const index = await page.evaluate(() => ({
-    heading: document.querySelector('.timeline__community .timeline__group-title')?.textContent?.trim(),
-    labels: [...document.querySelectorAll('.timeline__community-links a')].map((link) => link.textContent?.trim()),
+    heading: document.querySelector('.timeline__contents-label')?.textContent?.trim(),
+    labels: [...document.querySelectorAll('.timeline__community-links button')].map((link) => link.textContent?.trim()),
     scrollWidth: document.documentElement.scrollWidth,
     innerWidth,
   }))
-  if (index.heading !== 'Voice notes in this episode · 3') {
+  if (index.heading !== 'Jump to a voice note') {
     failures.push(`Episode note index heading is ambiguous: ${JSON.stringify(index)}`)
   }
   if (new Set(index.labels).size !== 3) {
@@ -242,7 +276,7 @@ try {
   const stalePage = await browser.newPage()
   await stalePage.setViewport({ width: 320, height: 900, deviceScaleFactor: 1, isMobile: true })
   await stalePage.evaluateOnNewDocument(() => localStorage.setItem('logbook_selected_issue', '31'))
-  await stalePage.goto(`http://127.0.0.1:${address.port}/`, { waitUntil: 'domcontentloaded' })
+  await stalePage.goto(episodeHref(origin, 31), { waitUntil: 'domcontentloaded' })
   await stalePage.waitForFunction(() => document.querySelector('.notice--episode')?.textContent?.includes('Compass #32 is newer'))
   const staleOverflow = await stalePage.evaluate(() => document.documentElement.scrollWidth > innerWidth)
   if (staleOverflow) failures.push('Newer-episode notice overflows at 320px')

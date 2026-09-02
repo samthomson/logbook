@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { finalizeEvent, generateSecretKey } from 'nostr-tools'
-import { createCompassAmberSigner, validateCompassSignature } from '../amber-signer.ts'
+import { createCompassAmberSigner, isRetryableBunkerError, validateCompassSignature } from '../amber-signer.ts'
 
 test('validateCompassSignature accepts a valid event from the expected Compass key', () => {
   const key = generateSecretKey()
@@ -18,4 +18,12 @@ test('validateCompassSignature rejects a wrong author and forged event', () => {
 test('createCompassAmberSigner exposes the shared asynchronous signing interface', () => {
   const signer = createCompassAmberSigner()
   assert.equal(typeof signer.signEvent, 'function')
+})
+
+test('isRetryableBunkerError matches a canceled nak RPC and nothing else', () => {
+  assert.equal(
+    isRetryableBunkerError(new Error('Amber signing failed (123): error signing with provided key: context canceled')),
+    true,
+  )
+  assert.equal(isRetryableBunkerError(new Error('Amber signing failed (1): permission denied')), false)
 })

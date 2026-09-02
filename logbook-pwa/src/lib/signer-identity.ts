@@ -29,7 +29,7 @@ export async function assertSignerStillExpected(
   assertActive?: () => void,
 ): Promise<void> {
   assertActive?.()
-  const actual = await withSignerTimeout(signer.getPublicKey(), 'Amber identity revalidation')
+  const actual = await withSignerTimeout(signer.getPublicKey(), 'Signer identity revalidation')
   assertActive?.()
   assertExpectedSignerPubkey(actual, expected)
 }

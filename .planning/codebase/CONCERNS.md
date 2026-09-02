@@ -9,10 +9,10 @@ last_mapped_commit: 93cb11b31fd03332a9a9854fa102c9c5e211b685
 ## Tech Debt
 
 **Static-host release handoff:**
-- Issue: `scripts/publish-rss.ts` writes local feed/media state but the repository has no concrete deployer that uploads the static root and produces digest-bound read-back acknowledgement.
+- Issue: `scripts/publish-rss.ts` writes local feed/media state and verifies `LOGBOOK_FEED_READBACK_URL`, but the repository has no concrete deployer that uploads the static root.
 - Files: `scripts/publish-rss.ts`, `scripts/static-sync.ts`, `deploy/systemd/logbook.env.example`.
-- Impact: the release ledger correctly stops before Podstr/announcement/terminal manifest unless an external operator supplies `LOGBOOK_STATIC_SYNC_ACK`; production is not autonomous or fully evidenced.
-- Fix approach: implement a trusted host adapter that uploads, fetches the hosted feed, verifies SHA-256/HTTPS/ranges, and returns the exact acknowledgement object.
+- Impact: the release ledger correctly stops before Podstr/announcement/terminal manifest unless the configured hosted feed serves matching bytes; production upload is not autonomous or fully evidenced.
+- Fix approach: implement a trusted host adapter that uploads and verifies HTTPS/ranges before the worker's digest read-back.
 
 **Terminal manifest schema mismatch:**
 - Issue: worker writes `publishedRss.feedUrl/mp3Url/publishedAt`, while `logbook-pwa/src/types/nostr.ts` retains an older `guid/chapters` shape.
@@ -146,8 +146,8 @@ last_mapped_commit: 93cb11b31fd03332a9a9854fa102c9c5e211b685
 ## Missing Critical Features
 
 **Concrete static-host deployer:**
-- Problem: no in-repo component closes the hosted-feed acknowledgement loop.
-- Current workaround: external/manual `LOGBOOK_STATIC_SYNC_ACK` after an operator deploy/read-back.
+- Problem: no in-repo component uploads the feed to the configured hosted endpoint.
+- Current workaround: an external/operator deployment followed by the worker's HTTP digest read-back.
 - Blocks: autonomous terminal production release.
 - Implementation complexity: medium; requires privileged host integration, read-back hashing, range checks, retries, and secret handling.
 

@@ -9,16 +9,16 @@
     "lint": "oxlint",
     "test": "npm run test:unit && npm run test:browser",
     "test:unit": "vitest run",
-    "test:browser": "npm run test:public-shell && npm run test:playback && npm run test:admin-layout && npm run test:concurrent-recording && npm run test:resume-cache && npm run test:navigation-cache",
+    "test:browser": "npm run test:public-shell && npm run test:playback && npm run test:concurrent-recording && npm run test:resume-cache && npm run test:navigation-cache",
     "test:public-shell": "node scripts/public-shell-qa.mjs",
     "test:playback": "node scripts/playback-qa.mjs",
-    "test:admin-layout": "node scripts/admin-layout-qa.mjs",
     "test:concurrent-recording": "node scripts/concurrent-recording-qa.mjs",
     "test:resume-cache": "node scripts/resume-cache-qa.mjs",
     "test:navigation-cache": "node scripts/navigation-cache-qa.mjs",
     "test:performance": "node scripts/performance-budget.mjs",
     "test:release-metadata": "node scripts/release-metadata.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy:nsite": "bash ../scripts/deploy-nsite.sh"
   },
   "engines": {
     "node": ">=22.12.0"

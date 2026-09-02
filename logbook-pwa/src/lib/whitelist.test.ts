@@ -24,6 +24,7 @@ vi.mock('./pool', () => ({
         }),
         sig: 'b'.repeat(128),
       })
+      if (state.revision === 4) return []
       if (state.revision === 3) {
         return [event('1', ['b'.repeat(64)]), event('2', ['c'.repeat(64)])]
       }
@@ -50,5 +51,17 @@ describe('access-list revalidation', () => {
     const tied = await fetchAccessLists(32, undefined, { forceRefresh: true })
     expect(tied.contributors.has('b'.repeat(64))).toBe(false)
     expect(tied.contributors.has('c'.repeat(64))).toBe(true)
+  })
+
+  it('fails closed to Compass when no signed producer list is available', async () => {
+    const { fetchAccessLists, fetchProducerPubkeys } = await import('./whitelist')
+    state.revision = 4
+
+    const producers = await fetchProducerPubkeys(undefined, true)
+    expect(producers).toEqual(new Set([COMPASS_PUBKEY]))
+
+    const access = await fetchAccessLists(32, undefined, { forceRefresh: true })
+    expect(access.admins).toEqual(new Set([COMPASS_PUBKEY]))
+    expect(access.adminsFromBootstrap).toBe(false)
   })
 })

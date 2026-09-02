@@ -1,61 +1,91 @@
 /**
- * Seed the initial kind 34201 whitelist events (standing roster + admins)
- * from the legacy static files / config bootstrap.
+ * Seed kind 34201 standing roster + admins via the NIP-46 bunker.
  *
- * Usage:
- *   COMPASS_NSEC=nsec1... npx tsx scripts/seed-whitelist.mts
- *
- * Idempotent: fetches existing events first and skips any d-tag that
- * already has a verified Compass-authored event.
+ * Usage: npm run seed-whitelist
  */
 
-import { connectNsec } from '../logbook-pwa/src/lib/auth'
-import {
-  fetchWhitelistEntries,
-  publishWhitelist,
-  normalizeToHex,
-  type WhitelistEntry,
-} from '../logbook-pwa/src/lib/whitelist'
-import { D_STANDING, D_ADMINS, ADMIN_PUBKEYS, COMPASS_PUBKEY } from '../logbook-pwa/src/config'
 import { readFileSync } from 'node:fs'
+import { SimplePool } from 'nostr-tools/pool'
+import { verifyNostrEvent } from './segment-security.ts'
+import { createCompassAmberSigner } from './amber-signer.ts'
+import {
+  COMPASS_PUBKEY,
+  RELAYS,
+  D_ADMINS,
+  D_STANDING,
+  KINDS,
+} from './config.ts'
 
-const nsec = process.env.COMPASS_NSEC
-if (!nsec) {
-  console.error('Set COMPASS_NSEC')
-  process.exit(1)
+const HEX_64 = /^[0-9a-f]{64}$/
+
+function parseStandingRoster(): Array<{ pubkey: string; name?: string }> {
+  const yml = readFileSync(new URL('../logbook-pwa/public/data/npubs.yml', import.meta.url), 'utf8')
+  const standing: Array<{ pubkey: string; name?: string }> = []
+  let currentName: string | null = null
+  for (const line of yml.split('\n')) {
+    const t = line.trim().replace(/^-\s*/, '')
+    if (t.startsWith('name:')) {
+      currentName = t.slice(5).trim().replace(/^["']|["']$/g, '')
+    } else if (t.startsWith('pubkey:')) {
+      const hex = t.slice(7).trim().replace(/^["']|["']$/g, '').toLowerCase()
+      if (HEX_64.test(hex)) standing.push({ pubkey: hex, name: currentName ?? undefined })
+      currentName = null
+    }
+  }
+  return standing
 }
 
-const auth = await connectNsec(nsec)
-if (auth.pubkey !== COMPASS_PUBKEY) {
-  console.error(`Key mismatch: logged in as ${auth.pubkey.slice(0, 12)}…, expected Compass key`)
-  process.exit(1)
+function adminPubkeys(): string[] {
+  const raw = process.env.ADMIN_PUBKEYS ?? ''
+  const fromEnv = raw.split(',').map((v) => v.trim().toLowerCase()).filter((v) => HEX_64.test(v))
+  return [...new Set([COMPASS_PUBKEY, ...fromEnv])]
 }
 
-// Standing roster from legacy npubs.yml
-const yml = readFileSync(new URL('../logbook-pwa/public/data/npubs.yml', import.meta.url), 'utf8')
-const standing: WhitelistEntry[] = []
-let currentName: string | null = null
-for (const line of yml.split('\n')) {
-  const t = line.trim().replace(/^-\s*/, '')
-  if (t.startsWith('name:')) {
-    currentName = t.slice(5).trim().replace(/^["']|["']$/g, '')
-  } else if (t.startsWith('pubkey:')) {
-    const hex = normalizeToHex(t.slice(7).trim().replace(/^["']|["']$/g, ''))
-    if (hex) standing.push({ pubkey: hex, name: currentName ?? undefined })
-    currentName = null
+async function existingContent(dTag: string): Promise<string | null> {
+  const pool = new SimplePool()
+  try {
+    const events = await pool.querySync(
+      RELAYS,
+      { kinds: [KINDS.WHITELIST], authors: [COMPASS_PUBKEY], '#d': [dTag], limit: 5 },
+      { maxWait: 15_000 },
+    )
+    const newest = events
+      .filter((event) => event.pubkey === COMPASS_PUBKEY && verifyNostrEvent(event))
+      .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))[0]
+    return newest ? newest.content : null
+  } finally {
+    pool.close(RELAYS)
   }
 }
 
-const admins: WhitelistEntry[] = ADMIN_PUBKEYS.map((pubkey) => ({ pubkey }))
+const standing = parseStandingRoster()
+const admins = adminPubkeys().map((pubkey) => ({ pubkey }))
+const signer = createCompassAmberSigner()
+const pool = new SimplePool()
 
-for (const [dTag, entries] of [[D_STANDING, standing], [D_ADMINS, admins]] as const) {
-  const existing = await fetchWhitelistEntries(dTag)
-  if (existing.length > 0) {
-    console.log(`SKIP ${dTag} — already has ${existing.length} entries on-chain`)
-    continue
+try {
+  for (const [dTag, content] of [
+    [D_STANDING, JSON.stringify({ contributors: standing })],
+    [D_ADMINS, JSON.stringify({ admins: admins.map((a) => a.pubkey) })],
+  ] as const) {
+    // Republish when the desired list differs, so adding an ADMIN_PUBKEYS entry
+    // actually reaches the relay instead of being skipped forever.
+    const published = await existingContent(dTag)
+    if (published === content) {
+      console.log(`SKIP ${dTag} — already published and unchanged`)
+      continue
+    }
+    const signed = await signer.signEvent({
+      kind: KINDS.WHITELIST,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [['d', dTag], ['alt', `Logbook whitelist: ${dTag}`]],
+      content,
+    })
+    await Promise.any(pool.publish(RELAYS, signed))
+    console.log(`PUBLISHED ${dTag} — event ${signed.id.slice(0, 16)}…`)
   }
-  const ev = await publishWhitelist(dTag, entries, auth.signer)
-  console.log(`PUBLISHED ${dTag} — ${entries.length} entries, event ${ev.id.slice(0, 16)}…`)
+} finally {
+  pool.close(RELAYS)
 }
 
 process.exit(0)

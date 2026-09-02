@@ -22,4 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-.nsite/
+# nsyte keeps local deploy state here; config.json is the tracked, authoritative
+# deployment description that deploy/README.md and scripts/test/ops-artifacts.test.ts require.
+.nsite/*
+!.nsite/config.json

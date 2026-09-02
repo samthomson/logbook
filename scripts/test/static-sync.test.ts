@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { acknowledgeStaticSync } from '../static-sync.ts'
+import { acknowledgeStaticSync, readBackHostedFeed, resolveFeedReadbackUrl } from '../static-sync.ts'
 
 test('local feed output is not treated as hosted without an explicit matching upload acknowledgement', async () => {
   await assert.rejects(
@@ -13,5 +13,47 @@ test('local feed output is not treated as hosted without an explicit matching up
   )
   await assert.doesNotReject(
     () => acknowledgeStaticSync('a'.repeat(64), async () => ({ hosted: true, feedDigest: 'a'.repeat(64) })),
+  )
+})
+
+test('hosted acknowledgement is the bytes read back from the public URL', async () => {
+  const body = Buffer.from('<rss/>')
+  await assert.rejects(
+    () => readBackHostedFeed(
+      'https://blossom.test/feed.xml',
+      (async () => new Response(body, { status: 404 })) as typeof fetch,
+    ),
+    /HTTP 404/,
+  )
+  const ack = await readBackHostedFeed(
+    'https://blossom.test/feed.xml',
+    (async () => new Response(body, { status: 200 })) as typeof fetch,
+  )
+  assert.equal(ack.hosted, true)
+  assert.equal(ack.feedDigest.length, 64)
+})
+
+test('feed read-back defaults to the public BASE_URL', () => {
+  assert.equal(
+    resolveFeedReadbackUrl('http://localhost:8080'),
+    'http://localhost:8080/feed.xml',
+  )
+  assert.equal(
+    resolveFeedReadbackUrl('https://podcast.nostrcompass.org/'),
+    'https://podcast.nostrcompass.org/feed.xml',
+  )
+})
+
+test('feed read-back accepts an explicit deployment-specific URL', () => {
+  assert.equal(
+    resolveFeedReadbackUrl(
+      'https://podcast.nostrcompass.org',
+      ' http://origin:8080/feed.xml ',
+    ),
+    'http://origin:8080/feed.xml',
+  )
+  assert.throws(
+    () => resolveFeedReadbackUrl('https://podcast.nostrcompass.org', 'file:///var/www/logbook/feed.xml'),
+    /HTTP URL/,
   )
 })

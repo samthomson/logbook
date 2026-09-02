@@ -1,14 +1,23 @@
 import { fileURLToPath } from 'node:url'
 import puppeteer from 'puppeteer'
 import { createServer } from 'vite'
+import { episodeHref } from './qa-episode.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
+// Pin the harness to its own identity so it exercises the configured Compass
+// key rather than whichever deployment the build defaults to.
+const compassPubkey = 'c'.repeat(64)
+process.env.COMPASS_PUBKEY = compassPubkey
 const pubkey = '3c457108865e05d95ce3848aa0bc51cd64f984c5c61689a3d49809ab71fa1d64'
+process.env.ADMIN_PUBKEYS = pubkey
+process.env.RELAYS = 'wss://relay.test'
+process.env.DISCOVERY_RELAYS = 'wss://discovery.test'
+process.env.BLOSSOM_SERVERS = 'https://blossom.test'
 const sectionId = 'sec-lead-stories-public-chapter-32'
 const secondSectionId = 'sec-lead-stories-second-chapter-32'
 const fixtureEvent = {
-  id: '1'.repeat(64), pubkey: '775954f7314112489a4a29ec692b72386fd60bcceb0308d423101ea979c57a80',
-  created_at: 1_700_000_000, kind: 30_023, tags: [['d', 'newsletter-32']],
+  id: '1'.repeat(64), pubkey: compassPubkey,
+  created_at: 1_785_628_800, kind: 30_023, tags: [['d', 'newsletter-32']],
   content: '## Lead stories\n### Public chapter\nDeterministic content', sig: '2'.repeat(128),
 }
 const fixtureIssue = {
@@ -37,9 +46,12 @@ const secondIssue = {
 }
 async function clickButton(page, label) {
   const clicked = await page.evaluate((text) => {
-    const button = [...document.querySelectorAll('button')].find((element) => element.textContent?.trim() === text)
-    if (!button) return false
-    button.click()
+    const control = [...document.querySelectorAll('button, a')].find((element) => {
+      const labelText = element.getAttribute('aria-label') ?? element.textContent ?? ''
+      return labelText.replace(/\s+/g, ' ').trim() === text
+    })
+    if (!control) return false
+    control.click()
     return true
   }, label)
   if (!clicked) throw new Error(`Button not found: ${label}`)
@@ -48,27 +60,48 @@ const modules = new Map([
   ['compass', `
     const event=${JSON.stringify(fixtureEvent)}; const issue=${JSON.stringify(fixtureIssue)};
     const secondEvent=${JSON.stringify(secondIssueEvent)}; const secondIssue=${JSON.stringify(secondIssue)};
-    export async function fetchIssueByDTag(){return event}
+    export async function fetchIssueByDTag(dTag){return dTag==='newsletter-33'?secondEvent:event}
     export async function fetchLatestIssue(){return event}
     export async function fetchLatestIssueWithSegments(){return event}
     export async function fetchAllIssues(){return [secondEvent,event]}
     export function extractIssueNumber(value){return value.id===secondEvent.id?33:32}
     export function parseIssue(value){return value.id===secondEvent.id?secondIssue:issue}
+    export function issueAddress(){return 'naddr1qa'}
   `],
   ['segment', `
     export async function fetchSegmentsForIssue(){return new Map()}
     export async function fetchTranscripts(){return new Map()}
     export function mergeSegmentEventGroups(base){return new Map(base)}
+    export async function fetchRetranscribeRequests(){return new Map()}
+    export async function publishRetranscribeRequest(){throw new Error("unavailable in QA")}
     export function parseSegment(){return null}
     export function selectTrustedSegmentEvents(){return []}
     export async function publishSegment(){throw new Error('unexpected publish')}
   `],
-  ['manifest', `export async function fetchManifest(){return null}`],
-  ['profiles', `export async function fetchProfiles(){return new Map()}`],
-  ['whitelist', `
-    export async function fetchAccessLists(){return {contributors:new Set(),admins:new Set(),sources:new Map(),degraded:false,adminsFromBootstrap:false}}
+  ['manifest', `
+    export async function fetchManifest(){return null}
+    export function subscribeManifest(){return ()=>{}}
+    export function subscribeManifests(){return ()=>{}}
+    export async function fetchAllManifests(){
+      return [
+        {issueId:'logbook-33',content:{episodeStatus:'draft'},event:{id:'7'.repeat(64),pubkey:${JSON.stringify(compassPubkey)},created_at:3,kind:34200,tags:[['d','logbook-33']],content:'{}',sig:'2'.repeat(128)}},
+        {issueId:'logbook-32',content:{episodeStatus:'draft'},event:{id:'8'.repeat(64),pubkey:${JSON.stringify(compassPubkey)},created_at:2,kind:34200,tags:[['d','logbook-32']],content:'{}',sig:'2'.repeat(128)}},
+      ]
+    }
+    export async function updateManifest(){throw new Error('no writes')}
+    export function buildInitialManifest(){return {episodeStatus:'draft',publishedRss:null,issueRef:'',sections:[]}}
   `],
-  ['pool', `export function getPool(){return {subscribeMany(){return {close(){}}}}}`],
+  ['profiles', `export async function fetchProfiles(){return new Map()}
+    export function authorLabel(profile,pubkey){return profile?.name||pubkey.slice(0,8)}`],
+  ['whitelist', `
+    export async function fetchProducerPubkeys(){return new Set([${JSON.stringify(pubkey.toLowerCase())}])}
+    export async function fetchAccessLists(){return {contributors:new Set([${JSON.stringify(pubkey.toLowerCase())}]),admins:new Set([${JSON.stringify(pubkey.toLowerCase())}]),sources:new Map(),degraded:false,adminsFromBootstrap:false}}
+    export async function fetchWhitelistEntries(){return []}
+    export async function publishWhitelist(){throw new Error('no writes')}
+    export function extractMentionedPubkeys(){return []}
+    export function normalizeToHex(value){return value}
+  `],
+  ['pool', `export function getPool(){return {subscribeMany(){return {close(){}}},querySync(){return Promise.resolve([])},publish(){return []}}}`],
   ['blossom', `
     const attempts=[]
     globalThis.__qaUploads=attempts
@@ -92,7 +125,7 @@ try {
   await server.listen()
   const address = server.httpServer?.address()
   if (!address || typeof address === 'string') throw new Error('Vite QA server did not expose a port')
-  const appUrl = `http://127.0.0.1:${address.port}/`
+  const appUrl = episodeHref(`http://127.0.0.1:${address.port}/`, 32)
   browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-gpu'] })
   const page = await browser.newPage()
   page.on('pageerror', (error) => console.error('PAGEERROR', error.message))
@@ -115,6 +148,9 @@ try {
       createMediaStreamSource() { return { connect() {} } }
       createAnalyser() { return { fftSize: 256, frequencyBinCount: 128, connect() {}, getByteFrequencyData(data) { data.fill(20) } } }
       createMediaStreamDestination() { return { stream } }
+      async decodeAudioData() {
+        return { numberOfChannels: 1, getChannelData() { return new Float32Array([0.25, 0.4, 0.1]) } }
+      }
       async resume() {}
       async close() {}
     }
@@ -134,7 +170,6 @@ try {
     Object.defineProperty(window, 'MediaRecorder', { configurable: true, value: FakeMediaRecorder })
   }, pubkey)
   await page.goto(appUrl, { waitUntil: 'domcontentloaded' })
-  await page.waitForSelector('.timeline__issue-title')
   await page.evaluate(async ({ ownerPubkey, targetId }) => {
     const db = await new Promise((resolve, reject) => {
       const request = indexedDB.open('logbook-recording-drafts', 1)
@@ -158,12 +193,12 @@ try {
     db.close()
   }, { ownerPubkey: pubkey, targetId: sectionId })
   await page.reload({ waitUntil: 'domcontentloaded' })
-  await page.waitForSelector('.timeline__issue-title')
   await page.waitForSelector('.app-login')
-  await clickButton(page, 'Sign in to record')
+  await clickButton(page, 'Log in')
   await page.waitForSelector('.auth-screen')
-  await clickButton(page, 'Sign in with extension')
+  await clickButton(page, 'Log in with extension')
   await page.waitForSelector('.app-identity')
+  await page.waitForSelector('.timeline__issue-title')
   await page.waitForFunction(() => document.querySelectorAll('.bubble--upload').length > 0)
 
   const before = await page.evaluate(() => ({
@@ -182,10 +217,12 @@ try {
   // settles late it must not clear B's stage or active marker.
   await clickButton(page, 'Log out')
   await page.waitForSelector('.app-login')
-  await clickButton(page, 'Sign in to record')
+  await clickButton(page, 'Log in')
   await page.waitForSelector('.auth-screen')
-  await clickButton(page, 'Sign in with extension')
+  await clickButton(page, 'Log in with extension')
   await page.waitForSelector('.app-identity')
+  await page.goto(appUrl, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('.timeline__issue-title')
   await page.waitForFunction(() => document.querySelectorAll('.bubble--upload').length === 2)
   await clickButton(page, 'Resume upload')
   await page.waitForFunction(() => window.__qaUploads?.length === 2)
@@ -238,6 +275,7 @@ try {
   await page.waitForSelector('.timeline__issue-title')
   await page.waitForSelector('.app-identity')
   await page.waitForFunction(() => document.querySelectorAll('.bubble--upload').length > 0)
+  await page.waitForSelector('[aria-label="Record a voice note"]')
   const restored = await page.evaluate(() => ({
     pending: document.querySelectorAll('.bubble--upload').length,
     recorders: document.querySelectorAll('[aria-label="Record a voice note"]').length,
@@ -248,9 +286,9 @@ try {
   await page.evaluate(() => { globalThis.__qaDeferMedia = true })
   await page.click('[aria-label="Record a voice note"]')
   await page.waitForSelector('.irec__idle[role="status"]')
-  await clickButton(page, 'Episodes')
+  await clickButton(page, 'All episodes')
   await page.waitForSelector('.issue-picker__item')
-  await page.click('.issue-picker__item')
+  await clickButton(page, 'View')
   await page.waitForFunction(() => document.querySelector('.timeline__issue-title')?.textContent?.includes('33'))
   await page.evaluate(() => { globalThis.__qaDeferMedia = false; globalThis.__qaReleaseMedia?.() })
   await new Promise((resolve) => setTimeout(resolve, 50))

@@ -52,7 +52,7 @@ Plans:
 **Depends on**: Phase 2
 **Requirements**: HOST-01, HOST-02
 **Success Criteria** (what must be TRUE):
-  1. Operator can invoke one documented deploy/read-back path for the configured static root without fabricating `LOGBOOK_STATIC_SYNC_ACK`
+  1. Operator can invoke one documented deploy/read-back path for the configured static root and `LOGBOOK_FEED_READBACK_URL`
   2. The deployer returns acknowledgement only when the hosted feed SHA-256 equals the exact local feed digest
   3. Public feed and episode media use HTTPS, return the expected bytes, and support byte-range requests
   4. A wrong digest, stale hosted file, failed upload, or missing range support blocks later release stages with a resumable error

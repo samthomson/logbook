@@ -1,2 +1,12 @@
 # Local Hermes session state may contain conversation excerpts and credentials.
 .hermes/
+
+# Local compose configuration. .env.example is the tracked template.
+.env
+
+# Authorized NIP-46 session material mounted into the worker. Never commit a
+# bunker URI or client key.
+.secrets/
+
+# Local tool downloads (e.g. nsyte binary from deploy-nsite.sh).
+.bin/

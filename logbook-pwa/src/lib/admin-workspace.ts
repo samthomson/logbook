@@ -1,4 +1,5 @@
 import type { CompassIssue, ManifestContent, ManifestSection, Segment } from '../types/nostr'
+import { insertInCutOrder } from './ordering'
 
 const EVENT_ID = /^[0-9a-f]{64}$/
 
@@ -180,7 +181,9 @@ export function validateManifestReferences(
 
   return {
     issues,
-    canLock: content.episodeStatus === 'draft' && activeCount > 0 && !issues.some((item) => item.active),
+    canLock: (content.episodeStatus === 'draft' || content.episodeStatus === 'published')
+      && activeCount > 0
+      && !issues.some((item) => item.active),
   }
 }
 
@@ -345,7 +348,7 @@ export function includeInventorySegment(
       ...content,
       sections: content.sections.map((candidate, index) => index === existingIndex ? {
         ...candidate,
-        order: [...candidate.order.filter((id) => id !== segment.event.id), segment.event.id],
+        order: insertInCutOrder(candidate.order.filter((id) => id !== segment.event.id), segment),
         excluded: candidate.excluded.filter((id) => id !== segment.event.id),
       } : candidate),
     }

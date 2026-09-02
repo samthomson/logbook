@@ -19,7 +19,7 @@ This is the prioritized operating backlog for moving Logbook from a tested PWA a
 - [ ] Install the reviewed checkout at `/opt/logbook`.
 - [ ] Install exact lockfile dependencies with Node 24 LTS or the documented supported Node release.
 - [ ] Install and verify ffmpeg, ffprobe, and the configured `nak` diagnostic binary.
-- [ ] Install the hardened systemd unit and public-only environment file.
+- [ ] Install the hardened systemd unit and a root-owned, mode `0600` environment file from the committed template.
 - [ ] Confirm signer files are owned by `logbook:logbook` and mode `0600`.
 - [ ] Add a local-only signer preflight that proves the expected Compass pubkey without publishing.
 - [ ] Make signer mismatch fail before network, filesystem publication, or Blossom side effects.
@@ -33,9 +33,9 @@ This is the prioritized operating backlog for moving Logbook from a tested PWA a
 ## P0 — public hosting and release integrity
 
 - [ ] Choose the canonical HTTPS feed and media host.
-- [ ] Implement a static-host adapter instead of manually fabricating `LOGBOOK_STATIC_SYNC_ACK`.
+- [x] Read the hosted feed from a deployment-configurable HTTP endpoint instead of fabricating an acknowledgement.
 - [ ] Bind every hosting acknowledgement to local path, URL, SHA-256, size, and timestamp.
-- [ ] Fetch hosted bytes independently before acknowledging a deployment.
+- [x] Fetch hosted feed bytes independently before acknowledging a deployment.
 - [ ] Verify `Content-Type`, `Content-Length`, caching, and HTTPS policy.
 - [ ] Verify byte-range requests for every published audio file.
 - [ ] Fail closed on stale, missing, truncated, redirected-to-untrusted, or hash-mismatched artifacts.

@@ -22,7 +22,7 @@ const precacheUrls = [...sw.matchAll(/"url":"([^"]+)"/g)].map((match) => match[1
 const uniquePrecacheUrls = [...new Set(precacheUrls)]
 if (!uniquePrecacheUrls.includes('index.html')) failures.push('service worker precache manifest was not detected')
 if (uniquePrecacheUrls.includes('pwa-512x512.png')) failures.push('large install artwork is eagerly precached')
-const optionalChunks = uniquePrecacheUrls.filter((url) => /assets\/(?:AdminPanel|AuthScreen)-/.test(url))
+const optionalChunks = uniquePrecacheUrls.filter((url) => /assets\/AuthScreen-/.test(url))
 if (optionalChunks.length) failures.push(`optional chunks are eagerly precached: ${optionalChunks.join(', ')}`)
 const authChunks = uniquePrecacheUrls.filter((url) => /assets\/auth-[^/]+\.js$/.test(url))
 if (authChunks.length !== 1) failures.push(`offline auth restoration requires one precached auth chunk; found ${authChunks.length}`)

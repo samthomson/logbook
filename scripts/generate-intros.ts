@@ -5,7 +5,9 @@
  * a spoken-register intro script (30s–3min), then synthesises it via Kokoro TTS,
  * uploads the WAV to Blossom, and publishes a kind 4200 segment with isIntro:true.
  *
- * Usage: COMPASS_NSEC=nsec1... ANTHROPIC_API_KEY=sk-... npx ts-node generate-intros.ts <issueNumber>
+ * Signing uses the authorized Compass NIP-46 session, not a private key.
+ *
+ * Usage: ANTHROPIC_API_KEY=sk-... npm run generate-intros -- <issueNumber>
  */
 
 import Anthropic from '@anthropic-ai/sdk'
@@ -13,9 +15,10 @@ import { createHash } from 'crypto'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { execSync } from 'child_process'
+import { spawnSync } from 'child_process'
 import { SimplePool } from 'nostr-tools/pool'
-import { COMPASS_PUBKEY, BLOSSOM_SERVERS, DEFAULT_RELAYS, KINDS, ISSUE_PREFIX } from './config.ts'
+import { COMPASS_PUBKEY, BLOSSOM_SERVERS, RELAYS, KINDS, ISSUE_PREFIX } from './config.ts'
+import { fetchProducerPubkeys } from './producers.ts'
 import { createCompassAmberSigner, type CompassSigner } from './amber-signer.ts'
 import { verifyNostrEvent } from './segment-security.ts'
 
@@ -57,20 +60,54 @@ Output ONLY the spoken script. No stage directions, no quotes, no commentary.`
 
 // ── Kokoro TTS ────────────────────────────────────────────────────────────────
 
-function synthesiseWithKokoro(script: string, outPath: string): void {
-  const tmpScript = join(tmpdir(), `intro-${Date.now()}.txt`)
-  writeFileSync(tmpScript, script, 'utf8')
+export const INTRO_VOICE = 'af_heart'
+export const INTRO_SPEED = '1.0'
 
-  // Requires kokoro-onnx or kokoro CLI installed on PATH
-  // kokoro --text-file <path> --out <path.wav> --voice af_heart --speed 1.0
-  try {
-    execSync(`kokoro --text-file "${tmpScript}" --out "${outPath}" --voice af_heart --speed 1.0`, {
-      stdio: 'inherit',
-    })
-  } catch {
-    // Fallback: pyttsx3 or espeak if kokoro not available
-    console.warn('Kokoro not available, falling back to espeak')
-    execSync(`espeak-ng -f "${tmpScript}" -w "${outPath}" --ipa -v en-us`, { stdio: 'inherit' })
+/**
+ * Synthesise one intro with kokoro-cli.
+ *
+ * Intro audio is published into an episode alongside human recordings, so there
+ * is a single engine and no substitute: a missing binary, missing model, or
+ * failed synthesis aborts the run rather than degrading the published output.
+ * The script is passed on stdin so its punctuation is never reinterpreted by a
+ * shell.
+ */
+function synthesiseWithKokoro(script: string, outPath: string): void {
+  const kokoro = process.env.KOKORO_BIN ?? 'kokoro'
+  const result = spawnSync(
+    kokoro,
+    [
+      'speak',
+      '--voice', INTRO_VOICE,
+      '--speed', INTRO_SPEED,
+      '--format', 'wav',
+      // Embedded inference only. Without this, kokoro silently prefers a
+      // localhost service if one is listening, which would make published audio
+      // depend on whatever model that process happens to have loaded.
+      '--service', 'off',
+      '-o', outPath,
+    ],
+    {
+      input: script,
+      encoding: 'utf8',
+      // phonemizer dlopens a copy of libespeak-ng from its temp directory, which
+      // therefore has to be on an executable mount. In the container that is a
+      // dedicated tmpfs, keeping the default scratch space non-executable for
+      // the untrusted audio this worker downloads.
+      env: process.env.KOKORO_TMPDIR
+        ? { ...process.env, TMPDIR: process.env.KOKORO_TMPDIR }
+        : process.env,
+    },
+  )
+  if (result.error) {
+    throw new Error(`Kokoro TTS is unavailable at ${kokoro}: ${result.error.message}`)
+  }
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout || '').trim()
+    throw new Error(`Kokoro TTS failed (${result.status ?? 'signal'}) for ${outPath}: ${detail}`)
+  }
+  if (!existsSync(outPath) || readFileSync(outPath).byteLength === 0) {
+    throw new Error(`Kokoro TTS reported success but wrote no audio to ${outPath}`)
   }
 }
 
@@ -175,7 +212,7 @@ async function publishIntroSegment(
 
   const event = await signer.signEvent(unsigned)
   const pool = new SimplePool()
-  await Promise.any(pool.publish(DEFAULT_RELAYS, event as Parameters<typeof pool.publish>[1]))
+  await Promise.any(pool.publish(RELAYS, event as Parameters<typeof pool.publish>[1]))
   const id = (event as { id: string }).id
   console.log(`Published intro segment for ${sectionId}: ${id}`)
   return id
@@ -185,15 +222,16 @@ async function publishIntroSegment(
 
 async function fetchManifest(issueNumber: number) {
   const pool = new SimplePool()
+  const producers = await fetchProducerPubkeys(pool)
   const dTag = `${ISSUE_PREFIX}-${issueNumber}`
-  const events = await pool.querySync(DEFAULT_RELAYS, {
+  const events = await pool.querySync(RELAYS, {
     kinds: [KINDS.MANIFEST],
-    authors: [COMPASS_PUBKEY],
+    authors: [...producers],
     '#d': [dTag],
     limit: 50,
   })
   const event = events
-    .filter(e => e.pubkey === COMPASS_PUBKEY && verifyNostrEvent(e))
+    .filter(e => producers.has(e.pubkey.toLowerCase()) && verifyNostrEvent(e))
     .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))[0]
   if (!event) throw new Error(`No manifest found for issue ${issueNumber}`)
   return JSON.parse(event.content)
@@ -215,9 +253,9 @@ async function publishIntroManifestRevision(
   })
   const pool = new SimplePool()
   try {
-    await Promise.any(pool.publish(DEFAULT_RELAYS, event as Parameters<typeof pool.publish>[1]))
+    await Promise.any(pool.publish(RELAYS, event as Parameters<typeof pool.publish>[1]))
   } finally {
-    pool.close(DEFAULT_RELAYS)
+    pool.close(RELAYS)
   }
 }
 

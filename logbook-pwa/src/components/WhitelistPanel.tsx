@@ -1,17 +1,8 @@
 /**
- * WhitelistPanel — admin editor for kind 34201 whitelist events.
+ * WhitelistPanel — editor for kind 34201 lists.
  *
- * Sections:
- *  1. Suggested — npubs mentioned in this issue's newsletter markdown,
- *     not yet whitelisted. One-tap add; nothing is auto-committed.
- *  2. This issue — per-issue contributors (d-tag logbook-wl-<N>).
- *  3. Standing roster — frequent contributors across all issues.
- *  4. Admins — visible to all admins; editable ONLY when logged in with the
- *     Compass key itself (publishWhitelist enforces this at signing too).
- *
- * Every mutation signs + publishes the relevant event immediately. Readers
- * only trust Compass-signed events, so a non-Compass admin sees an honest
- * notice instead of an editor that would silently no-op.
+ * Producers may add or remove contributors (this issue + standing). Only
+ * Compass may change the producer list, so nobody can appoint themselves.
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
@@ -25,10 +16,12 @@ import {
   publishWhitelist,
   extractMentionedPubkeys,
   normalizeToHex,
+  fetchProducerPubkeys,
   type WhitelistEntry,
 } from '../lib/whitelist'
 import { nip19 } from 'nostr-tools'
 import { fetchProfiles, type Profile } from '../lib/profiles'
+import { avatarInitials, avatarStyle } from '../lib/avatar'
 
 interface Props {
   issueNumber: number
@@ -60,6 +53,7 @@ export default function WhitelistPanel({
   const capabilityRef = useRef({ issueNumber, pubkey, signer })
   capabilityRef.current = { issueNumber, pubkey, signer }
   const isCompass = pubkey.toLowerCase() === COMPASS_PUBKEY.toLowerCase()
+  const [canEditContributors, setCanEditContributors] = useState(isCompass)
   const [lists, setLists] = useState<Record<ListKind, WhitelistEntry[]>>({
     issue: [], standing: [], admins: [],
   })
@@ -75,18 +69,20 @@ export default function WhitelistPanel({
     setLoading(true)
     setError(null)
     try {
-      const [issue, standing, admins] = await Promise.all([
+      const [issue, standing, admins, producers] = await Promise.all([
         fetchWhitelistEntries(D_ISSUE_WL(issueNumber)),
         fetchWhitelistEntries(D_STANDING),
         fetchWhitelistEntries(D_ADMINS),
+        fetchProducerPubkeys(),
       ])
       setLists({ issue, standing, admins })
+      setCanEditContributors(producers.has(pubkey.toLowerCase()))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
     }
-  }, [issueNumber])
+  }, [issueNumber, pubkey])
 
   useEffect(() => { void load() }, [load])
 
@@ -175,14 +171,8 @@ export default function WhitelistPanel({
 
   return (
     <div className="wl-panel">
-      <h3 className="wl-panel__title">Whitelist</h3>
+      <h3 className="wl-panel__title">Contributors</h3>
 
-      {!isCompass && (
-        <p className="wl-panel__notice">
-          You're an admin, but whitelist changes are only trusted when signed by the
-          Compass key. Log in with the Compass login to edit these lists.
-        </p>
-      )}
       {error && <p className="wl-panel__error" role="alert">{error}</p>}
 
       {suggested.length > 0 && (
@@ -196,7 +186,7 @@ export default function WhitelistPanel({
                 <WhitelistIdentity pubkey={pk} profile={profiles.get(pk)} />
                 <button
                   className="btn btn--xs btn--primary"
-                  disabled={!isCompass || saving !== null}
+                  disabled={!canEditContributors || saving !== null}
                   onClick={() => void save('issue', [...lists.issue, { pubkey: pk }])}
                 >
                   Add
@@ -206,7 +196,7 @@ export default function WhitelistPanel({
           </ul>
           <button
             className="btn btn--small btn--ghost"
-            disabled={!isCompass || saving !== null}
+            disabled={!canEditContributors || saving !== null}
             onClick={() =>
               void save('issue', [...lists.issue, ...suggested.map((pubkey) => ({ pubkey }))])
             }
@@ -223,7 +213,7 @@ export default function WhitelistPanel({
         profiles={profiles}
         input={newInput.issue}
         saving={saving === 'issue'}
-        editable={isCompass}
+        editable={canEditContributors}
         onInput={(v) => setNewInput((p) => ({ ...p, issue: v }))}
         onAdd={() => addEntry('issue', newInput.issue)}
         onRemove={(pk) => removeEntry('issue', pk)}
@@ -236,14 +226,14 @@ export default function WhitelistPanel({
         profiles={profiles}
         input={newInput.standing}
         saving={saving === 'standing'}
-        editable={isCompass}
+        editable={canEditContributors}
         onInput={(v) => setNewInput((p) => ({ ...p, standing: v }))}
         onAdd={() => addEntry('standing', newInput.standing)}
         onRemove={(pk) => removeEntry('standing', pk)}
       />
 
       <WhitelistSection
-        title="Admins"
+        title="Producers"
         kind="admins"
         entries={lists.admins}
         profiles={profiles}
@@ -253,7 +243,7 @@ export default function WhitelistPanel({
         onInput={(v) => setNewInput((p) => ({ ...p, admins: v }))}
         onAdd={() => addEntry('admins', newInput.admins)}
         onRemove={(pk) => removeEntry('admins', pk)}
-        note="Admins see this panel and the episode review/lock tools. Only the Compass key can change this list."
+        note="Only Compass can change who is a producer."
       />
     </div>
   )
@@ -334,11 +324,12 @@ function WhitelistIdentity({
   fallbackName?: string
 }) {
   const name = profile?.name ?? fallbackName ?? null
-  const npub = `${nip19.npubEncode(pubkey).slice(0, 16)}…`
-  const initials = (name ?? pubkey.slice(0, 2)).slice(0, 2).toUpperCase()
+  const npub = nip19.npubEncode(pubkey)
+  const initials = avatarInitials(name, pubkey)
+  const avatarColors = profile?.picture ? undefined : avatarStyle(pubkey)
   return (
     <span className="wl-identity" title={pubkey}>
-      <span className="wl-identity__avatar" aria-hidden="true">
+      <span className="wl-identity__avatar" style={avatarColors} aria-hidden="true">
         {profile?.picture ? <img src={profile.picture} alt="" loading="lazy" /> : initials}
       </span>
       <span className="wl-identity__text">

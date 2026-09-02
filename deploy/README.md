@@ -1,17 +1,30 @@
-# Trusted worker deployment
+# Worker on a host
 
-These files provision the long-running Logbook watcher on a trusted Linux host. The service runs as the dedicated `logbook` account and reuses that account's already-authorized Compass NIP-46 session. It does **not** require or accept a hot Compass nsec in the unit or environment file.
+Prefer Docker: root `docker-compose.yml`, same `.env` names as local. Dokploy with no
+profile starts the worker and the feed origin (nginx on loopback :8080).
 
-## Install
+Bare metal: `systemd/logbook-worker.service` plus `systemd/logbook.env.example`
+copied to `/etc/logbook/logbook.env`. In `/opt/logbook/scripts`,
+`npm ci --no-audit --no-fund`. Needs ffmpeg 7+ (`requireFfmpeg` refuses
+older). Writable paths: `/var/www/logbook`, `/var/lib/logbook`,
+`/var/cache/logbook`. The worker verifies hosted feed bytes at
+`LOGBOOK_FEED_READBACK_URL`, which defaults to `LOGBOOK_BASE_URL/feed.xml`.
+Set the override only when the host exposes the same feed through a separate
+loopback or origin URL and public-host verification is intentionally unavailable.
+The bundled origin exposes only `feed.xml`, MP3s, and chapter JSON; worker state
+such as `episodes.json`, run metadata, and release ledgers is never public.
 
-1. Check out the repository at `/opt/logbook` and run `npm ci --no-audit --no-fund` in `scripts/`. The worker executes TypeScript with `tsx`, so do not omit dev dependencies from this source checkout.
-2. Create the `logbook` system account and `/etc/logbook/logbook.env` from `logbook.env.example`.
-3. Authenticate the Compass signer outside Hermes so `/home/logbook/.config/compass-publish/bunker.json` and `client_key` exist with mode `0600` and owner `logbook:logbook`.
-4. Install `logbook-worker.service` into `/etc/systemd/system/`, run `systemctl daemon-reload`, then enable/start it.
-5. Verify `systemctl status logbook-worker` and inspect the durable release-stage ledger before treating any episode as published.
+PWA: preconfigure nsyte with the externally managed, already-authorized Compass
+bunker in its OS keychain or encrypted store, select `COMPASS_PUBKEY` with
+`nsyte bunker use`, then run `./scripts/deploy-nsite.sh` from the repo root.
+The script never accepts signer material on argv and verifies the configured
+signer identity plus the built NIP-05 document before upload (see root README).
 
-The service's writable scope is limited to `/var/www/logbook`, `/var/lib/logbook`, and `/var/cache/logbook`. Publication must remain idempotent: a restart resumes incomplete stages; it must not recreate a successful Nostr or feed stage.
-
-## PWA deployment
-
-The authoritative nsyte configuration is `logbook-pwa/.nsite/config.json`. Build with `npm run build`, then deploy from `logbook-pwa/` with the existing authorized signer using `nsyte deploy dist --sync`. A successful upload is not release proof: verify a gateway whose HTML references the exact local bundle, compare the served bundle SHA-256 with `dist/assets`, and confirm a marker from the shipped change before sharing a URL.
+The worker must use the dedicated `logbook` account and its already-authorized
+Compass NIP-46 session; do not put a hot Compass nsec in the service or
+environment file. Signer files stay outside Hermes with mode `0600`. Inspect
+the durable release-stage ledger before treating an episode as published. A
+restart resumes incomplete stages and must not recreate a successful Nostr or
+feed stage. An nsite upload is not a release until a gateway serves the exact
+candidate HTML and referenced JS/CSS bytes plus the release-specific marker;
+follow `../docs/operations-and-testing.md`.

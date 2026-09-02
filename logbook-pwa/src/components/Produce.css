@@ -1,0 +1,240 @@
+/* Producer strip at the end of the episode page — same tokens as index.css. */
+
+.produce__notice,
+.produce__error,
+.produce__banner {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  background: var(--surface);
+}
+
+.produce__error {
+  background: var(--error-bg);
+  color: var(--danger);
+}
+
+.produce__failed {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--error-bg);
+  color: var(--danger);
+  font-size: 0.875rem;
+}
+
+.produce__failed-reason {
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.produce__failed-when {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.produce__issue {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* The release decision belongs where the cut ends, not above it. */
+.produce__footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 12px 0 calc(12px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.produce__next {
+  flex: 1 1 16rem;
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.produce__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.produce__access {
+  margin-top: 16px;
+}
+
+.produce__access summary {
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.produce__checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-anchor: none;
+}
+
+.produce__checklist--busy {
+  padding: 10px;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius);
+  background: var(--warning-bg);
+}
+
+.produce__checklist--stopped {
+  padding: 10px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--error-bg);
+}
+
+.produce__checklist--stopped .produce__check {
+  background: var(--card);
+}
+
+.produce__check {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.produce__checklist--busy .produce__check {
+  background: var(--card);
+}
+
+.produce__check--done {
+  border-color: var(--success-border);
+}
+
+.produce__check--locked {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+}
+
+.produce__checklist--busy .produce__check--locked {
+  background: color-mix(in srgb, var(--warning-fg) 8%, var(--card));
+}
+
+.produce__check--failed {
+  border-color: var(--danger);
+  background: var(--error-bg);
+}
+
+.produce__check--happening {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.produce__check--queued {
+  opacity: 0.72;
+}
+
+.produce__check-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 12rem;
+  flex: 1 1 12rem;
+}
+
+.produce__check-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.produce__check--done .produce__check-state {
+  color: var(--success-fg);
+}
+
+.produce__check--failed .produce__check-state {
+  color: var(--danger);
+}
+
+.produce__check--happening .produce__check-state,
+.produce__check--ready .produce__check-state {
+  color: var(--accent);
+}
+
+.produce__check--locked .produce__check-state {
+  color: var(--warning-fg);
+}
+
+.produce__check-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.produce__check-detail {
+  font-size: 0.8125rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.produce__check--failed .produce__check-detail {
+  color: var(--fg);
+}
+
+.produce__check-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.produce__episode-player {
+  margin-top: 8px;
+}
+
+.produce__chapters {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.produce__chapters li {
+  display: flex;
+  gap: 8px;
+  font-size: 0.8125rem;
+  color: var(--fg);
+}
+
+.produce__chapter-time {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}

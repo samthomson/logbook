@@ -6,12 +6,14 @@
  *   recording: [ ■ stop ] [ live waveform bars ] [ 0:07 ]    (same row height)
  *   done:      (parent swaps this row for the new VoiceBubble)
  *
- * No pitch picker, no trim UI, no review box — keeps the row minimal.
- * onRecorded(blob, waveform, duration) fires when the user stops.
+ * No pitch picker or trim UI. A finished take is always kept for review, even
+ * when the best-effort silence check cannot decode it or thinks it is silent.
+ * onRecorded(blob, waveform, duration) fires when the user publishes.
  */
 
 import { useRef, useState, useEffect, useCallback } from 'react'
 import { RECORDING_MIME, RECORDING_MIME_FALLBACK, WAVEFORM_SAMPLES } from '../config'
+import { isSilent, recordingPeak } from '../lib/silence'
 
 export interface InlineRecordingResult {
   blob: Blob
@@ -19,22 +21,60 @@ export interface InlineRecordingResult {
   duration: number
 }
 
+type RecordingPeakCheck = (blob: Blob) => Promise<number>
+
+export interface PreparedFinishedTake {
+  /** Available synchronously so a diagnostic check can never strand the take. */
+  result: InlineRecordingResult
+  /** Best-effort guidance only; publishing the preserved result remains possible. */
+  warning: Promise<string | null>
+}
+
+// Kept beside the recorder so the preservation ordering cannot drift from its caller.
+// oxlint-disable-next-line react/only-export-components
+export function prepareFinishedTake(
+  result: InlineRecordingResult,
+  checkPeak: RecordingPeakCheck = recordingPeak,
+): PreparedFinishedTake {
+  return {
+    result,
+    warning: checkPeak(result.blob)
+      .then((peak) => isSilent(peak)
+        ? 'This recording may contain no sound. Listen before publishing, or re-record.'
+        : null)
+      .catch((err: unknown) => {
+        console.error('Recording playback check failed:', err)
+        return 'We could not verify this recording. Listen before publishing, or re-record.'
+      }),
+  }
+}
+
 interface Props {
   onRecorded: (result: InlineRecordingResult) => void
   onCancel?: () => void
   onArm?: () => void   // synchronously claims the shared recorder target
   autoStart?: boolean
+  /** Idle-row wording, so a chapter that already has notes says so. */
+  idleLabel?: string
 }
 
 const MAX_RECORDING_SECONDS = 600 // 10 min hard cap
 
-export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart }: Props) {
+export default function InlineRecorder({
+  onRecorded,
+  onCancel,
+  onArm,
+  autoStart,
+  idleLabel = 'Add a voice note',
+}: Props) {
   const [recording, setRecording] = useState(false)
   const [arming, setArming] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [bars, setBars] = useState<number[]>(new Array(36).fill(0))
   const [micError, setMicError] = useState<string | null>(null)
+  const [checking, setChecking] = useState(false)
   const [review, setReview] = useState<InlineRecordingResult | null>(null)
+  const [reviewWarning, setReviewWarning] = useState<string | null>(null)
 
   const streamRef = useRef<MediaStream | null>(null)
   const audioCtxRef = useRef<AudioContext | null>(null)
@@ -118,7 +158,18 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
         const blob = new Blob(chunksRef.current, { type: mr.mimeType || 'audio/webm' })
         const duration = (Date.now() - startRef.current) / 1000
         const waveform = downsample(samplesRef.current, WAVEFORM_SAMPLES)
-        setReview({ blob, waveform, duration })
+        const prepared = prepareFinishedTake({ blob, waveform, duration })
+        // Preserve the completed audio before starting the fallible diagnostic.
+        // Silence detection is advisory: only an explicit Discard may destroy it.
+        setReview(prepared.result)
+        setReviewWarning(null)
+        setChecking(true)
+        void prepared.warning
+          .then((warning) => {
+            if (!isCurrent() || cancelledRef.current) return
+            setReviewWarning(warning)
+          })
+          .finally(() => { if (isCurrent()) setChecking(false) })
       }
 
       mr.start(100)
@@ -186,17 +237,36 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
   if (review) {
     return (
       <div className="irec irec--review" role="status">
-        <audio controls src={URL.createObjectURL(review.blob)} aria-label="Preview recording" />
-        <span>{Math.ceil(review.duration)}s ready</span>
-        <button type="button" onClick={() => {
-          const completed = review
-          setReview(null)
-          onRecorded(completed)
-        }}>Publish</button>
-        <button type="button" onClick={() => { setReview(null); startSafely() }}>Re-record</button>
-        <button type="button" onClick={() => { setReview(null); onCancel?.() }}>Discard</button>
+        <audio className="irec__preview" controls src={URL.createObjectURL(review.blob)} aria-label="Preview recording" />
+        <span className="irec__ready">
+          {Math.ceil(review.duration)}s ready{checking ? ' · checking audio…' : ''}
+        </span>
+        {reviewWarning && <span className="irec__error" role="alert">{reviewWarning}</span>}
+        <div className="irec__actions">
+          <button
+            type="button"
+            className="btn btn--primary btn--small"
+            onClick={() => {
+              const completed = review
+              setReview(null)
+              onRecorded(completed)
+            }}
+          >
+            Publish
+          </button>
+          <button type="button" className="btn btn--ghost btn--small" onClick={() => { setReview(null); startSafely() }}>
+            Re-record
+          </button>
+          <button type="button" className="btn btn--ghost btn--small" onClick={() => { setReview(null); onCancel?.() }}>
+            Discard
+          </button>
+        </div>
       </div>
     )
+  }
+
+  if (checking) {
+    return <span className="irec__idle" role="status">Checking the recording…</span>
   }
 
   if (arming) {
@@ -204,10 +274,13 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
   }
 
   if (!recording) {
+    // Reads as one more row in the chapter, so recording looks like part of the
+    // list it joins rather than a floating control.
     return (
-      <span className="irec__idle">
+      <div className="irec__idle">
         <button
-          className="irec__btn"
+          className="irec__add"
+          aria-label="Record a voice note"
           onClick={() => {
             // Claim the shared recorder target before getUserMedia awaits, so
             // a second section cannot arm while browser permission is pending.
@@ -215,15 +288,16 @@ export default function InlineRecorder({ onRecorded, onCancel, onArm, autoStart 
             setMicError(null)
             startSafely()
           }}
-          aria-label="Record a voice note"
-          title="Record"
         >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
-            <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5.4-3a5.4 5.4 0 0 1-10.8 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-1.6Z" />
-          </svg>
+          <span className="irec__add-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5.4-3a5.4 5.4 0 0 1-10.8 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-1.6Z" />
+            </svg>
+          </span>
+          <span className="irec__add-label">{idleLabel}</span>
         </button>
         {micError && <span className="irec__error" role="alert">{micError}</span>}
-      </span>
+      </div>
     )
   }
 

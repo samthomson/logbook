@@ -1,18 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { generateSecretKey, nip19 } from 'nostr-tools'
-import { loadPrivateKey } from '../config.ts'
+import { requirePubkey, requireUrlList } from '../config-env.ts'
 
-test('loadPrivateKey fails closed when the Compass key is absent or does not match the configured pubkey', async () => {
-  const original = process.env.COMPASS_NSEC
-  try {
-    delete process.env.COMPASS_NSEC
-    await assert.rejects(loadPrivateKey(), /COMPASS_NSEC environment variable is not set/)
+test('requirePubkey fails closed when unset or malformed', () => {
+  assert.throws(() => requirePubkey(undefined, 'COMPASS_PUBKEY'), /required/)
+  assert.throws(() => requirePubkey('npub1abc', 'COMPASS_PUBKEY'), /64-character hex/)
+})
 
-    process.env.COMPASS_NSEC = nip19.nsecEncode(generateSecretKey())
-    await assert.rejects(loadPrivateKey(), /does not match the configured Compass pubkey/)
-  } finally {
-    if (original === undefined) delete process.env.COMPASS_NSEC
-    else process.env.COMPASS_NSEC = original
-  }
+test('requireUrlList fails closed when unset or empty', () => {
+  assert.throws(() => requireUrlList(undefined, 'RELAYS', 'ws'), /required/)
+  assert.throws(() => requireUrlList(' , ', 'RELAYS', 'ws'), /at least one URL/)
+  assert.throws(() => requireUrlList('ws://public.example', 'RELAYS', 'ws'), /wss:/)
 })

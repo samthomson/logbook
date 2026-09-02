@@ -40,7 +40,11 @@ The test nsec is **not** a Compass signer. Do not run `watch`, `stitch`, `publis
 
 ## Privileged staging release test
 
-Run only from the secure Compass service environment with the real Compass signing key already provisioned there.
+Run only from the secure Compass service environment with an externally managed,
+already-authorized NIP-46 bunker. The worker receives only its authorized
+session; nsyte retrieves its session from the deployment account's OS keychain
+or encrypted credential store. Never start a hot-key bunker from this repository
+or pass nsec/nbunksec/bunker secrets in command arguments.
 
 1. Create a dedicated staging issue and static output root; do not point first tests at the production RSS feed.
 2. Start `npm run watch`. Verify startup recognizes valid Compass issues and backfills exactly one missing manifest per issue.
@@ -71,12 +75,17 @@ is not the exact cut bound to the run. A ledger with `terminal: false` is a fail
 incomplete release, even if `feed.xml` exists locally. `terminal: true` means the terminal
 manifest acknowledgement completed, not merely that an RSS file was written.
 
-Writing to `STATIC_DIR` is deliberately **not** hosting. After the deployment mechanism has
-uploaded the feed, provide a post-upload acknowledgement (for the current CLI seam,
-`LOGBOOK_STATIC_SYNC_ACK='{"hosted":true,"feedDigest":"<sha256-of-feed.xml>"}'`) and rerun
-`publish-rss`. A missing, non-hosted, or mismatched acknowledgement leaves `feed` incomplete
-and prevents Podstr, NIP-73, and terminal manifest publication. The value is an acknowledgement
-from the deployer, never a claim inferred from a local filesystem write.
+Writing to `STATIC_DIR` is deliberately **not** hosting. The worker GETs the feed from
+`LOGBOOK_FEED_READBACK_URL` after writing it and acknowledges the stage only when those hosted
+bytes match the candidate SHA-256. The URL defaults to `LOGBOOK_BASE_URL/feed.xml`; deployments
+must set a separate origin or loopback URL only as an explicit exception when public-host
+verification is intentionally unavailable. A failed fetch or digest mismatch leaves `feed` incomplete and prevents
+Podstr, NIP-73, and terminal manifest publication.
+
+At watcher startup, a missing `feed.xml` or `episodes.json` is reconstructed from the newest
+verified published manifest for each episode before the first publishing cycle. The origin serves
+only `feed.xml`, MP3s, and chapter JSON; episode indexes, run metadata, and release ledgers remain
+internal even though they share the worker volume.
 
 ## Required checks before every merge or deployment
 

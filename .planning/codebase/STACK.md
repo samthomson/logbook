@@ -69,8 +69,8 @@ last_mapped_commit: 93cb11b31fd03332a9a9854fa102c9c5e211b685
 
 **Environment:**
 - PWA relay, event-kind, Compass pubkey, and Blossom defaults are compiled from `logbook-pwa/src/config.ts`.
-- Worker public settings use `LOGBOOK_BASE_URL`, `LOGBOOK_STATIC_DIR`, `LOGBOOK_AUDIO_DIR`, and optional `NAK_BIN` from `deploy/systemd/logbook.env.example`.
-- A digest-bound `LOGBOOK_STATIC_SYNC_ACK` is required after external feed hosting before terminal release stages continue.
+- Worker public settings use `LOGBOOK_BASE_URL`, optional `LOGBOOK_FEED_READBACK_URL`, `LOGBOOK_STATIC_DIR`, `LOGBOOK_AUDIO_DIR`, and optional `NAK_BIN` from `deploy/systemd/logbook.env.example`.
+- The worker must fetch hosted feed bytes whose digest matches the candidate before terminal release stages continue.
 - Production signing reads the authorized session from the service account's `~/.config/compass-publish/`; raw signing keys are not production configuration.
 
 **Build:**

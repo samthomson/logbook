@@ -36,6 +36,7 @@ describe('admin save controller', () => {
     const latest = vi.fn()
       .mockResolvedValueOnce(manifest(BASE_ID))
       .mockResolvedValueOnce(manifest(SAVED_ID))
+      .mockResolvedValueOnce(manifest(SAVED_ID))
     const publish = vi.fn().mockResolvedValue(event(SAVED_ID))
     const controller = createAdminSaveController({ fetchLatest: latest, publish, delay: vi.fn() })
 
@@ -67,6 +68,7 @@ describe('admin save controller', () => {
       .mockResolvedValueOnce(manifest(BASE_ID))
       .mockResolvedValueOnce(manifest(BASE_ID))
       .mockResolvedValueOnce(manifest(SAVED_ID))
+      .mockResolvedValueOnce(manifest(SAVED_ID))
     const delay = vi.fn().mockResolvedValue(undefined)
     const controller = createAdminSaveController({
       fetchLatest: latest,
@@ -76,6 +78,21 @@ describe('admin save controller', () => {
     await expect(controller.save(manifest(BASE_ID), content())).resolves.toBeTruthy()
     expect(delay).toHaveBeenNthCalledWith(1, 250)
     expect(delay).toHaveBeenNthCalledWith(2, 500)
+  })
+
+  it('acknowledges its own event but reports a newer authoritative concurrent revision', async () => {
+    const latest = vi.fn()
+      .mockResolvedValueOnce(manifest(BASE_ID))
+      .mockResolvedValueOnce(manifest(SAVED_ID))
+      .mockResolvedValueOnce(manifest(OTHER_ID))
+    const controller = createAdminSaveController({
+      fetchLatest: latest,
+      publish: vi.fn().mockResolvedValue(event(SAVED_ID)),
+      delay: vi.fn(),
+    })
+    await expect(controller.save(manifest(BASE_ID), content())).rejects.toThrow(/conflict/i)
+    expect(latest).toHaveBeenCalledWith(SAVED_ID)
+    expect(latest).toHaveBeenLastCalledWith()
   })
 
   it('reports a competing post-publish revision and does not treat the draft as saved', async () => {
@@ -95,6 +112,7 @@ describe('admin save controller', () => {
     const fetchLatest = vi.fn()
       .mockReturnValueOnce(preflight)
       .mockResolvedValueOnce(manifest(SAVED_ID))
+      .mockResolvedValueOnce(manifest(SAVED_ID))
     const publish = vi.fn().mockResolvedValue(event(SAVED_ID))
     const controller = createAdminSaveController({ fetchLatest, publish, delay: vi.fn() })
 
@@ -109,6 +127,7 @@ describe('admin save controller', () => {
   it('creates the first manifest only after confirming that no manifest exists', async () => {
     const latest = vi.fn()
       .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(manifest(SAVED_ID))
       .mockResolvedValueOnce(manifest(SAVED_ID))
     const publish = vi.fn().mockResolvedValue(event(SAVED_ID))
     const controller = createAdminSaveController({ fetchLatest: latest, publish, delay: vi.fn() })

@@ -1,0 +1,22 @@
+# Dependencies are installed inside the image from the lockfiles. Without this,
+# a host node_modules is copied in on top of them, so the image would ship
+# whatever the developer's platform resolved rather than the pinned tree.
+**/node_modules
+
+# Build output, local state, and history: none of it is an input to a build.
+**/dist
+logbook-pwa/dev-dist
+**/.vite
+.git
+.github
+**/*.log
+
+# Never let secrets or local configuration enter the build context.
+.env
+.secrets
+**/.nsite
+
+# Planning and research material.
+.planning
+research
+docs

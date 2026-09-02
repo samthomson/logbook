@@ -14,16 +14,49 @@ function updateSection(
   }
 }
 
-export function canEditManifest(content: ManifestContent, pubkey: string): boolean {
-  return content.episodeStatus === 'draft' && pubkey === COMPASS_PUBKEY
+/**
+ * Producers curate; Compass is always one. Membership comes from the
+ * Compass-signed producer list, so this is delegated authority, not a second
+ * trust root.
+ */
+export function canEditManifest(
+  content: ManifestContent,
+  pubkey: string,
+  producers: ReadonlySet<string> = new Set([COMPASS_PUBKEY]),
+): boolean {
+  return content.episodeStatus === 'draft' && producers.has(pubkey.toLowerCase())
+}
+
+export function canReopenPublishedCut(
+  content: ManifestContent,
+  pubkey: string,
+  producers: ReadonlySet<string> = new Set([COMPASS_PUBKEY]),
+): boolean {
+  if (!producers.has(pubkey.toLowerCase())) return false
+  if (content.episodeStatus === 'published') return true
+  return content.episodeStatus === 'cutting' && Boolean(content.lastFailure)
+}
+
+/** Published audio stays in the feed until the next publish lands. */
+export function reopenPublishedCut(content: ManifestContent): ManifestContent {
+  const failedLock = content.episodeStatus === 'cutting' && Boolean(content.lastFailure)
+  if (content.episodeStatus !== 'published' && !failedLock) return content
+  return {
+    ...content,
+    episodeStatus: 'draft',
+    lastFailure: null,
+    release: undefined,
+  }
+}
+
+/** A chapter is in the stitch when it has a recording and was not left out. */
+export function sectionInCut(section: ManifestSection): boolean {
+  if (section.sectionExcluded === true || section.introEventId === 'excluded') return false
+  return section.order.some((id) => !section.excluded.includes(id))
 }
 
 export function canLockEpisode(content: ManifestContent): boolean {
-  return content.episodeStatus === 'draft' && content.sections.length > 0 && content.sections.every((section) =>
-    section.sectionExcluded !== true &&
-    section.introEventId !== 'excluded' &&
-    section.order.some((id) => !section.excluded.includes(id)),
-  )
+  return content.sections.some(sectionInCut)
 }
 
 export function includeAllChapters(

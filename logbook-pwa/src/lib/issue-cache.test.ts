@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { COMPASS_PUBKEY } from '../config'
 import { clearIssueCache, loadCachedIssue, saveCachedIssue } from './issue-cache'
 import { parseIssue } from './compass'
 
@@ -7,7 +8,6 @@ vi.mock('../config', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../config')>()
   return {
     ...actual,
-    COMPASS_PUBKEY: 'b'.repeat(64),
     BLOSSOM_SERVERS: ['https://blossom.example'],
   }
 })
@@ -23,7 +23,7 @@ vi.mock('./relay', async (importOriginal) => {
 function issueEvent(issueNumber: number, id: string) {
   return {
     id,
-    pubkey: 'b'.repeat(64),
+    pubkey: COMPASS_PUBKEY,
     created_at: issueNumber,
     kind: 30023,
     tags: [['d', `newsletter-${issueNumber}`], ['title', `Nostr Compass #${issueNumber}`]],

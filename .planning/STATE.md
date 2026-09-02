@@ -67,7 +67,7 @@ None in `.planning/todos/pending/`.
 ### Blockers/Concerns
 
 - Canonical host access and explicit authorization are required before service installation or live release side effects
-- The worker has no concrete static-host deployer; `LOGBOOK_STATIC_SYNC_ACK` is currently an external/manual boundary
+- The worker reads back and hashes `LOGBOOK_FEED_READBACK_URL`, but still has no concrete static-host uploader
 - Real-device Amber/microphone behavior and podcast-client ingestion require operator-led external verification
 - The working tree contains pre-existing documentation/source changes; stage only files explicitly owned by each GSD plan
 

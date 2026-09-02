@@ -1,20 +1,20 @@
-import { useRef, useEffect, useState } from 'react'
+/**
+ * TranscriptCard — a note's transcript. Sentence chunks are tap-to-seek and
+ * highlight the one playing; plain-text transcripts render as-is.
+ */
 
-interface WordChunk {
-  text: string
-  timestamp: [number, number | null]
-}
+import { useEffect, useState } from 'react'
+import type { TranscriptChunk } from '../types/nostr'
 
 interface Props {
   text: string
-  chunks?: WordChunk[]
+  chunks?: TranscriptChunk[]
   currentTime?: number
-  onWordClick?: (timestamp: number) => void
+  onChunkClick?: (timestamp: number) => void
 }
 
-export function TranscriptCard({ text, chunks, currentTime = 0, onWordClick }: Props) {
-  const [activeWord, setActiveWord] = useState(-1)
-  const containerRef = useRef<HTMLDivElement>(null)
+export function TranscriptCard({ text, chunks, currentTime = 0, onChunkClick }: Props) {
+  const [activeChunk, setActiveChunk] = useState(-1)
 
   useEffect(() => {
     if (!chunks?.length) return
@@ -26,52 +26,25 @@ export function TranscriptCard({ text, chunks, currentTime = 0, onWordClick }: P
         break
       }
     }
-    setActiveWord(found)
+    setActiveChunk(found)
   }, [currentTime, chunks])
 
   if (!chunks?.length) {
-    return (
-      <div style={{
-        padding: '12px 16px',
-        background: '#111',
-        borderRadius: 8,
-        color: '#ccc',
-        fontSize: 14,
-        lineHeight: 1.6,
-      }}>
-        {text}
-      </div>
-    )
+    return <p className="bubble__transcript">{text}</p>
   }
 
   return (
-    <div
-      ref={containerRef}
-      style={{
-        padding: '12px 16px',
-        background: '#111',
-        borderRadius: 8,
-        fontSize: 14,
-        lineHeight: 1.8,
-        color: '#ccc',
-      }}
-    >
+    <p className="bubble__transcript transcript">
       {chunks.map((chunk, i) => (
-        <span
+        <button
           key={i}
-          onClick={() => onWordClick?.(chunk.timestamp[0])}
-          style={{
-            cursor: onWordClick ? 'pointer' : 'default',
-            background: i === activeWord ? '#7c3aed33' : 'transparent',
-            color: i === activeWord ? '#a78bfa' : '#ccc',
-            borderRadius: 3,
-            padding: '1px 2px',
-            transition: 'background 0.1s, color 0.1s',
-          }}
+          type="button"
+          className={`transcript__chunk${i === activeChunk ? ' transcript__chunk--active' : ''}`}
+          onClick={() => onChunkClick?.(chunk.timestamp[0])}
         >
-          {chunk.text}
-        </span>
+          {chunk.text}{' '}
+        </button>
       ))}
-    </div>
+    </p>
   )
 }

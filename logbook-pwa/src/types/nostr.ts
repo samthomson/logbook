@@ -34,7 +34,7 @@ export interface Segment {
   isIntro: boolean
   sectionId: string
   issueId: string
-  respondingTo: string | null  // event ID, soft pointer only
+  respondingTo: string | null
   alt: string | null
 }
 
@@ -52,10 +52,25 @@ export interface ManifestSection {
   reviewed: string[]     // segment event IDs marked reviewed by admin
 }
 
+export type ReleaseStep = 'audio' | 'chapters' | 'feed' | 'podstr' | 'announcement'
+
+/** Worker-written checklist of publish steps that have acknowledged. */
+export interface ManifestRelease {
+  completed: ReleaseStep[]
+  failed?: ReleaseStep
+}
+
 export interface PublishedRss {
-  guid: string
   mp3Url: string
-  chapters: PodcastChapter[]
+  mp3Size?: number
+  durationSeconds?: number
+  guid?: string
+  chapters?: PodcastChapter[]
+  chaptersUrl?: string
+  transcriptUrl?: string
+  feedUrl?: string
+  publishedAt?: number
+  announcementId?: string
 }
 
 export interface PodcastChapter {
@@ -65,11 +80,25 @@ export interface PodcastChapter {
   contributorPubkey: string
 }
 
+/**
+ * Why the worker handed a locked episode back to the producer. Written by the
+ * stitcher, cleared the next time the producer publishes.
+ */
+export interface ManifestFailure {
+  at: number             // unix seconds the stitch run failed
+  reason: string         // one line naming what to fix, no event ids
+  segmentId?: string     // set when one recording is at fault
+  sectionId?: string
+  stage?: ReleaseStep    // set when an RSS/publish step failed while still cutting
+}
+
 export interface ManifestContent {
   issueRef: string       // naddr of kind 30023 Compass issue
   episodeStatus: EpisodeStatus
   sections: ManifestSection[]
   publishedRss: PublishedRss | null
+  lastFailure?: ManifestFailure | null
+  release?: ManifestRelease
 }
 
 /** A parsed kind 34200 manifest event. */
@@ -103,10 +132,18 @@ export interface CompassIssue {
 
 // ─── Transcript companion (kind 1111 scoped) ─────────────────────────────────
 
+/** One sentence-level transcript unit; timestamps are seconds into the note. */
+export interface TranscriptChunk {
+  text: string
+  timestamp: [number, number | null]
+}
+
 export interface TranscriptEvent {
   event: NostrEvent
   segmentEventId: string
   text: string
+  /** Empty on plain-text transcripts; drives tap-to-seek highlighting. */
+  chunks: TranscriptChunk[]
 }
 
 // ─── Auth / identity ──────────────────────────────────────────────────────────
