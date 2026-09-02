@@ -85,8 +85,28 @@ pinned) runs only in the worker container.
 - [x] dark themed ui, AMOLED black
 - [x] Producer UI: browse real Compass kind 30023 issues on relays → pick one → “Start podcast draft” → publish kind 34200 manifest from that newsletter’s sections (not seed stub)
 - [x] normalise audio levels in ffmpeg when stitching a podcast together
-- [ ] mobile ux ui++ (recorder, tap targets, sticky release bar)
 - [x] ai transcription of uploads (worker whisper.cpp small.en; producer retranscribe button; live response)
 - [x] make publishing feel more robust, for each episode show a checklist of sorts of what tasks get done and are done (ie producing various xml files and publishing to blossom). have individual states/buttons for each
-- [ ] Whitelist Derek/MrBlack + run the test — ops actions, fair to omit from a code todo list
+
+
 - [/] Prove release end-to-end on staging — the actual milestone blocker, not in README
+
+- [ ] Whitelist Derek/MrBlack + run the test — ops actions, fair to omit from a code todo list
+- [ ] mobile ux ui++ (recorder, tap targets, sticky release bar)
+
+
+- [ ] Move the "transcribe again" button inline with the other buttons to save vertical space
+- [ ] Clarify if the browser tab must remain open during episode processing after publishing
+- [ ] Ensure code blocks are rendered properly
+- [ ] Add a voice message field before the first item for intros
+- [ ] Fix scrolling bug that causes a jump after recording and uploading a message
+- [ ] Create a broad default contributor allow list (anyone ever mentioned in a compass)
+  - [ ] Allow anyone to publish, but flag them as "validated" vs. "random" contributors in the producer section
+- [ ] Implement automatic retry for uploads when internet connection is lost/restored
+
+- [ ] after a failed upload (eg internet failure) the upload should auto retry, not awaiting the user to explicitly retry
+- [ ] Fix failed uploads getting stuck on a "waiting" sign or approval in Ember
+  - [ ] Log in to investigate the upload/approval state from the admin side
+
+
+- [ ] Implement server AI to pre-select and order nodes for human validation
