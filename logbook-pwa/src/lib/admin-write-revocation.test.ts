@@ -41,6 +41,25 @@ const manifestContent: ManifestContent = {
 }
 
 describe('admin write authorization revocation', () => {
+  it('rejects a producer-authored validation roster before signing or publishing', async () => {
+    const signEvent = vi.fn()
+    const signer: NostrSigner = {
+      getPublicKey: async () => 'd'.repeat(64),
+      signEvent,
+    }
+    const relayPublish = vi.mocked(publishToRelays)
+    relayPublish.mockClear()
+
+    await expect(publishWhitelist(
+      D_ISSUE_WL(31),
+      [{ pubkey: 'c'.repeat(64) }],
+      signer,
+      ['wss://relay.example'],
+    )).rejects.toThrow(/Only the Compass key/i)
+    expect(signEvent).not.toHaveBeenCalled()
+    expect(relayPublish).not.toHaveBeenCalled()
+  })
+
   it('does not publish a manifest if the signer switches identity while signing', async () => {
     const relayPublish = vi.mocked(publishToRelays)
     relayPublish.mockClear()

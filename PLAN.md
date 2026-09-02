@@ -130,9 +130,10 @@ client renders it as a normal like.
   UI filter only; relay and Blossom access stay public, per the locked decision.
   **[R3]** The raw per-issue list would drop a contributor the week they aren't
   mentioned, which reads as being uninvited rather than intended gating. The
-  whitelist ships as the union of this issue's `dm-outreach.ts` output and a
-  standing roster from `data/npubs.yml` (or a rolling multi-issue union), and any
-  whitelisted npub can record under any section; the section map is a UI
+  validation roster is the union of Compass-signed standing/per-issue lists and
+  every npub ever mentioned in signature-verified Compass newsletter history.
+  Any authenticated npub can record under any section; unvalidated notes remain
+  visible to producers but cannot enter the cut. The section map is a UI
   suggestion, not a gate.
 - **Recording:** `MediaRecorder` (webm/opus), local waveform + trim before upload.
   **[R2]** iOS below 18.4 has no WebM/Opus recording support and no wake-lock
@@ -216,7 +217,8 @@ client renders it as a normal like.
   Compass issue, list sections, record one note, upload to Blossom, publish the
   segment event, play it back. Skip the manifest, whitelist, transcription, and
   stitching entirely at this stage.
-- **v1 MVP:** full timeline/recording/threading UI, client-side whitelist gating,
+- **v1 MVP:** full timeline/recording/threading UI, authenticated recording with
+  separate Compass-controlled cut validation,
   VPS-generated manifest, admin drag-to-reorder, manual VPS-triggered stitcher,
   one produced episode published to Podcasting 2.0 RSS by hand to prove the
   format. PWA installable and published through nsyte/nsite; RSS and episode

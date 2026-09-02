@@ -32,9 +32,13 @@ Test nsec:
 2. Open the localhost URL in a browser. Use localhost for microphone permissions.
 3. Use **Advanced → nsec** and enter the test nsec. Never put it in shell history, `.env`, a commit, or screenshots.
 4. Hard-refresh. The login must clear: raw nsec/bunker/passphrase values are intentionally memory-only.
-5. Add this identity only to a dedicated test issue's signed whitelist. Do not relax whitelist code or modify a production issue to test it.
+5. Sign in to the dedicated test issue. Authentication permits kind-4200 publication; the signed validation roster controls whether a note may enter the cut, not whether it may be recorded.
 6. Record a 3–10 second non-sensitive sample. Verify upload, kind-4200 publication, reload persistence, section/reply placement, and playback.
 7. Disable networking after recording a second sample, stop it, restore networking, then retry. Confirm the already uploaded descriptor is reused and only one segment is published.
+
+Recoverable uploads are held durably in IndexedDB and retried at most five times with bounded exponential backoff only while connectivity is available. Signer rejection, invalid recordings, authorization failures, and signer timeouts never retry automatically. Producer-visible diagnostics are limited to category, timestamp, and attempt. The browser must remain open until kind 4200 reaches a relay; after publication, transcription belongs to the trusted worker and the browser may close. Likewise, once a signed `cutting` manifest reaches the relays, episode stitching and release stages run on the trusted worker and do not depend on the producer tab.
+
+For AI-assisted curation, export candidate segment nodes as a JSON array containing event `id`, `sectionId`, `createdAt`, and optional `transcript`, `duration`, `respondingTo`, and `validatedContributor`, then run `npm run suggest-cut -- /path/to/nodes.json` from `scripts/`. The output is a review-only proposal with no signer or publication path. Missing AI configuration, provider/network failure, or invalid output yields deterministic chronological order; a producer must explicitly validate and apply any proposal.
 
 The test nsec is **not** a Compass signer. Do not run `watch`, `stitch`, `publish-rss`, or `transcribe-missing` with it. The scripts reject a key that does not derive the configured Compass pubkey.
 

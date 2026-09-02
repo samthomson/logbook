@@ -18,6 +18,7 @@ test('requiredChapterTargets matches the PWA chapter projection for lead prose a
   ].join('\n')
 
   assert.deepEqual(requiredChapterTargets(markdown, 32), [
+    { id: 'sec-intro-32', title: 'Episode intro' },
     { id: 'sec-apps-clients-32', title: 'Apps & Clients' },
     { id: 'sec-apps-clients-amber-wallet-32', title: 'Amber Wallet' },
     { id: 'sec-apps-clients-nd-next-32', title: 'ND Next' },

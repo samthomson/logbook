@@ -65,6 +65,7 @@ describe('startPodcastDraft', () => {
     const content = publish.mock.calls[0][0] as ManifestContent
     expect(content.episodeStatus).toBe('draft')
     expect(content.sections.map((section) => section.id)).toEqual([
+      'sec-intro-42',
       'sec-lead-stories-public-chapter-42',
     ])
     expect(content.sections[0].order).toEqual([])

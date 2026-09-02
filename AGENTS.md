@@ -190,7 +190,7 @@ GitHub Pages or nsite hosting.
 
 ## Phase 1: v1 MVP — Timeline & Recording UI
 
-**Goal:** Full contributor-facing timeline. Sections in newsletter order, notes in EDL seed order, audio replies, whitelist gating, PWA installable.
+**Goal:** Full contributor-facing timeline. Sections in newsletter order, notes in EDL seed order, audio replies, authenticated recording with separate cut validation, PWA installable.
 
 ### Timeline
 
@@ -200,11 +200,11 @@ GitHub Pages or nsite hosting.
 - [x] **TIMELINE-04**: Audio reply control on a contributor's note; the reply indents under its parent.
 - [ ] **TIMELINE-05**: Inline `<AudioPlayer>` per note; expand-to-play on tap (transcript-first rendering activates in v2)
 
-### Whitelist
+### Contributor validation
 
-- [ ] **WL-01**: `src/lib/whitelist.ts` — `fetchWhitelist(issueId: string): Promise<Set<string>>` — GETs `/data/whitelist-{issueId}.json`; merges with standing roster from `/data/npubs.yml` (parse YAML client-side or pre-process at build time)
-- [ ] **WL-02**: Record button hidden/disabled for pubkeys not in the whitelist set. This is UI-only; no relay/Blossom ACL.
-- [ ] **WL-03**: Whitelist JSON files are versioned per issue (`whitelist-31.json`, `whitelist-32.json`); old files are never overwritten
+- [x] **WL-01**: `src/lib/whitelist.ts` unions Compass-signed standing/per-issue kind 34201 rosters with all mentions found across paginated, signature-verified Compass kind 30023 history.
+- [x] **WL-02**: Any authenticated pubkey may record. Validation is shown separately; unvalidated notes remain producer-visible but fail closed out of the cut.
+- [x] **WL-03**: Only Compass-signed roster revisions are trusted; unsigned static JSON/YAML is not an eligibility source.
 
 ### Issue Picker
 
@@ -218,7 +218,7 @@ GitHub Pages or nsite hosting.
 ### Verification
 
 - [ ] **VERIFY-01**: Install PWA on Android; confirm timeline loads from a cached shell when offline
-- [ ] **VERIFY-02**: Whitelist gating: log in as a non-whitelisted pubkey; confirm record button is not visible
+- [ ] **VERIFY-02**: On staging, log in as an unvalidated authenticated pubkey; confirm recording is available, the note is marked unvalidated for producers, and cut eligibility remains denied.
 - [ ] **VERIFY-03**: Post an audio reply; confirm it indents under the parent and seed order places it after the parent
 
 ---

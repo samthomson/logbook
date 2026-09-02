@@ -27,7 +27,7 @@ import { issueAddress } from '../lib/compass'
 import { fetchSegmentsForIssue, mergeSegmentEventGroups, parseSegment, publishSegment, fetchTranscripts, selectTrustedSegmentEvents, fetchRetranscribeRequests, publishRetranscribeRequest } from '../lib/segment'
 import { orderTimelineSegments } from '../lib/timeline-order'
 import { useEpisodeCut, type ProducerContext } from '../lib/use-episode-cut'
-import { pinWindowScroll } from '../lib/pin-scroll'
+import { pinWindowScroll, preserveScrollAfterMutation } from '../lib/pin-scroll'
 import { releaseChecklist, type InspectTarget } from '../lib/release-checklist'
 import { fetchAnnouncementEvent, fetchPodstrEpisode } from '../lib/release-events'
 import ReleaseChecklist from './ReleaseChecklist'
@@ -46,6 +46,7 @@ import type { Filter } from 'nostr-tools'
 import { BLOSSOM_SERVERS, COMPASS_PUBKEY, RELAYS, KINDS, ISSUE_PREFIX } from '../config'
 import type { LatestRequestGuard } from '../lib/latest-request'
 import { formatDuration } from '../lib/utils'
+import { canAttemptDraft, classifyUploadFailure, MAX_DURABLE_UPLOAD_ATTEMPTS, retryDelayMs, shouldRetryDraft } from '../lib/upload-retry'
 
 interface Props {
   issue: CompassIssue
@@ -85,7 +86,7 @@ interface RecordingSection {
 }
 
 function recordingSections(issue: CompassIssue): { group: IssueSection; targets: RecordingSection[] }[] {
-  return issue.sections.map((group) => {
+  const groups = issue.sections.map((group) => {
     const named = group.items.filter((it) => it.title && it.id)
     const targets: RecordingSection[] = named.map((it) => ({ id: it.id!, title: it.title, item: it }))
     const lead = group.items.find((it) => !it.title)
@@ -94,6 +95,10 @@ function recordingSections(issue: CompassIssue): { group: IssueSection; targets:
     }
     return { group, targets }
   })
+  const intro: IssueSection = { id: `sec-intro-${issue.issueNumber}`, title: 'Episode intro', items: [] }
+  return groups.length > 0
+    ? [{ group: intro, targets: [{ id: intro.id, title: intro.title }] }, ...groups]
+    : []
 }
 
 export default function IssueTimeline({
@@ -123,6 +128,7 @@ export default function IssueTimeline({
   const [newSegmentIds, setNewSegmentIds] = useState<Set<string>>(new Set())
   const [profiles, setProfiles] = useState<Map<string, Profile>>(new Map())
   const [transcripts, setTranscripts] = useState<Map<string, TranscriptEvent>>(new Map())
+  const [online, setOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine)
   const [refreshGeneration, setRefreshGeneration] = useState(0)
   const [retranscribeRequests, setRetranscribeRequests] = useState<Map<string, number>>(new Map())
   const [retranscribeBusy, setRetranscribeBusy] = useState<Set<string>>(new Set())
@@ -148,6 +154,17 @@ export default function IssueTimeline({
 
   const groups = useMemo(() => recordingSections(issue), [issue])
   const allTargets = useMemo(() => groups.flatMap((g) => g.targets), [groups])
+
+  useEffect(() => {
+    const handleOnline = () => setOnline(true)
+    const handleOffline = () => setOnline(false)
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
+  }, [])
 
   // Prefetch mention profiles (one batched query)
   useEffect(() => {
@@ -377,7 +394,8 @@ export default function IssueTimeline({
     && draftBelongsTo(draft, myPubkey)
     && capabilityRequest !== null
     && capabilityRequests.isCurrent(capabilityRequest)
-  ), [capabilityRequest, capabilityRequests, myPubkey, recordingEnabled])
+    && canAttemptDraft(draft, online)
+  ), [capabilityRequest, capabilityRequests, myPubkey, online, recordingEnabled])
 
   useEffect(() => {
     const activeAttempts = activePublishAttemptsRef.current
@@ -412,6 +430,7 @@ export default function IssueTimeline({
           waveform: result.waveform,
           descriptor: resumablePending?.descriptor ?? null,
           updatedAt: Date.now(),
+          attempt: resumablePending ? (pendingDrafts.find((item) => item.id === draftId)?.attempt ?? 0) : 0,
         }
         pendingRef.current.set(draftId, {
           ownerPubkey,
@@ -482,6 +501,7 @@ export default function IssueTimeline({
           waveform: result.waveform,
           descriptor,
           updatedAt: Date.now(),
+          attempt: pendingDrafts.find((item) => item.id === draftId)?.attempt ?? 0,
         }
         // Render each take before IndexedDB finishes. The map allows another
         // recording to be saved while this one waits on Amber or Blossom.
@@ -548,11 +568,13 @@ export default function IssueTimeline({
         const newSeg = parseSegment(event)
         if (newSeg) {
           knownIdsRef.current.add(newSeg.event.id)
-          setSections((prev) => {
-            const next = new Map(prev)
-            const cur = next.get(target.sectionId)
-            if (cur) next.set(target.sectionId, { ...cur, segments: [...cur.segments, newSeg] })
-            return next
+          preserveScrollAfterMutation(() => {
+            setSections((prev) => {
+              const next = new Map(prev)
+              const cur = next.get(target.sectionId)
+              if (cur) next.set(target.sectionId, { ...cur, segments: [...cur.segments, newSeg] })
+              return next
+            })
           })
           // Subtle published indicator on the new bubble
           setJustPublished((prev) => new Set([...prev, newSeg.event.id]))
@@ -567,11 +589,26 @@ export default function IssueTimeline({
         }
       } catch (err) {
         if (pendingRef.current.has(draftId)) {
-          console.error('Publish failed:', err)
-          const msg = err instanceof Error ? err.message : String(err)
+          const classified = classifyUploadFailure(err)
+          console.error('Publish failed:', classified.category)
+          const prior = pendingDrafts.find((item) => item.id === draftId)
+          const attempt = (prior?.attempt ?? 0) + 1
+          const failed: RecordingDraft = {
+            ...(prior ?? {
+              id: draftId, issueNumber: issue.issueNumber, ownerPubkey,
+              target: { sectionId: target.sectionId, respondingTo: target.respondingTo ?? null },
+              blob: result.blob, duration: result.duration, waveform: result.waveform,
+              descriptor: pendingRef.current.get(draftId)?.descriptor ?? null,
+            }),
+            updatedAt: Date.now(), attempt,
+            retryAt: classified.recoverable && attempt < MAX_DURABLE_UPLOAD_ATTEMPTS ? Date.now() + retryDelayMs(attempt) : null,
+            failure: { category: classified.category, timestamp: Date.now(), attempt, recoverable: classified.recoverable },
+          }
+          setPendingDrafts((current) => [failed, ...current.filter((item) => item.id !== draftId)])
+          await saveDraft(failed).catch((error) => console.warn('Unable to persist failed recording state:', error))
           setDraftError(
             draftId,
-            `Upload failed — recording saved on this device. (${msg.slice(0, 160)})`,
+            `Upload failed — recording saved on this device. ${classified.recoverable && attempt < MAX_DURABLE_UPLOAD_ATTEMPTS ? 'It will retry when connectivity returns.' : 'It will not retry automatically.'}`,
           )
         }
       } finally {
@@ -593,7 +630,7 @@ export default function IssueTimeline({
         }
       }
     },
-    [capabilityRequest, capabilityRequests, issue.issueNumber, myPubkey, recordingEnabled, setDraftError, signer],
+    [capabilityRequest, capabilityRequests, issue.issueNumber, myPubkey, pendingDrafts, recordingEnabled, setDraftError, signer],
   )
 
   const retryPendingDraft = useCallback((draftId: string) => {
@@ -601,6 +638,7 @@ export default function IssueTimeline({
     const draft = pendingDrafts.find((item) => item.id === draftId)
     const pending = pendingRef.current.get(draftId)
     if (!draft || !pending || !draftBelongsTo(draft, myPubkey)) return
+    if (!canAttemptDraft(draft, online)) return
     if (!canResumeDraft(draft)) {
       setDraftError(
         draftId,
@@ -620,10 +658,24 @@ export default function IssueTimeline({
     })
     setDraftError(draftId, null)
     void handleRecorded(result, pending.target, draftId)
-  }, [canResumeDraft, handleRecorded, myPubkey, pendingDrafts, setDraftError])
+  }, [canResumeDraft, handleRecorded, myPubkey, online, pendingDrafts, setDraftError])
 
-  // Restore every take owned by this principal. They are never published
-  // automatically; each remains durable and independently resumable.
+  useEffect(() => {
+    const retryRecoverable = () => {
+      const now = Date.now()
+      for (const draft of pendingDrafts) {
+        if (shouldRetryDraft(draft, online, now)) {
+          retryPendingDraft(draft.id)
+        }
+      }
+    }
+    window.addEventListener('online', retryRecoverable)
+    const timer = window.setInterval(retryRecoverable, 5_000)
+    return () => { window.removeEventListener('online', retryRecoverable); window.clearInterval(timer) }
+  }, [online, pendingDrafts, retryPendingDraft])
+
+  // Restore every take owned by this principal. Recoverable failures resume
+  // automatically only while online and within the bounded retry policy.
   useEffect(() => {
     pendingRef.current.clear()
     setPendingDrafts([])
@@ -712,7 +764,9 @@ export default function IssueTimeline({
           fetchTranscripts([segment]).then((map) => {
             const transcript = map.get(segment.event.id)
             if (!transcript) return
-            setTranscripts((prev) => new Map(prev).set(segment.event.id, transcript))
+            preserveScrollAfterMutation(() => {
+              setTranscripts((prev) => new Map(prev).set(segment.event.id, transcript))
+            })
           })
         },
       },
@@ -844,7 +898,9 @@ export default function IssueTimeline({
           >
             {cut.status === 'published'
               ? 'This episode is published. The voice notes below are what went into it.'
-              : 'Recordings are closed.'}
+              : cut.failure
+                ? 'Episode processing stopped on the trusted worker. You may close this browser and return to inspect or retry.'
+                : 'Episode processing is running on the trusted worker. You may close this browser; processing continues without this tab.'}
             {cut.status === 'published' && cut.content?.publishedRss?.mp3Url && (
               <>
                 {' '}
@@ -1012,6 +1068,7 @@ export default function IssueTimeline({
                               isNew={newSegmentIds.has(id)}
                               isOwn={seg.event.pubkey === myPubkey}
                               justPublished={justPublished.has(id)}
+                              validatedContributor={producer?.contributorPubkeys.has(seg.event.pubkey.toLowerCase()) || seg.event.pubkey.toLowerCase() === COMPASS_PUBKEY.toLowerCase()}
                               problem={producer && cut.failure?.segmentId === id ? cut.failure.reason : undefined}
                               onAudioReply={canRecordHere && recordTarget === null ? handleAudioReply : undefined}
                               cut={cut.editable ? {
@@ -1188,18 +1245,22 @@ export default function IssueTimeline({
             />
 
             <details className="produce__access">
-              <summary>Contributor access</summary>
-              {/* Producer capability only — the recording grant must never
-                  authorize a change to who may contribute. */}
-              <WhitelistPanel
-                issueNumber={issue.issueNumber}
-                issueMarkdown={issue.event.content}
-                signer={producer.signer}
-                pubkey={producer.pubkey}
-                writeRequests={producer.whitelistWriteRequests}
-                capabilityRequests={producer.capabilityRequests}
-                capabilityRequest={producer.capabilityRequest}
-              />
+              <summary>Contributor validation roster</summary>
+              {producer.pubkey.toLowerCase() === COMPASS_PUBKEY.toLowerCase() ? (
+                <WhitelistPanel
+                  issueNumber={issue.issueNumber}
+                  issueMarkdown={issue.event.content}
+                  signer={producer.signer}
+                  pubkey={producer.pubkey}
+                  writeRequests={producer.whitelistWriteRequests}
+                  capabilityRequests={producer.capabilityRequests}
+                  capabilityRequest={producer.capabilityRequest}
+                />
+              ) : (
+                <p className="produce__notice">
+                  Read-only for this producer. Only the Compass signer may change the trusted validation roster.
+                </p>
+              )}
             </details>
           </section>
         )}

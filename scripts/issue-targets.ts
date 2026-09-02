@@ -45,8 +45,9 @@ export function requiredChapterTargets(markdown: string, issueNumber: number): R
     if (!current.inItem) current.lead.push(line)
   }
 
-  return groups.flatMap((group) => {
+  const targets = groups.flatMap((group) => {
     const includeGroup = group.lead.join('\n').trim().length > 0 || group.items.length === 0
     return includeGroup ? [{ id: group.id, title: group.title }, ...group.items] : group.items
   })
+  return targets.length ? [{ id: `sec-intro-${issueNumber}`, title: 'Episode intro' }, ...targets] : []
 }

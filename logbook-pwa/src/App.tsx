@@ -31,7 +31,6 @@ export default function App() {
   const [route, navigate] = useRoute()
   const [recordingNotice, setRecordingNotice] = useState<string | null>(null)
   const [issue, setIssue] = useState<CompassIssue | null>(null)
-  const [isWhitelisted, setIsWhitelisted] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
   const [contributorPubkeys, setContributorPubkeys] = useState<Set<string>>(new Set())
   const [producerPubkeys, setProducerPubkeys] = useState<Set<string>>(new Set())
@@ -64,7 +63,7 @@ export default function App() {
   const episodeNumber = routeIssueNumber(route)
   // An episode in progress belongs to the people making it. Everyone else waits
   // for the published one — cosmetic, since the events themselves are public.
-  const canSeeUnpublished = Boolean(auth) && (isProducerKey || isAdmin || isWhitelisted)
+  const canSeeUnpublished = Boolean(auth)
   const episodeIsPublished = stageManifest?.episodeStatus === 'published'
   // Where to return after a login detour, so signing in never dumps you home.
   const afterLoginRef = useRef<Route>({ kind: 'home' })
@@ -84,7 +83,7 @@ export default function App() {
     degraded: boolean,
   ) => {
     const normalized = pubkey.toLowerCase()
-    const canRecord = allowed.has(normalized)
+    const canRecord = true
     const canAdmin = admins.has(normalized)
     const previous = accessGrantRef.current
     const sameContext = previous.issueNumber === issueNumber && previous.pubkey === normalized
@@ -100,7 +99,6 @@ export default function App() {
     accessGrantRef.current = { issueNumber, pubkey: normalized, canRecord, canAdmin }
     setContributorPubkeys(allowed)
     setProducerPubkeys(new Set([...admins].map((key) => key.toLowerCase())))
-    setIsWhitelisted(canRecord)
     setIsAdmin(canAdmin)
     setAccessDegraded(degraded)
   }, [adminCapabilityRequests, timelineCapabilityRequests])
@@ -113,7 +111,6 @@ export default function App() {
     adminCapabilityRequests.invalidate()
     setTimelineCapabilityRequest(null)
     setAdminCapabilityRequest(null)
-    setIsWhitelisted(false)
     setIsAdmin(false)
     setContributorPubkeys(new Set())
     setProducerPubkeys(new Set())
@@ -135,17 +132,17 @@ export default function App() {
     whitelistWriteRequests.invalidate()
     timelineCapabilityRequests.invalidate()
     adminCapabilityRequests.invalidate()
-    setTimelineCapabilityRequest(null)
+    // Recording authority is authentication, not roster membership. The
+    // signer/issue-bound request token still revokes in-flight work on change.
+    setTimelineCapabilityRequest(timelineCapabilityRequests.begin())
     setAdminCapabilityRequest(null)
     accessGrantRef.current = { issueNumber, pubkey: normalizedPubkey, canRecord: false, canAdmin: false }
     setIsAdmin(false)
     if (cached) {
       setContributorPubkeys(cached.allowed)
-      setIsWhitelisted(cached.allowed.has(normalizedPubkey))
       setAccessDegraded(true)
     } else {
       setContributorPubkeys(new Set())
-      setIsWhitelisted(false)
       setAccessDegraded(false)
     }
 
@@ -465,9 +462,9 @@ export default function App() {
             </span>
             {isProducerKey || isAdmin ? (
               <span className="app-role app-role--producer" role="status">Producer</span>
-            ) : isWhitelisted ? (
+            ) : (
               <span className="app-role" role="status">Contributor</span>
-            ) : null}
+            )}
             <button
             className="btn btn--ghost btn--small app-logout"
             onClick={() => {
@@ -533,7 +530,7 @@ export default function App() {
 
         {accessDegraded && episodeNumber !== null && (
           <div className="notice notice--warning" role="alert">
-            Couldn't load the contributor list — recording is paused.
+            Couldn't verify the validation roster — producer cut eligibility is paused.
             <button
               className="btn btn--ghost btn--small"
               onClick={() => {
@@ -590,7 +587,7 @@ export default function App() {
             issue={issue}
             signer={auth?.signer ?? null}
             myPubkey={auth?.pubkey ?? null}
-            canRecord={Boolean(auth && isWhitelisted)}
+            canRecord={Boolean(auth)}
             capabilityRequests={timelineCapabilityRequests}
             capabilityRequest={timelineCapabilityRequest}
             cachedSegments={cachedSegments}

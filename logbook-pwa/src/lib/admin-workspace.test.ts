@@ -122,6 +122,7 @@ function inventory(): Map<string, Segment> {
 describe('admin workspace projection', () => {
   it('uses the exact H2/H3 recording target order', () => {
     expect(buildRecordingTargets(issue())).toEqual([
+      { id: 'sec-intro-31', title: 'Episode intro' },
       { id: 'sec-one-31', title: 'One' },
       { id: 'sec-one-project-31', title: 'Project' },
       { id: 'sec-two-project-31', title: 'Second project' },
@@ -135,17 +136,17 @@ describe('admin workspace projection', () => {
     const workspace = projectAdminWorkspace(issue(), base, inventory())
 
     expect(workspace.map((chapter) => chapter.title)).toEqual([
-      'One', 'Project', 'Second project', 'Three', 'Unassigned · Old project', 'Unassigned recordings',
+      'Episode intro', 'One', 'Project', 'Second project', 'Three', 'Unassigned · Old project', 'Unassigned recordings',
     ])
-    expect(workspace[0].rows.map((row) => [row.segmentId, row.state, row.isNew])).toEqual([
+    expect(workspace[1].rows.map((row) => [row.segmentId, row.state, row.isNew])).toEqual([
       [ID.intro, 'included', false],
       [ID.included, 'included', false],
       [ID.excluded, 'excluded', false],
       [ID.discovered, 'inventory', true],
     ])
-    expect(workspace[2].rows.map((row) => row.segmentId)).toEqual([ID.targetTwo])
-    expect(workspace[4].rows.map((row) => row.segmentId)).toEqual([ID.legacy])
-    expect(workspace[5].rows.map((row) => row.segmentId)).toEqual([ID.unknown])
+    expect(workspace[3].rows.map((row) => row.segmentId)).toEqual([ID.targetTwo])
+    expect(workspace[5].rows.map((row) => row.segmentId)).toEqual([ID.legacy])
+    expect(workspace[6].rows.map((row) => row.segmentId)).toEqual([ID.unknown])
     expect(new Set(workspace.flatMap((chapter) => chapter.rows.map((row) => row.segmentId))).size).toBe(7)
     expect(base).toEqual(before)
     expect(isManifestDirty(base, base)).toBe(false)
@@ -179,7 +180,7 @@ describe('admin workspace projection', () => {
       'Recording unavailable', 'Invalid recording reference',
     ]))
     const workspace = projectAdminWorkspace(issue(), content, inventory())
-    expect(workspace[0].rows.some((row) => row.segmentId === ID.missing && row.unavailable)).toBe(true)
+    expect(workspace.find((section) => section.id === 'sec-one-31')?.rows.some((row) => row.segmentId === ID.missing && row.unavailable)).toBe(true)
   })
 
   it('allows the intro pointer to alias one order entry but rejects any further active duplicate', () => {

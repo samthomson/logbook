@@ -1,7 +1,8 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { COMPASS_PUBKEY } from '../config'
+import { nip19 } from 'nostr-tools'
 
-const state = vi.hoisted(() => ({ revision: 1 }))
+const state = vi.hoisted(() => ({ revision: 1, newsletterPageCalls: 0 }))
 
 vi.mock('./relay', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./relay')>()
@@ -10,8 +11,29 @@ vi.mock('./relay', async (importOriginal) => {
 
 vi.mock('./pool', () => ({
   getPool: () => ({
-    querySync: async (_relays: string[], filter: Record<string, string[][]>) => {
-      const dTag = filter['#d']?.[0] ?? 'unknown'
+    querySync: async (_relays: string[], filter: Record<string, unknown>) => {
+      if ((filter.kinds as number[])?.[0] === 30023) {
+        if (state.revision === 5) return [{
+          id: '9'.repeat(64), pubkey: COMPASS_PUBKEY, created_at: Math.floor(Date.now() / 1000), kind: 30023,
+          tags: [['d', 'newsletter-1']], content: `Prior guest nostr:${nip19.npubEncode('d'.repeat(64))}`, sig: 'b'.repeat(128),
+        }]
+        if (state.revision === 6) {
+          state.newsletterPageCalls += 1
+          const until = Number(filter.until)
+          const recent = Math.floor(Date.now() / 1000) - 100
+          const old = recent - 100
+          if (until > recent) return [{
+            id: '8'.repeat(64), pubkey: COMPASS_PUBKEY, created_at: recent, kind: 30023,
+            tags: [['d', 'newsletter-2']], content: `Recent guest nostr:${nip19.npubEncode('e'.repeat(64))}`, sig: 'b'.repeat(128),
+          }]
+          if (until > old) return [{
+            id: '7'.repeat(64), pubkey: COMPASS_PUBKEY, created_at: old, kind: 30023,
+            tags: [['d', 'newsletter-3']], content: `Old guest nostr:${nip19.npubEncode('f'.repeat(64))}`, sig: 'b'.repeat(128),
+          }]
+        }
+        return []
+      }
+      const dTag = (filter['#d'] as string[] | undefined)?.[0] ?? 'unknown'
       const event = (id: string, contributors: string[]) => ({
         id: id.repeat(64),
         pubkey: COMPASS_PUBKEY,
@@ -63,5 +85,22 @@ describe('access-list revalidation', () => {
     const access = await fetchAccessLists(32, undefined, { forceRefresh: true })
     expect(access.admins).toEqual(new Set([COMPASS_PUBKEY]))
     expect(access.adminsFromBootstrap).toBe(false)
+  })
+
+  it('derives validation from mentions across verified Compass newsletters', async () => {
+    const { fetchAccessLists } = await import('./whitelist')
+    state.revision = 5
+    const access = await fetchAccessLists(32, undefined, { forceRefresh: true })
+    expect(access.contributors.has('d'.repeat(64))).toBe(true)
+    expect(access.sources.get('d'.repeat(64))).toContain('newsletter')
+  })
+
+  it('paginates through the complete verified Compass newsletter history', async () => {
+    const { fetchVerifiedNewsletterMentions } = await import('./whitelist')
+    state.revision = 6
+    state.newsletterPageCalls = 0
+    const contributors = await fetchVerifiedNewsletterMentions()
+    expect(contributors).toEqual(new Set(['e'.repeat(64), 'f'.repeat(64)]))
+    expect(state.newsletterPageCalls).toBe(3)
   })
 })

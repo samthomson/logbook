@@ -48,6 +48,7 @@ interface Props {
   onAudioReply?: (segment: Segment) => void
   cut?: BubbleCutControls
   transcribe?: BubbleTranscribeControl
+  validatedContributor?: boolean
 }
 
 export default function VoiceBubble({
@@ -63,6 +64,7 @@ export default function VoiceBubble({
   onAudioReply,
   cut,
   transcribe,
+  validatedContributor,
 }: Props) {
   const playback = usePlayback()
   const isCurrent = playback.currentId === segment.event.id
@@ -197,38 +199,17 @@ export default function VoiceBubble({
           ) : transcribingNow ? (
             <p className="transcript-box__pending" role="status">
               <span className="spinner spinner--xs" aria-hidden="true" />
-              Transcribing — the text appears here in about a minute.
+              Voice note published — the trusted worker is transcribing it. You may close this browser.
             </p>
           ) : (
             <p className="transcript-box__pending">No transcript.</p>
           )}
 
-            {transcribe && (
-              <div className="bubble__transcribe">
-                <button
-                  type="button"
-                  className="btn btn--ghost btn--xs"
-                  disabled={transcribe.requested || transcribe.busy}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={transcribe.onRetranscribe}
-                >
-                  {transcript ? 'Transcribe again' : 'Transcribe'}
-                </button>
-                {transcribe.requested && !transcribe.busy && (
-                  <span className="bubble__transcribe-note" role="status">
-                    <span className="spinner spinner--xs" aria-hidden="true" />
-                    Transcribing — the new text appears here in about a minute.
-                  </span>
-                )}
-                {transcribe.error && (
-                  <span className="bubble__transcribe-note" role="alert">{transcribe.error}</span>
-                )}
-              </div>
-            )}
         </section>
 
-        {cut && (
+        {(cut || transcribe) && (
           <div className="bubble__cut">
+            {cut && <>
             <label
               className="bubble__cut-check"
               title={cut.eligible && !cut.inCut ? 'Click to include' : undefined}
@@ -285,7 +266,18 @@ export default function VoiceBubble({
             )}
 
             {!cut.eligible && (
-              <span className="bubble__cut-note">Author is not on the contributor list.</span>
+              <span className="bubble__cut-note">Unvalidated contributor — review before adding to the cut.</span>
+            )}
+            {cut.eligible && validatedContributor && <span className="bubble__cut-note">Validated contributor</span>}
+            </>}
+            {transcribe && (
+              <div className="bubble__transcribe">
+                <button type="button" className="btn btn--ghost btn--xs" disabled={transcribe.requested || transcribe.busy} onMouseDown={(event) => event.preventDefault()} onClick={transcribe.onRetranscribe}>
+                  {transcript ? 'Transcribe again' : 'Transcribe'}
+                </button>
+                {transcribe.requested && !transcribe.busy && <span className="bubble__transcribe-note" role="status"><span className="spinner spinner--xs" aria-hidden="true" /> Transcribing — the new text appears here in about a minute.</span>}
+                {transcribe.error && <span className="bubble__transcribe-note" role="alert">{transcribe.error}</span>}
+              </div>
             )}
           </div>
         )}

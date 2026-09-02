@@ -11,6 +11,9 @@ export interface RecordingDraft {
   waveform: number[]
   descriptor: BlobDescriptor | null
   updatedAt: number
+  attempt?: number
+  retryAt?: number | null
+  failure?: { category: string; timestamp: number; attempt: number; recoverable: boolean } | null
 }
 
 const DB_NAME = 'logbook-recording-drafts'

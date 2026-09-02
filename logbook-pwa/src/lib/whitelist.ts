@@ -1,16 +1,13 @@
 /**
- * Whitelist module — kind 34201 events authored by COMPASS_PUBKEY.
+ * Validation-roster module — kind 34201 events authored by COMPASS_PUBKEY.
  *
- * The whitelist is UI-only — relay and Blossom access remain public.
- * The record button is hidden for pubkeys not on the merged list.
+ * Authentication permits recording; validation determines cut eligibility.
  *
  * Sources (merged as a UNION — revocation requires removal from every list
  * that grants a pubkey; the admin UI shows provenance per entry):
  *   1. Per-issue event:    kind 34201, d-tag `logbook-wl-<issueNumber>`
  *   2. Standing roster:    kind 34201, d-tag `logbook-wl-standing`
- *   3. Legacy static JSON: /data/whitelist-<issueId>.json + /data/npubs.yml
- *      (one-release fallback; removal criterion: zero fallback hits logged
- *      for 30 days, then delete this branch)
+ *   3. Every npub mention in signature-verified Compass newsletter history.
  *
  * Admins come from a THIRD event (d-tag `logbook-wl-admins`), fetched
  * separately — admin status is never derived from contributor lists.
@@ -21,20 +18,21 @@
  *   - Event present but unverifiable (bad sig / wrong author) = ignored,
  *     treated as absent, logged.
  *   - RELAY ERROR (query throws) for a d-tag = that source contributes
- *     nothing; if ALL event sources error AND static JSON errors, the caller
- *     gets `degraded: true` so the UI can show "couldn't load contributor
- *     list — retry" instead of silently hiding the record button.
+ *     nothing; if ALL signed event sources error, the caller
+ *     gets `degraded: true` so the UI can show that validation status is
+ *     temporarily unavailable without disabling authenticated recording.
  *   - Producer authority fails closed to Compass alone when the admins event
  *     is absent or unreachable. Initial seeding uses the trusted worker tool;
  *     build-time configuration cannot restore a relay-revoked producer.
  *
  * Trust: all fetches pin authors:[COMPASS_PUBKEY] and run filterVerified —
  * anyone can publish a kind 34201 with our d-tags, but clients only trust
- * Compass-signed ones (same model as kind 34200 manifests).
+ * Compass-signed ones; producer manifests remain separately constrained by the
+ * Compass-signed producer roster.
  */
 
 import { nip19 } from 'nostr-tools'
-import { COMPASS_PUBKEY, RELAYS, KINDS, D_STANDING, D_ADMINS, D_ISSUE_WL, ISSUE_PREFIX } from '../config'
+import { COMPASS_PUBKEY, RELAYS, DISCOVERY_RELAYS, KINDS, D_STANDING, D_ADMINS, D_ISSUE_WL } from '../config'
 import type { NostrEvent, NostrSigner } from '../types/nostr'
 import { getPool } from './pool'
 import { filterVerified, publishToRelays } from './relay'
@@ -49,12 +47,12 @@ export interface WhitelistEntry {
 }
 
 export interface AccessLists {
-  /** Union of per-issue + standing + legacy JSON contributors. */
+  /** Union of per-issue, standing, and verified-newsletter contributors. */
   contributors: Set<string>
   /** Admin pubkeys from the Compass-signed event, plus Compass itself. */
   admins: Set<string>
   /** Provenance: which lists grant each contributor (for admin UI display). */
-  sources: Map<string, ('per-issue' | 'standing' | 'legacy')[]>
+  sources: Map<string, ('per-issue' | 'standing' | 'newsletter')[]>
   /** True when every source failed — UI should show a retry banner. */
   degraded: boolean
   /** Retained for compatibility; false because config never grants authority. */
@@ -63,15 +61,15 @@ export interface AccessLists {
 
 // In-memory cache, keyed per d-tag. Cleared on own publish; refetched on
 // session start / episode page mount. Cross-device staleness is bounded by
-// session lifetime — acceptable for a UI-only gate.
+// session lifetime; a foreground refresh bypasses it before privileged writes.
 const eventCache = new Map<string, NostrEvent | null>()
 
 /**
  * Fetch one whitelist event by d-tag. Returns null when absent/invalid.
  *
- * `authors` must always be pinned — anyone can squat a d-tag. The producer list
- * itself is Compass-only; contributor lists also accept producer signatures,
- * because Compass appointed those producers.
+ * `authors` must always be pinned — anyone can squat a d-tag. Every trusted
+ * roster is Compass-only; producers curate episodes but cannot delegate roster
+ * authority.
  */
 async function fetchWhitelistEvent(
   dTag: string,
@@ -139,9 +137,9 @@ export async function fetchAccessLists(
   options: { forceRefresh?: boolean } = {},
 ): Promise<AccessLists> {
   const issueDTag = D_ISSUE_WL(issueNumber)
-  const legacyIssueId = `${ISSUE_PREFIX}-${issueNumber}` // logbook-<N> static JSON
 
-  // The producer list resolves first: it decides who may sign the others.
+  // The producer list resolves first for admin capability. It does not widen
+  // roster authorship: every trusted 34201 event is Compass-authored.
   const adminsResult = await Promise.allSettled([
     fetchWhitelistEvent(D_ADMINS, relays, options.forceRefresh),
   ])
@@ -152,25 +150,26 @@ export async function fetchAccessLists(
   }
 
   const contributorResults = await Promise.allSettled([
-    fetchWhitelistEvent(issueDTag, relays, options.forceRefresh, [...producers]),
-    fetchWhitelistEvent(D_STANDING, relays, options.forceRefresh, [...producers]),
-    fetchLegacyJson(legacyIssueId),
+    fetchWhitelistEvent(issueDTag, relays, options.forceRefresh),
+    fetchWhitelistEvent(D_STANDING, relays, options.forceRefresh),
+    fetchVerifiedNewsletterMentions(),
   ])
   const results = [...adminsResult, ...contributorResults]
-  const [issueEv, standingEv, legacy] = contributorResults.map((r) =>
+  const [issueEv, standingEv] = contributorResults.map((r) =>
     r.status === 'fulfilled' ? r.value : null,
   ) as [NostrEvent | null, NostrEvent | null, Set<string> | null]
 
   const contributors = new Set<string>()
-  const sources = new Map<string, ('per-issue' | 'standing' | 'legacy')[]>()
-  const grant = (pk: string, src: 'per-issue' | 'standing' | 'legacy') => {
+  const sources = new Map<string, ('per-issue' | 'standing' | 'newsletter')[]>()
+  const grant = (pk: string, src: 'per-issue' | 'standing' | 'newsletter') => {
     contributors.add(pk)
     sources.set(pk, [...(sources.get(pk) ?? []), src])
   }
 
   if (issueEv) for (const e of parseEntries(issueEv, 'contributors')) grant(e.pubkey, 'per-issue')
   if (standingEv) for (const e of parseEntries(standingEv, 'contributors')) grant(e.pubkey, 'standing')
-  if (legacy) for (const pk of legacy) grant(pk, 'legacy')
+  const newsletter = contributorResults[2].status === 'fulfilled' ? contributorResults[2].value : null
+  if (newsletter) for (const pk of newsletter) grant(pk, 'newsletter')
 
   // Admins are relay-authoritative. COMPASS_PUBKEY is always the root admin;
   // no build-time list can restore a producer removed from the signed event.
@@ -182,6 +181,44 @@ export async function fetchAccessLists(
   const degraded = results.every((r) => r.status === 'rejected')
 
   return { contributors, admins, sources, degraded, adminsFromBootstrap }
+}
+
+/** Broad validation roster from every signature-verified Compass newsletter. */
+export async function fetchVerifiedNewsletterMentions(
+  relays: string[] = DISCOVERY_RELAYS,
+): Promise<Set<string>> {
+  const pool = getPool()
+  const byId = new Map<string, NostrEvent>()
+  let until = latestReasonableEventTimestamp()
+  for (;;) {
+    const page = await pool.querySync(relays, {
+      kinds: [30023],
+      authors: [COMPASS_PUBKEY],
+      until,
+      limit: 500,
+    })
+    if (page.length === 0) break
+    const trustedPage = filterVerified(page).filter(
+      (event) => event.pubkey.toLowerCase() === COMPASS_PUBKEY.toLowerCase() && hasReasonableEventTimestamp(event),
+    )
+    if (trustedPage.length === 0) break
+    let oldest = until
+    let added = 0
+    for (const event of trustedPage) {
+      oldest = Math.min(oldest, event.created_at)
+      if (!byId.has(event.id)) {
+        byId.set(event.id, event)
+        added += 1
+      }
+    }
+    if (added === 0 || oldest <= 0) break
+    until = oldest - 1
+  }
+  const out = new Set<string>()
+  for (const event of byId.values()) {
+    for (const pubkey of extractMentionedPubkeys(event.content)) out.add(pubkey)
+  }
+  return out
 }
 
 /** Extract npub1… tokens mentioned in newsletter markdown (auto-suggest).
@@ -197,10 +234,8 @@ export function extractMentionedPubkeys(markdown: string): string[] {
 }
 
 /**
- * Publish a whitelist event. Readers only trust signatures they can trace back
- * to Compass, so reject a hopeless publish pre-signing (same guard class as
- * updateManifest): contributor lists accept any producer, the producer list
- * itself is Compass-only so nobody can appoint themselves.
+ * Publish a roster event. All trusted 34201 state is Compass-only, so reject a
+ * non-Compass signer before any signing or relay side effect.
  */
 export async function publishWhitelist(
   dTag: string,
@@ -214,22 +249,11 @@ export async function publishWhitelist(
   const pubkey = await withSignerTimeout(signer.getPublicKey(), 'Signer identity request')
   assertActive?.()
   const isAdmins = dTag === D_ADMINS
-  if (isAdmins) {
-    if (pubkey.toLowerCase() !== COMPASS_PUBKEY.toLowerCase()) {
-      throw new Error(
-        'Only the Compass key can change the producer list. Producers can edit ' +
-        'contributor lists, but appointing a producer stays with Compass.',
-      )
-    }
-  } else {
-    const producers = await fetchProducerPubkeys(relays, true)
-    assertActive?.()
-    if (!producers.has(pubkey.toLowerCase())) {
-      throw new Error(
-        'Only Compass or a producer on the Compass-signed producer list can change ' +
-        'contributor access. This change would be ignored by all clients.',
-      )
-    }
+  if (pubkey.toLowerCase() !== COMPASS_PUBKEY.toLowerCase()) {
+    throw new Error(
+      'Only the Compass key can change producer or contributor validation rosters. ' +
+      'This change would be ignored by all clients.',
+    )
   }
   const content = JSON.stringify(
     isAdmins
@@ -258,16 +282,12 @@ export async function publishWhitelist(
   return event
 }
 
-/** Fetch current entries for one d-tag (for the editor). Contributor lists
- *  accept Compass or a producer; the producer list is Compass-signed only. */
+/** Fetch current entries for one d-tag (for the editor). All are Compass-only. */
 export async function fetchWhitelistEntries(
   dTag: string,
   relays: string[] = RELAYS,
 ): Promise<WhitelistEntry[]> {
-  const authors = dTag === D_ADMINS
-    ? [COMPASS_PUBKEY]
-    : [...await fetchProducerPubkeys(relays)]
-  const ev = await fetchWhitelistEvent(dTag, relays, false, authors)
+  const ev = await fetchWhitelistEvent(dTag, relays, false, [COMPASS_PUBKEY])
   if (!ev) return []
   return parseEntries(ev, dTag === D_ADMINS ? 'admins' : 'contributors')
 }
@@ -291,42 +311,6 @@ export async function fetchProducerPubkeys(
   return producers
 }
 
-/** Legacy static-JSON sources (one-release fallback). */
-async function fetchLegacyJson(issueId: string): Promise<Set<string>> {
-  const out = new Set<string>()
-  const [issueList, roster] = await Promise.allSettled([
-    fetch(`/data/whitelist-${issueId}.json`).then((r) => (r.ok ? r.json() : [])),
-    fetch('/data/npubs.yml').then((r) => (r.ok ? r.text() : '')),
-  ])
-  if (issueList.status === 'fulfilled' && Array.isArray(issueList.value)) {
-    for (const p of issueList.value as string[]) {
-      const hex = normalizeToHex(p)
-      if (hex) {
-        out.add(hex)
-        console.warn('Legacy whitelist JSON in use — migrate to kind 34201')
-      }
-    }
-  }
-  if (roster.status === 'fulfilled' && typeof roster.value === 'string') {
-    for (const hex of parseNpubsYml(roster.value)) out.add(hex)
-  }
-  return out
-}
-
-/** Parse npubs.yml — flat "name: npub1…" or "- pubkey: <hex>" entries. */
-function parseNpubsYml(yaml: string): string[] {
-  const pubkeys: string[] = []
-  for (const line of yaml.split('\n')) {
-    const trimmed = line.trim().replace(/^-\s*/, '')
-    if (!trimmed || trimmed.startsWith('#')) continue
-    const colonIdx = trimmed.indexOf(':')
-    if (colonIdx === -1) continue
-    const value = trimmed.slice(colonIdx + 1).trim().replace(/^["']|["']$/g, '')
-    const hex = normalizeToHex(value)
-    if (hex) pubkeys.push(hex)
-  }
-  return pubkeys
-}
 
 /** Convert npub1… to hex, or pass through if already hex-64. */
 export function normalizeToHex(pubkey: string): string | null {

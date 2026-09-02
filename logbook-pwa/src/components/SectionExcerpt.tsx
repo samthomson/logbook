@@ -35,6 +35,21 @@ function paragraphs(text: string): string[] {
     .filter(Boolean)
 }
 
+type MarkdownBlock = { kind: 'prose' | 'code'; text: string; language?: string }
+
+export function markdownBlocks(text: string): MarkdownBlock[] {
+  const blocks: MarkdownBlock[] = []
+  const pattern = /```([^\n`]*)\n([\s\S]*?)(?:```|$)/g
+  let offset = 0
+  for (const match of text.matchAll(pattern)) {
+    if (match.index! > offset) blocks.push({ kind: 'prose', text: text.slice(offset, match.index) })
+    blocks.push({ kind: 'code', language: match[1].trim() || undefined, text: match[2].replace(/\n$/, '') })
+    offset = match.index! + match[0].length
+  }
+  if (offset < text.length) blocks.push({ kind: 'prose', text: text.slice(offset) })
+  return blocks.filter((block) => block.text.trim())
+}
+
 
 /** Replace nostr:npub mentions with display names where known. */
 function renderWithProfiles(text: string, profiles: Map<string, Profile>): string {
@@ -58,21 +73,26 @@ export default function SectionExcerpt({ section, profiles = EMPTY_PROFILES }: P
   const hasContent = lead || named.some((it) => it.body.trim())
   if (!hasContent) return null
 
+  const renderBody = (body: string, key: string) => markdownBlocks(body).flatMap((block, index) => {
+    if (block.kind === 'code') return [(
+      <pre key={`${key}-code-${index}`} className="section-excerpt__code">
+        <code className={block.language ? `language-${block.language}` : undefined}>{block.text}</code>
+      </pre>
+    )]
+    return paragraphs(md(renderWithProfiles(block.text, profiles))).map((paragraph, paragraphIndex) => (
+      <p key={`${key}-prose-${index}-${paragraphIndex}`} className="section-excerpt__para">{paragraph}</p>
+    ))
+  })
+
   // Always fully expanded — no read-more toggle (per product direction:
   // participants must read the full text before recording).
   return (
     <div className="section-excerpt">
-      {lead &&
-        paragraphs(md(renderWithProfiles(lead, profiles))).map((p, i) => (
-          <p key={i} className="section-excerpt__para">{p}</p>
-        ))}
+      {lead && renderBody(lead, 'lead')}
       {named.map((item, i) => (
         <div key={i} className="section-excerpt__item">
           <h3 className="section-excerpt__item-title">{item.title}</h3>
-          {item.body.trim() &&
-            paragraphs(md(renderWithProfiles(item.body, profiles))).map((p, j) => (
-              <p key={j} className="section-excerpt__para">{p}</p>
-            ))}
+          {item.body.trim() && renderBody(item.body, `item-${i}`)}
         </div>
       ))}
     </div>

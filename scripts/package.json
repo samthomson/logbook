@@ -15,7 +15,8 @@
     "seed-whitelist": "tsx seed-whitelist.mts",
     "seed-newsletter": "tsx seed-newsletter.mts",
     "seed": "tsx seed.mts",
-    "generate-intros": "tsx generate-intros.ts"
+    "generate-intros": "tsx generate-intros.ts",
+    "suggest-cut": "tsx suggest-cut.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.27.0",
