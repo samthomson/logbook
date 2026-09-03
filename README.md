@@ -103,10 +103,10 @@ pinned) runs only in the worker container.
 - [ ] Create a broad default contributor allow list (anyone ever mentioned in a compass)
   - [ ] Allow anyone to publish, but flag them as "validated" vs. "random" contributors in the producer section
 - [ ] Implement automatic retry for uploads when internet connection is lost/restored
+- [ ] "Btw, I keep getting logged out of the PWA after its installed in graphene."
 
 - [ ] after a failed upload (eg internet failure) the upload should auto retry, not awaiting the user to explicitly retry
 - [ ] Fix failed uploads getting stuck on a "waiting" sign or approval in Ember
   - [ ] Log in to investigate the upload/approval state from the admin side
-
 
 - [ ] Implement server AI to pre-select and order nodes for human validation
