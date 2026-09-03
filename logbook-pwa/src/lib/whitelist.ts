@@ -7,7 +7,8 @@
  * that grants a pubkey; the admin UI shows provenance per entry):
  *   1. Per-issue event:    kind 34201, d-tag `logbook-wl-<issueNumber>`
  *   2. Standing roster:    kind 34201, d-tag `logbook-wl-standing`
- *   3. Every npub mention in signature-verified Compass newsletter history.
+ *   3. Every npub mention in the current canonical revision of each
+ *      signature-verified Compass newsletter.
  *
  * Admins come from a THIRD event (d-tag `logbook-wl-admins`), fetched
  * separately — admin status is never derived from contributor lists.
@@ -87,11 +88,11 @@ async function fetchWhitelistEvent(
     until: latestReasonableEventTimestamp(),
     limit: 50,
   })
-  // Latest-by-created_at wins after signature verification (manifest rule).
+  // NIP-01: latest created_at wins; the lexicographically lowest ID breaks ties.
   const verified = filterVerified(events)
     .filter((e) => trusted.has(e.pubkey.toLowerCase()))
     .filter((e) => hasReasonableEventTimestamp(e))
-    .sort((a, b) => b.created_at - a.created_at || b.id.localeCompare(a.id))
+    .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
   const winner = verified[0] ?? null
   // Cache only verified revisions. A timed-out/temporarily empty relay query
   // must remain retryable when the PWA returns to the foreground.
@@ -154,7 +155,6 @@ export async function fetchAccessLists(
     fetchWhitelistEvent(D_STANDING, relays, options.forceRefresh),
     fetchVerifiedNewsletterMentions(),
   ])
-  const results = [...adminsResult, ...contributorResults]
   const [issueEv, standingEv] = contributorResults.map((r) =>
     r.status === 'fulfilled' ? r.value : null,
   ) as [NostrEvent | null, NostrEvent | null, Set<string> | null]
@@ -178,17 +178,17 @@ export async function fetchAccessLists(
 
   // Degraded = every source failed (all promises rejected). Absent events are
   // fulfilled-null and do NOT count as failure.
-  const degraded = results.every((r) => r.status === 'rejected')
+  const degraded = contributorResults.every((r) => r.status === 'rejected')
 
   return { contributors, admins, sources, degraded, adminsFromBootstrap }
 }
 
-/** Broad validation roster from every signature-verified Compass newsletter. */
+/** Broad validation roster from each canonical signature-verified Compass newsletter revision. */
 export async function fetchVerifiedNewsletterMentions(
   relays: string[] = DISCOVERY_RELAYS,
 ): Promise<Set<string>> {
   const pool = getPool()
-  const byId = new Map<string, NostrEvent>()
+  const byDTag = new Map<string, NostrEvent>()
   let until = latestReasonableEventTimestamp()
   for (;;) {
     const page = await pool.querySync(relays, {
@@ -198,24 +198,25 @@ export async function fetchVerifiedNewsletterMentions(
       limit: 500,
     })
     if (page.length === 0) break
-    const trustedPage = filterVerified(page).filter(
+    const reasonablePage = page.filter((event) => hasReasonableEventTimestamp(event))
+    const trustedPage = filterVerified(reasonablePage).filter(
       (event) => event.pubkey.toLowerCase() === COMPASS_PUBKEY.toLowerCase() && hasReasonableEventTimestamp(event),
     )
-    if (trustedPage.length === 0) break
     let oldest = until
-    let added = 0
+    for (const event of reasonablePage) oldest = Math.min(oldest, event.created_at)
     for (const event of trustedPage) {
-      oldest = Math.min(oldest, event.created_at)
-      if (!byId.has(event.id)) {
-        byId.set(event.id, event)
-        added += 1
+      const dTag = event.tags.find((tag) => tag[0] === 'd')?.[1]
+      if (!dTag || !/^newsletter-\d+$/.test(dTag)) continue
+      const current = byDTag.get(dTag)
+      if (!current || event.created_at > current.created_at || (event.created_at === current.created_at && event.id < current.id)) {
+        byDTag.set(dTag, event)
       }
     }
-    if (added === 0 || oldest <= 0) break
+    if (oldest >= until || oldest <= 0) break
     until = oldest - 1
   }
   const out = new Set<string>()
-  for (const event of byId.values()) {
+  for (const event of byDTag.values()) {
     for (const pubkey of extractMentionedPubkeys(event.content)) out.add(pubkey)
   }
   return out

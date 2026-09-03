@@ -19,12 +19,12 @@ const EMPTY_PROFILES = new Map<string, Profile>()
 
 
 /** Very small markdown-to-text: strip emphasis/links/images for excerpt view. */
-function md(text: string): string {
-  return text
+function md(text: string, trim = true): string {
+  const rendered = text
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/[*_#>]/g, '')
-    .trim()
+  return trim ? rendered.trim() : rendered
 }
 
 /** Split prose into paragraphs on blank lines. */
@@ -65,6 +65,16 @@ function renderWithProfiles(text: string, profiles: Map<string, Profile>): strin
   })
 }
 
+/** Render inline code as code, leaving mentions and Markdown markers inside it literal. */
+function renderInlineMarkdown(text: string, profiles: Map<string, Profile>) {
+  return text.split(/(`[^`\n]+`)/g).filter(Boolean).map((part, index) => {
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return <code key={index} className="section-excerpt__inline-code">{part.slice(1, -1)}</code>
+    }
+    return md(renderWithProfiles(part, profiles), false)
+  })
+}
+
 export default function SectionExcerpt({ section, profiles = EMPTY_PROFILES }: Props) {
   const leadItems = section.items.filter((it) => !it.title)
   const named = section.items.filter((it) => it.title)
@@ -79,8 +89,10 @@ export default function SectionExcerpt({ section, profiles = EMPTY_PROFILES }: P
         <code className={block.language ? `language-${block.language}` : undefined}>{block.text}</code>
       </pre>
     )]
-    return paragraphs(md(renderWithProfiles(block.text, profiles))).map((paragraph, paragraphIndex) => (
-      <p key={`${key}-prose-${index}-${paragraphIndex}`} className="section-excerpt__para">{paragraph}</p>
+    return paragraphs(block.text).map((paragraph, paragraphIndex) => (
+      <p key={`${key}-prose-${index}-${paragraphIndex}`} className="section-excerpt__para">
+        {renderInlineMarkdown(paragraph, profiles)}
+      </p>
     ))
   })
 

@@ -1,4 +1,4 @@
-import type { BlobDescriptor } from '../types/nostr'
+import type { BlobDescriptor, NostrEvent } from '../types/nostr'
 
 export interface RecordingDraft {
   id: string
@@ -10,6 +10,8 @@ export interface RecordingDraft {
   duration: number
   waveform: number[]
   descriptor: BlobDescriptor | null
+  /** Exact signed event retained until redundant relay acknowledgement succeeds. */
+  signedEvent?: NostrEvent | null
   updatedAt: number
   attempt?: number
   retryAt?: number | null

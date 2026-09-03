@@ -14,7 +14,7 @@ export function classifyUploadFailure(error: unknown): { category: UploadFailure
     const recoverable = error.status === undefined || error.status === 408 || error.status === 429 || error.status >= 500
     return { category: recoverable ? 'network' : 'authorization', recoverable }
   }
-  if (error instanceof TypeError || /network|fetch|timed out|all blossom servers|publish.*relay/i.test(message)) return { category: 'network', recoverable: true }
+  if (error instanceof TypeError || /network|fetch|timed out|all blossom servers|publish.*relay|required relays? accepted|relay.*accept/i.test(message)) return { category: 'network', recoverable: true }
   return { category: 'unknown', recoverable: false }
 }
 

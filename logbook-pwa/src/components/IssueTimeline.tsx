@@ -76,6 +76,7 @@ interface PendingTake {
   target: RecordTarget
   result: InlineRecordingResult
   descriptor: import('../types/nostr').BlobDescriptor | null
+  signedEvent: NostrEvent | null
   draftId: string
 }
 
@@ -429,6 +430,7 @@ export default function IssueTimeline({
           duration: result.duration,
           waveform: result.waveform,
           descriptor: resumablePending?.descriptor ?? null,
+          signedEvent: resumablePending?.signedEvent ?? null,
           updatedAt: Date.now(),
           attempt: resumablePending ? (pendingDrafts.find((item) => item.id === draftId)?.attempt ?? 0) : 0,
         }
@@ -437,6 +439,7 @@ export default function IssueTimeline({
           target,
           result,
           descriptor: draft.descriptor,
+          signedEvent: draft.signedEvent ?? null,
           draftId,
         })
         setPendingDrafts((current) => [draft, ...current.filter((item) => item.id !== draftId)])
@@ -489,7 +492,10 @@ export default function IssueTimeline({
           return next
         })
       }
-      const persistDraft = async (descriptor: import('../types/nostr').BlobDescriptor | null) => {
+      const persistDraft = async (
+        descriptor: import('../types/nostr').BlobDescriptor | null,
+        signedEvent: NostrEvent | null = pendingRef.current.get(draftId)?.signedEvent ?? null,
+      ) => {
         assertPublishingActive()
         const draft: RecordingDraft = {
           id: draftId,
@@ -500,12 +506,13 @@ export default function IssueTimeline({
           duration: result.duration,
           waveform: result.waveform,
           descriptor,
+          signedEvent,
           updatedAt: Date.now(),
           attempt: pendingDrafts.find((item) => item.id === draftId)?.attempt ?? 0,
         }
         // Render each take before IndexedDB finishes. The map allows another
         // recording to be saved while this one waits on Amber or Blossom.
-        pendingRef.current.set(draftId, { ownerPubkey, target, result, descriptor, draftId })
+        pendingRef.current.set(draftId, { ownerPubkey, target, result, descriptor, signedEvent, draftId })
         setPendingDrafts((current) => [draft, ...current.filter((item) => item.id !== draftId)])
         try {
           await saveDraft(draft)
@@ -521,7 +528,7 @@ export default function IssueTimeline({
         setPublishingDraftIds((current) => new Set([...current, draftId]))
         setDraftError(draftId, null)
         setStage('Preparing upload')
-        await persistDraft(resumablePending?.descriptor ?? null)
+        await persistDraft(resumablePending?.descriptor ?? null, resumablePending?.signedEvent ?? null)
         assertPublishingActive()
         // Reuse a prior attempt's descriptor if the upload already succeeded —
         // otherwise the blob gets re-uploaded and the old one is orphaned.
@@ -542,7 +549,14 @@ export default function IssueTimeline({
           }
         }
         assertPublishingActive()
-        pendingRef.current.set(draftId, { ownerPubkey, target, result, descriptor, draftId })
+        pendingRef.current.set(draftId, {
+          ownerPubkey,
+          target,
+          result,
+          descriptor,
+          signedEvent: pendingRef.current.get(draftId)?.signedEvent ?? null,
+          draftId,
+        })
         setStage('Publishing to relays')
 
         const event = await publishSegment({
@@ -555,20 +569,19 @@ export default function IssueTimeline({
           issueNumber: issue.issueNumber,
           respondingTo: target.respondingTo,
           assertActive: assertPublishingActive,
+          signedEvent: pendingRef.current.get(draftId)?.signedEvent ?? null,
+          onSigned: async (signedEvent) => { await persistDraft(descriptor, signedEvent) },
         })
         assertPublishingActive()
         // Publication completed while this capability was current. Clear only
         // this operation's in-memory draft synchronously; any awaited cleanup
         // after this point must re-check capability before touching UI again.
         pendingRef.current.delete(draftId)
-        setPendingDrafts((current) => current.filter((item) => item.id !== draftId))
-        setDraftError(draftId, null)
-        await deleteDraft(draftId).catch((error) => console.warn('Unable to remove published recording draft:', error))
-        if (!isPublishingActive()) return
         const newSeg = parseSegment(event)
         if (newSeg) {
           knownIdsRef.current.add(newSeg.event.id)
           preserveScrollAfterMutation(() => {
+            setPendingDrafts((current) => current.filter((item) => item.id !== draftId))
             setSections((prev) => {
               const next = new Map(prev)
               const cur = next.get(target.sectionId)
@@ -576,6 +589,13 @@ export default function IssueTimeline({
               return next
             })
           })
+        } else {
+          setPendingDrafts((current) => current.filter((item) => item.id !== draftId))
+        }
+        setDraftError(draftId, null)
+        await deleteDraft(draftId).catch((error) => console.warn('Unable to remove published recording draft:', error))
+        if (!isPublishingActive()) return
+        if (newSeg) {
           // Subtle published indicator on the new bubble
           setJustPublished((prev) => new Set([...prev, newSeg.event.id]))
           setTimeout(() => {
@@ -599,6 +619,7 @@ export default function IssueTimeline({
               target: { sectionId: target.sectionId, respondingTo: target.respondingTo ?? null },
               blob: result.blob, duration: result.duration, waveform: result.waveform,
               descriptor: pendingRef.current.get(draftId)?.descriptor ?? null,
+              signedEvent: pendingRef.current.get(draftId)?.signedEvent ?? null,
             }),
             updatedAt: Date.now(), attempt,
             retryAt: classified.recoverable && attempt < MAX_DURABLE_UPLOAD_ATTEMPTS ? Date.now() + retryDelayMs(attempt) : null,
@@ -655,6 +676,7 @@ export default function IssueTimeline({
       ...pending,
       result,
       descriptor: draft.descriptor,
+      signedEvent: draft.signedEvent ?? null,
     })
     setDraftError(draftId, null)
     void handleRecorded(result, pending.target, draftId)
@@ -694,6 +716,7 @@ export default function IssueTimeline({
           target,
           result: { blob: draft.blob, duration: draft.duration, waveform: draft.waveform },
           descriptor: draft.descriptor,
+          signedEvent: draft.signedEvent ?? null,
           draftId: draft.id,
         })
       }

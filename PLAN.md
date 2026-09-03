@@ -131,7 +131,8 @@ client renders it as a normal like.
   **[R3]** The raw per-issue list would drop a contributor the week they aren't
   mentioned, which reads as being uninvited rather than intended gating. The
   validation roster is the union of Compass-signed standing/per-issue lists and
-  every npub ever mentioned in signature-verified Compass newsletter history.
+  every npub in the current canonical revision of each signature-verified
+  Compass newsletter.
   Any authenticated npub can record under any section; unvalidated notes remain
   visible to producers but cannot enter the cut. The section map is a UI
   suggestion, not a gate.

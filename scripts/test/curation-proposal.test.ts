@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { proposeCuration, validateModelProposal } from '../curation-proposal.ts'
+import { deterministicProposal, proposeCuration, validateModelProposal } from '../curation-proposal.ts'
 
 const a = 'a'.repeat(64)
 const b = 'b'.repeat(64)
@@ -25,4 +25,14 @@ test('configuration, network, and invalid output failures use deterministic manu
   const failed = await proposeCuration(nodes, async () => { throw new Error('offline') })
   assert.equal(failed.source, 'deterministic')
   assert.match(failed.warning!, /manual review/)
+})
+
+test('all proposal paths reject malformed and duplicate input IDs', async () => {
+  const duplicate = [nodes[0], { ...nodes[0], sectionId: 'two' }]
+  assert.throws(() => deterministicProposal(duplicate), /invalid or duplicate/)
+  await assert.rejects(() => proposeCuration(duplicate), /invalid or duplicate/)
+  await assert.rejects(
+    () => proposeCuration([{ id: 'not-an-event-id', sectionId: 'one', createdAt: 1 }]),
+    /invalid or duplicate/,
+  )
 })

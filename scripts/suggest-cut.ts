@@ -19,10 +19,13 @@ if (!inputPath) {
 
 function parseNodes(value: unknown): CurationNode[] {
   if (!Array.isArray(value)) throw new Error('Node input must be a JSON array')
+  const seen = new Set<string>()
   return value.map((raw, index) => {
     if (!raw || typeof raw !== 'object') throw new Error(`Node ${index} must be an object`)
     const node = raw as Partial<CurationNode>
     if (typeof node.id !== 'string' || !/^[0-9a-f]{64}$/.test(node.id)) throw new Error(`Node ${index} has an invalid event id`)
+    if (seen.has(node.id)) throw new Error(`Node ${index} has a duplicate event id`)
+    seen.add(node.id)
     if (typeof node.sectionId !== 'string' || !node.sectionId.trim()) throw new Error(`Node ${index} has an invalid section id`)
     if (!Number.isSafeInteger(node.createdAt) || Number(node.createdAt) < 0) throw new Error(`Node ${index} has an invalid timestamp`)
     return {

@@ -19,7 +19,18 @@ export type ProposalModel = (input: string) => Promise<string>
 
 const EVENT_ID = /^[0-9a-f]{64}$/
 
+function validateNodes(nodes: readonly CurationNode[]): void {
+  const seen = new Set<string>()
+  for (const node of nodes) {
+    if (!EVENT_ID.test(node.id) || seen.has(node.id)) throw new Error('Curation input contains an invalid or duplicate segment ID')
+    if (!node.sectionId.trim()) throw new Error('Curation input contains an invalid section ID')
+    if (!Number.isSafeInteger(node.createdAt) || node.createdAt < 0) throw new Error('Curation input contains an invalid timestamp')
+    seen.add(node.id)
+  }
+}
+
 export function deterministicProposal(nodes: readonly CurationNode[]): CurationProposal {
+  validateNodes(nodes)
   const groups = new Map<string, CurationNode[]>()
   for (const node of nodes) groups.set(node.sectionId, [...(groups.get(node.sectionId) ?? []), node])
   return {
@@ -54,6 +65,7 @@ export function validateModelProposal(value: unknown, nodes: readonly CurationNo
 
 /** Produces data for explicit producer review; this module has no signer or publish path. */
 export async function proposeCuration(nodes: readonly CurationNode[], model?: ProposalModel): Promise<CurationProposal> {
+  validateNodes(nodes)
   const fallback = deterministicProposal(nodes)
   if (!model) return { ...fallback, warning: 'AI is not configured; deterministic order is ready for manual review.' }
   try {

@@ -91,7 +91,7 @@ events is the fallback, so nothing published while the worker was down is
 missed. Transcription itself never runs in a browser — whisper.cpp (small.en,
 pinned) runs only in the worker container.
 
-Authentication permits recording on unpublished episodes. Validation is separate: the roster combines signed lists with npub mentions from signature-verified Compass newsletters. Unvalidated notes remain visible to producers but cannot enter the cut until validated. Producer, roster, manifest, and release authority are unchanged and fail closed.
+Authentication permits recording on unpublished episodes. Validation is separate: the roster combines signed lists with npub mentions from the current canonical revision of each signature-verified Compass newsletter. Unvalidated notes remain visible to producers but cannot enter the cut until validated. Producer, roster, manifest, and release authority are unchanged and fail closed.
 
 Unfinished uploads remain in IndexedDB. Recoverable network failures retry on reconnection with bounded exponential backoff; invalid recordings and signer rejection/timeouts remain failed for explicit review. Diagnostics contain only category, time, and attempt. After kind 4200 reaches the relays, the trusted worker owns transcription and the browser may close.
 
@@ -102,7 +102,8 @@ Server-side AI curation may emit a strictly ID-validated proposal for explicit p
 - Seed issues reuse one stub outline (same H2/H3 every time). A real test is a
   pasted Compass 30023, not another run of `seed`.
 - Tag a guest on a chapter, not only for episode-wide validation. Today an `npub`
-  anywhere in verified Compass newsletter history validates that contributor for every issue.
+  in the current canonical revision of any verified Compass newsletter validates
+  that contributor for every issue.
 
 ## todo
 

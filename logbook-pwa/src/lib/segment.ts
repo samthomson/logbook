@@ -38,6 +38,10 @@ export interface PublishSegmentParams {
   relays?: string[]
   /** Throws when the initiating auth/issue context is no longer current. */
   assertActive?: () => void
+  /** Exact event from an earlier ambiguous relay attempt; never sign a duplicate. */
+  signedEvent?: NostrEvent | null
+  /** Persist the signed event before the first relay side effect. */
+  onSigned?: (event: NostrEvent) => Promise<void>
 }
 
 /**
@@ -57,6 +61,8 @@ export async function publishSegment(params: PublishSegmentParams): Promise<Nost
     isIntro = false,
     relays = RELAYS,
     assertActive,
+    signedEvent,
+    onSigned,
   } = params
 
   if (relays.length === 0) throw new Error('No relays configured')
@@ -96,9 +102,20 @@ export async function publishSegment(params: PublishSegmentParams): Promise<Nost
   }
 
   assertActive?.()
-  const event = await withSignerTimeout(signer.signEvent(unsigned), 'Signer segment signing')
+  const event = signedEvent ?? await withSignerTimeout(signer.signEvent(unsigned), 'Signer segment signing')
   assertActive?.()
   assertEventSignedByExpected(event, expectedPubkey)
+  if (signedEvent) {
+    if (
+      filterVerified([event]).length !== 1
+      || event.kind !== unsigned.kind
+      || event.pubkey.toLowerCase() !== unsigned.pubkey.toLowerCase()
+      || event.content !== unsigned.content
+      || JSON.stringify(event.tags) !== JSON.stringify(unsigned.tags)
+    ) throw new Error('Saved segment event does not match this recording draft')
+  } else {
+    await onSigned?.(event)
+  }
   await assertSignerStillExpected(signer, expectedPubkey, assertActive)
   await publishToRelays(event, relays)
   assertActive?.()

@@ -32,4 +32,14 @@ describe('SectionExcerpt', () => {
     expect(html).toContain(npub)
     expect(html).not.toContain('@Alice')
   })
+
+  it('renders inline code safely without resolving mentions inside it', () => {
+    const body = 'Use `<script>nostr:' + npub + '</script>` by nostr:' + npub + '.'
+    const section = { id: 'inline', title: 'Inline', items: [{ title: '', body }] }
+    const profiles = new Map([[pubkey, { pubkey, name: 'Alice', picture: null }]])
+    const html = renderToStaticMarkup(<SectionExcerpt section={section} profiles={profiles} />)
+    expect(html).toContain('<code class="section-excerpt__inline-code">&lt;script&gt;nostr:')
+    expect(html).toContain('&lt;/script&gt;</code> by @Alice.')
+    expect(html).not.toContain('<script>')
+  })
 })

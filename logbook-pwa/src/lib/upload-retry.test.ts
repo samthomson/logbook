@@ -22,4 +22,10 @@ describe('durable upload retry policy', () => {
     expect(classifyUploadFailure(new SignerTimeoutError('Amber', 100)).recoverable).toBe(false)
     expect(classifyUploadFailure(new Error('Recording is empty')).recoverable).toBe(false)
   })
+  it('retries ambiguous partial relay acknowledgement failures', () => {
+    expect(classifyUploadFailure(new Error('Only 1 of 2 required relays accepted the event'))).toEqual({
+      category: 'network',
+      recoverable: true,
+    })
+  })
 })
