@@ -36,7 +36,7 @@ A contributor can leave a durable voice reaction under the correct Compass newsl
 
 - App-specific centralized backend for the contributor discussion loop — signed Nostr state and Blossom media remain the architecture
 - In-browser episode stitching — native ffmpeg on a trusted worker is the canonical path
-- Blob privacy claims from a client-side whitelist — Nostr events and Blossom URLs are public
+- Blob privacy claims from a client-side validation roster — Nostr events and Blossom URLs are public
 - Raw production signing keys in worker configuration — Compass operations use the authorized NIP-46 session
 - Live rooms or synchronous recording — Logbook is deliberately asynchronous
 - Browser transcription in the current milestone — it can return only after explicit security, privacy, memory, latency, and precache gates

@@ -19,12 +19,12 @@ const EMPTY_PROFILES = new Map<string, Profile>()
 
 
 /** Very small markdown-to-text: strip emphasis/links/images for excerpt view. */
-function md(text: string): string {
-  return text
+function md(text: string, trim = true): string {
+  const rendered = text
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/[*_#>]/g, '')
-    .trim()
+  return trim ? rendered.trim() : rendered
 }
 
 /** Split prose into paragraphs on blank lines. */
@@ -33,6 +33,21 @@ function paragraphs(text: string): string[] {
     .split(/\n\s*\n/)
     .map((p) => p.replace(/\n/g, ' ').trim())
     .filter(Boolean)
+}
+
+type MarkdownBlock = { kind: 'prose' | 'code'; text: string; language?: string }
+
+export function markdownBlocks(text: string): MarkdownBlock[] {
+  const blocks: MarkdownBlock[] = []
+  const pattern = /```([^\n`]*)\n([\s\S]*?)(?:```|$)/g
+  let offset = 0
+  for (const match of text.matchAll(pattern)) {
+    if (match.index! > offset) blocks.push({ kind: 'prose', text: text.slice(offset, match.index) })
+    blocks.push({ kind: 'code', language: match[1].trim() || undefined, text: match[2].replace(/\n$/, '') })
+    offset = match.index! + match[0].length
+  }
+  if (offset < text.length) blocks.push({ kind: 'prose', text: text.slice(offset) })
+  return blocks.filter((block) => block.text.trim())
 }
 
 
@@ -50,6 +65,16 @@ function renderWithProfiles(text: string, profiles: Map<string, Profile>): strin
   })
 }
 
+/** Render inline code as code, leaving mentions and Markdown markers inside it literal. */
+function renderInlineMarkdown(text: string, profiles: Map<string, Profile>) {
+  return text.split(/(`[^`\n]+`)/g).filter(Boolean).map((part, index) => {
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return <code key={index} className="section-excerpt__inline-code">{part.slice(1, -1)}</code>
+    }
+    return md(renderWithProfiles(part, profiles), false)
+  })
+}
+
 export default function SectionExcerpt({ section, profiles = EMPTY_PROFILES }: Props) {
   const leadItems = section.items.filter((it) => !it.title)
   const named = section.items.filter((it) => it.title)
@@ -58,21 +83,28 @@ export default function SectionExcerpt({ section, profiles = EMPTY_PROFILES }: P
   const hasContent = lead || named.some((it) => it.body.trim())
   if (!hasContent) return null
 
+  const renderBody = (body: string, key: string) => markdownBlocks(body).flatMap((block, index) => {
+    if (block.kind === 'code') return [(
+      <pre key={`${key}-code-${index}`} className="section-excerpt__code">
+        <code className={block.language ? `language-${block.language}` : undefined}>{block.text}</code>
+      </pre>
+    )]
+    return paragraphs(block.text).map((paragraph, paragraphIndex) => (
+      <p key={`${key}-prose-${index}-${paragraphIndex}`} className="section-excerpt__para">
+        {renderInlineMarkdown(paragraph, profiles)}
+      </p>
+    ))
+  })
+
   // Always fully expanded — no read-more toggle (per product direction:
   // participants must read the full text before recording).
   return (
     <div className="section-excerpt">
-      {lead &&
-        paragraphs(md(renderWithProfiles(lead, profiles))).map((p, i) => (
-          <p key={i} className="section-excerpt__para">{p}</p>
-        ))}
+      {lead && renderBody(lead, 'lead')}
       {named.map((item, i) => (
         <div key={i} className="section-excerpt__item">
           <h3 className="section-excerpt__item-title">{item.title}</h3>
-          {item.body.trim() &&
-            paragraphs(md(renderWithProfiles(item.body, profiles))).map((p, j) => (
-              <p key={j} className="section-excerpt__para">{p}</p>
-            ))}
+          {item.body.trim() && renderBody(item.body, `item-${i}`)}
         </div>
       ))}
     </div>

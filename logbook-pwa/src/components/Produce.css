@@ -50,7 +50,8 @@
 /* The release decision belongs where the cut ends, not above it. */
 .produce__footer {
   position: sticky;
-  bottom: 0;
+  bottom: var(--keyboard-offset, 0px);
+  z-index: 40;
   display: flex;
   flex-wrap: wrap;
   align-items: center;

@@ -446,6 +446,37 @@ describe('publishSegment authorization', () => {
     })).rejects.toThrow('Publishing authorization was revoked.')
     expect(relayPublish).toHaveBeenCalledOnce()
   })
+
+  it('persists and reuses the exact signed event after ambiguous relay failure', async () => {
+    const key = generateSecretKey()
+    const expectedPubkey = getPublicKey(key)
+    const signEvent = vi.fn(async (event) => finalizeEvent(event, key))
+    const signer: NostrSigner = { getPublicKey: async () => expectedPubkey, signEvent }
+    const relayPublish = vi.mocked(publishToRelays)
+    relayPublish.mockClear()
+    relayPublish.mockRejectedValueOnce(new Error('Only 1 of 2 required relays accepted the event'))
+    relayPublish.mockResolvedValueOnce(undefined)
+    let saved: NostrEvent | null = null
+    const params = {
+      signer,
+      expectedPubkey,
+      blob: { url: `https://blossom.example/${HASH}`, sha256: HASH, size: 1024, mime: 'audio/webm', uploaded: 1 },
+      duration: 2,
+      waveform: [],
+      sectionId: 'sec-one-31',
+      issueNumber: 31,
+      relays: ['wss://one.test', 'wss://two.test'],
+      onSigned: async (event: NostrEvent) => { saved = event },
+    }
+
+    await expect(publishSegment(params)).rejects.toThrow(/only 1 of 2/i)
+    expect(saved).not.toBeNull()
+    const retried = await publishSegment({ ...params, signedEvent: saved })
+    expect(retried.id).toBe(saved!.id)
+    expect(signEvent).toHaveBeenCalledOnce()
+    expect(relayPublish).toHaveBeenNthCalledWith(1, saved, params.relays)
+    expect(relayPublish).toHaveBeenNthCalledWith(2, saved, params.relays)
+  })
 })
 
 describe('selectRetranscribeRequests', () => {

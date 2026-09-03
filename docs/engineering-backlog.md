@@ -132,7 +132,7 @@ This is the prioritized operating backlog for moving Logbook from a tested PWA a
 - [ ] Reconcile `publishedRss` types between PWA and worker.
 - [ ] Generate or share canonical event schemas across both packages.
 - [ ] Add runtime schema validation at every network and disk boundary.
-- [ ] Remove the legacy static whitelist after the documented observation window.
+- [x] Remove the legacy static validation fallback; only Compass-signed rosters and verified Compass newsletter mentions grant validated status.
 - [ ] Remove the legacy hot-key seeder after NIP-46 operational proof.
 - [ ] Decide and document the NIP-22 reply-tag migration.
 - [ ] Split oversized modules along trust and side-effect boundaries.

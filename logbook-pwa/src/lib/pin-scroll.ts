@@ -60,3 +60,15 @@ export function pinWindowScroll(): () => void {
     teardown = null
   }
 }
+
+/** Keep an upload replacement in place while React swaps draft and segment rows. */
+export function preserveScrollAfterMutation(
+  mutate: () => void,
+  read = () => window.scrollY,
+  write = (y: number) => window.scrollTo(0, y),
+  schedule = (callback: FrameRequestCallback) => requestAnimationFrame(callback),
+): void {
+  const y = read()
+  mutate()
+  schedule(() => schedule(() => write(y)))
+}

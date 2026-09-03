@@ -94,11 +94,13 @@ stitcher.
   in installed PWAs (screen sleep kills a long take), worse storage. Above it iOS
   behaves.
 
-## Whitelist
+## Contributor validation
 
-- Nearly free: Compass already maintains `data/npubs.yml` (name→npub) and
-  `publish/dm-outreach.ts` emits a per-issue JSON array of everyone mentioned that
-  week with npubs. That is the per-podcast whitelist, pre-computed.
+- Superseded implementation note: `data/npubs.yml` and per-issue JSON were useful
+  seed inputs during design, but they are not trusted eligibility sources.
+- Current rule: signed standing/per-issue rosters plus every npub mentioned across
+  paginated, signature-verified Compass kind 30023 history define validation.
+  Authentication alone permits recording; only validated notes may enter a cut.
 - Sections split cleanly: H2 = section, H3 = one project (~35/issue); published kind
   30023 already contains `nostr:npub...` mentions.
 

@@ -79,9 +79,9 @@ manifest query pins and re-verifies authors against that set.
 
 | Kind | What it is | Who signs it |
 |---|---|---|
-| 4200 | Voice-note segment (audio JSON, `x` sha256 tag) | Contributor |
+| 4200 | Voice-note segment (audio JSON, `x` sha256 tag) | Any authenticated contributor |
 | 34200 | Episode manifest / cut (addressable; the stitcher's only order input) | Producer |
-| 34201 | Producer + contributor lists (`d=logbook-wl-admins`, `logbook-wl-standing`, `logbook-wl-<n>`) | Compass only |
+| 34201 | Producer + validation rosters (`d=logbook-wl-admins`, `logbook-wl-standing`, `logbook-wl-<n>`) | Compass only |
 | 34202 | Retranscribe request (one `e` tag naming a 4200) | Producer |
 | 1111 | Transcript companion (sentence chunks, `e` → 4200, `k` → 4200) | Worker (Compass npub) |
 
@@ -91,26 +91,31 @@ events is the fallback, so nothing published while the worker was down is
 missed. Transcription itself never runs in a browser — whisper.cpp (small.en,
 pinned) runs only in the worker container.
 
+Authentication permits recording on unpublished episodes. Validation is separate: the roster combines signed lists with npub mentions from the current canonical revision of each signature-verified Compass newsletter. Unvalidated notes remain visible to producers but cannot enter the cut until validated. Producer, roster, manifest, and release authority are unchanged and fail closed.
+
+Unfinished uploads remain in IndexedDB. Recoverable network failures retry on reconnection with bounded exponential backoff; invalid recordings and signer rejection/timeouts remain failed for explicit review. Diagnostics contain only category, time, and attempt. After kind 4200 reaches the relays, the trusted worker owns transcription and the browser may close.
+
+Server-side AI curation may emit a strictly ID-validated proposal for explicit producer review. It has no signing or publishing path; missing config, network errors, or invalid output yield deterministic chronological order for manual review.
+
 ## Later
 
 - Seed issues reuse one stub outline (same H2/H3 every time). A real test is a
   pasted Compass 30023, not another run of `seed`.
-- Tag a guest on a chapter, not only on the episode whitelist. Today an `npub`
-  in the newsletter is a suggested add for the whole issue.
+- Tag a guest on a chapter, not only for episode-wide validation. Today an `npub`
+  in the current canonical revision of any verified Compass newsletter validates
+  that contributor for every issue.
 
 ## todo
 
 - [x] dark themed ui, AMOLED black
 - [x] Producer UI: browse real Compass kind 30023 issues on relays → pick one → “Start podcast draft” → publish kind 34200 manifest from that newsletter’s sections (not seed stub)
 - [x] normalise audio levels in ffmpeg when stitching a podcast together
+- [x] mobile ux ui++ (recorder, tap targets, sticky release bar)
 - [x] ai transcription of uploads (worker whisper.cpp small.en; producer retranscribe button; live response)
 - [x] make publishing feel more robust, for each episode show a checklist of sorts of what tasks get done and are done (ie producing various xml files and publishing to blossom). have individual states/buttons for each
 
-
 - [/] Prove release end-to-end on staging — the actual milestone blocker, not in README
-
 - [ ] Whitelist Derek/MrBlack + run the test — ops actions, fair to omit from a code todo list
-- [ ] mobile ux ui++ (recorder, tap targets, sticky release bar)
 
 
 - [ ] Move the "transcribe again" button inline with the other buttons to save vertical space

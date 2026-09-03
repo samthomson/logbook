@@ -22,4 +22,24 @@ describe('SectionExcerpt', () => {
     expect(html).toContain('Built by @Alice.')
     expect(html).not.toContain(npub)
   })
+
+  it('renders fenced code as escaped pre/code without resolving mentions inside it', () => {
+    const html = renderToStaticMarkup(<SectionExcerpt section={{
+      id: 'code', title: 'Code', items: [{ title: '', body: `Before\n\n\`\`\`json\n{"html":"<script>x</script>","author":"nostr:${npub}"}\n\`\`\`` }],
+    }} profiles={new Map([[pubkey, { pubkey, name: 'Alice', picture: null }]])} />)
+    expect(html).toContain('<pre class="section-excerpt__code"><code class="language-json">')
+    expect(html).toContain('&lt;script&gt;x&lt;/script&gt;')
+    expect(html).toContain(npub)
+    expect(html).not.toContain('@Alice')
+  })
+
+  it('renders inline code safely without resolving mentions inside it', () => {
+    const body = 'Use `<script>nostr:' + npub + '</script>` by nostr:' + npub + '.'
+    const section = { id: 'inline', title: 'Inline', items: [{ title: '', body }] }
+    const profiles = new Map([[pubkey, { pubkey, name: 'Alice', picture: null }]])
+    const html = renderToStaticMarkup(<SectionExcerpt section={section} profiles={profiles} />)
+    expect(html).toContain('<code class="section-excerpt__inline-code">&lt;script&gt;nostr:')
+    expect(html).toContain('&lt;/script&gt;</code> by @Alice.')
+    expect(html).not.toContain('<script>')
+  })
 })

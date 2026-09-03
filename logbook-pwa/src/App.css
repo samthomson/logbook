@@ -187,7 +187,7 @@ html.scroll-pinned {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 36px;
+  min-height: 44px;
   padding: 8px 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -225,12 +225,12 @@ html.scroll-pinned {
 }
 
 .btn--small {
-  min-height: 32px;
+  min-height: 44px;
   padding: 6px 12px;
 }
 
 .btn--xs {
-  min-height: 28px;
+  min-height: 44px;
   padding: 4px 8px;
   font-size: 0.8125rem;
 }
@@ -521,7 +521,8 @@ html.scroll-pinned {
   align-items: baseline;
   gap: 8px;
   width: 100%;
-  padding: 2px 0;
+  min-height: 44px;
+  padding: 8px 0;
   border: 0;
   background: none;
   text-align: left;
@@ -876,8 +877,8 @@ html.scroll-pinned {
 }
 
 .bubble__play {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   background: var(--accent);
   color: var(--on-accent);
@@ -930,7 +931,8 @@ html.scroll-pinned {
   align-items: center;
   gap: 6px;
   flex: 0 0 auto;
-  padding: 4px 8px;
+  min-height: 44px;
+  padding: 8px 10px;
   border: 1px solid var(--accent);
   border-radius: var(--radius);
   background: transparent;
@@ -1133,8 +1135,8 @@ html.scroll-pinned {
 
 .irec__btn,
 .irec__stop {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   background: var(--danger);
   color: var(--on-accent);
@@ -1151,7 +1153,7 @@ html.scroll-pinned {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 36px;
+  min-height: 44px;
 }
 
 .irec__bars {
@@ -1176,8 +1178,8 @@ html.scroll-pinned {
 }
 
 .irec__cancel {
-  width: 28px;
-  height: 28px;
+  width: 44px;
+  height: 44px;
   color: var(--muted);
   font-size: 1.1rem;
 }
@@ -1209,6 +1211,15 @@ html.scroll-pinned {
   flex-wrap: wrap;
   gap: 8px;
   margin-left: auto;
+}
+
+.section-excerpt__code {
+  overflow-x: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  white-space: pre;
 }
 
 /* ── Issue picker ───────────────────────────────────────────────────────────── */

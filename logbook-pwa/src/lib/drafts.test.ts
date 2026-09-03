@@ -66,4 +66,11 @@ describe('recording drafts', () => {
     await deleteDraft('draft-1')
     expect(await listDrafts(32)).toEqual([])
   })
+
+  it('persists bounded retry diagnostics without secrets', async () => {
+    await saveDraft({ ...baseDraft, attempt: 2, retryAt: 4000, failure: { category: 'network', timestamp: 3000, attempt: 2, recoverable: true } })
+    const [saved] = await listDrafts(32)
+    expect(saved.failure).toEqual({ category: 'network', timestamp: 3000, attempt: 2, recoverable: true })
+    expect(JSON.stringify(saved.failure)).not.toContain('nsec')
+  })
 })

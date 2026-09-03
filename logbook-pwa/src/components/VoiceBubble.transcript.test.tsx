@@ -54,7 +54,7 @@ describe('VoiceBubble transcript', () => {
   it('says the automatic transcript is on its way for a fresh upload', () => {
     const fresh = { ...segment, event: { ...segment.event, created_at: Math.floor(Date.now() / 1000) - 30 } }
     const html = render({}, fresh)
-    expect(html).toContain('Transcribing — the text appears here in about a minute.')
+    expect(html).toContain('Voice note published — the trusted worker is transcribing it. You may close this browser.')
     expect(html).toContain('transcript-box__pending')
   })
 
@@ -73,10 +73,13 @@ describe('VoiceBubble transcribe control', () => {
     ...overrides,
   })
 
-  it('offers a producer Transcribe again under an existing transcript', () => {
-    const html = render({ transcript: 'old text', transcribe: control() })
+  it('offers Transcribe again inline with sibling cut controls', () => {
+    const html = render({ transcript: 'old text', transcribe: control(), cut: {
+      inCut: true, reviewed: false, eligible: true, canMoveUp: false, canMoveDown: false,
+      onToggleInCut() {}, onMoveUp() {}, onMoveDown() {}, onToggleReviewed() {},
+    } })
     expect(html).toContain('Transcribe again')
-    expect(html).toContain('bubble__transcribe')
+    expect(html.indexOf('bubble__transcribe')).toBeGreaterThan(html.indexOf('bubble__cut'))
   })
 
   it('offers Transcribe when the note has no transcript yet', () => {

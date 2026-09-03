@@ -47,7 +47,7 @@ export interface ManifestReferenceValidation {
 }
 
 export function buildRecordingTargets(issue: CompassIssue): RecordingTarget[] {
-  return issue.sections.flatMap((group) => {
+  const targets = issue.sections.flatMap((group) => {
     const named = group.items
       .filter((item): item is typeof item & { id: string } => Boolean(item.title && item.id))
       .map((item) => ({ id: item.id, title: item.title }))
@@ -56,6 +56,9 @@ export function buildRecordingTargets(issue: CompassIssue): RecordingTarget[] {
       ? [{ id: group.id, title: group.title }, ...named]
       : named
   })
+  return targets.length
+    ? [{ id: `sec-intro-${issue.issueNumber}`, title: 'Episode intro' }, ...targets]
+    : []
 }
 
 function unique<T>(values: T[]): T[] {

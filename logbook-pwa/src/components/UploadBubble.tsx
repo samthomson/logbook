@@ -30,7 +30,7 @@ export default function UploadBubble({
   }, [previewUrl])
 
   const status = publishing
-    ? (stage ?? 'Preparing upload')
+    ? `${stage ?? 'Preparing upload'} — keep this browser open until the voice note is published`
     : canPreview
       ? 'Not published — saved on this device only'
       : 'Recording unavailable on this device'
@@ -68,6 +68,11 @@ export default function UploadBubble({
         </div>
         {error && !publishing && (
           <p className="bubble__upload-error" role="alert">{error}</p>
+        )}
+        {draft.failure && !publishing && (
+          <p className="bubble__upload-diagnostic">
+            Diagnostic: {draft.failure.category} · attempt {draft.failure.attempt} · {new Date(draft.failure.timestamp).toLocaleString()}
+          </p>
         )}
         {!publishing && (
           <div className="bubble__upload-actions">
